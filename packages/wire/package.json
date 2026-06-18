@@ -1,0 +1,110 @@
+{
+  "name": "wire",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "wire": "./bin/wire.mjs",
+    "wire-mcp": "./bin/wire-mcp.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "import": "./dist/cli.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "import": "./dist/mcp.js"
+    }
+  },
+  "files": [
+    "bin",
+    "dist",
+    "src"
+  ],
+  "bundledDependencies": [
+    "commander",
+    "fast-string-width",
+    "fast-wrap-ansi",
+    "ignore",
+    "jose",
+    "jsonc-parser",
+    "provider-asana",
+    "provider-chatgpt",
+    "provider-gmail",
+    "provider-google-docs",
+    "provider-notion",
+    "provider-slack",
+    "provider-zoom",
+    "sisteransi",
+    "smol-toml",
+    "tiny-stdio-mcp-server",
+    "toolcraft",
+    "toolcraft-schema",
+    "wire-core",
+    "yaml"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev-link": "npm link",
+    "prepack": "rm -rf node_modules && mkdir -p node_modules && for package in provider-asana provider-chatgpt provider-gmail provider-google-docs provider-notion provider-slack provider-zoom wire-core; do cp -R ../$package node_modules/$package; done && for package in commander fast-string-width fast-wrap-ansi ignore jose jsonc-parser sisteransi smol-toml tiny-stdio-mcp-server toolcraft toolcraft-schema yaml; do cp -R ../../node_modules/$package node_modules/$package; done",
+    "postpack": "rm -rf node_modules",
+    "test": "node --test --test-concurrency=1 test/**/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "npm run typecheck && npm run build && npm test"
+  },
+  "dependencies": {
+    "commander": "^14.0.3",
+    "fast-string-width": "^3.0.2",
+    "fast-wrap-ansi": "^0.2.0",
+    "ignore": "^5.3.2",
+    "jose": "^6.1.2",
+    "jsonc-parser": "^3.3.1",
+    "provider-asana": "0.1.0",
+    "provider-chatgpt": "0.1.0",
+    "provider-gmail": "0.1.0",
+    "provider-google-docs": "0.1.0",
+    "provider-notion": "0.1.0",
+    "provider-slack": "0.1.0",
+    "provider-zoom": "0.1.0",
+    "sisteransi": "^1.0.5",
+    "smol-toml": "^1.3.0",
+    "tiny-stdio-mcp-server": "^0.1.0",
+    "toolcraft": "^0.0.56",
+    "toolcraft-schema": "0.0.56",
+    "wire-core": "0.1.0",
+    "yaml": "^2.8.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.3",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "bundleDependencies": [
+    "commander",
+    "fast-string-width",
+    "fast-wrap-ansi",
+    "ignore",
+    "jose",
+    "jsonc-parser",
+    "provider-asana",
+    "provider-chatgpt",
+    "provider-gmail",
+    "provider-google-docs",
+    "provider-notion",
+    "provider-slack",
+    "provider-zoom",
+    "sisteransi",
+    "smol-toml",
+    "tiny-stdio-mcp-server",
+    "toolcraft",
+    "toolcraft-schema",
+    "wire-core",
+    "yaml"
+  ]
+}

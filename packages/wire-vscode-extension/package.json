@@ -1,0 +1,204 @@
+{
+  "name": "wire-vscode-extension",
+  "publisher": "wire",
+  "displayName": "Wire",
+  "description": "VSCode extension for Wire SDK resource sync.",
+  "version": "0.1.0",
+  "type": "commonjs",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:wire-vscode.linkHere",
+    "onCommand:wire-vscode.syncFile",
+    "onCommand:wire-vscode.downloadFile",
+    "onCommand:wire-vscode.openResource",
+    "onCommand:wire-vscode.syncDirectory",
+    "onCommand:wire-vscode.authStatus",
+    "onCommand:wire-vscode.compileAndReload"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Wire",
+      "properties": {
+        "wire.auth.asanaCookiesFile": {
+          "type": "string",
+          "scope": "application",
+          "description": "Netscape cookies file for Asana."
+        },
+        "wire.auth.chatgptCookiesFile": {
+          "type": "string",
+          "scope": "application",
+          "description": "Netscape cookies file for ChatGPT."
+        },
+        "wire.auth.gmailCookiesFile": {
+          "type": "string",
+          "scope": "application",
+          "description": "Netscape cookies file for Gmail."
+        },
+        "wire.auth.googleDocsCookiesFile": {
+          "type": "string",
+          "scope": "application",
+          "description": "Netscape cookies file for Google Docs and Sheets."
+        },
+        "wire.auth.notionCookiesFile": {
+          "type": "string",
+          "scope": "application",
+          "description": "Netscape cookies file for Notion."
+        },
+        "wire.auth.slackCookiesFile": {
+          "type": "string",
+          "scope": "application",
+          "description": "Netscape cookies file for Slack."
+        },
+        "wire.auth.zoomCookiesFile": {
+          "type": "string",
+          "scope": "application",
+          "description": "Netscape cookies file for Zoom."
+        },
+        "wire.google.credentialsFile": {
+          "type": "string",
+          "scope": "application",
+          "description": "Google OAuth credentials JSON file."
+        },
+        "wire.google.tokenFile": {
+          "type": "string",
+          "scope": "application",
+          "description": "Google OAuth token JSON file."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "wire-vscode.linkHere",
+        "title": "Wire: Link URL Here",
+        "icon": "$(link)"
+      },
+      {
+        "command": "wire-vscode.syncFile",
+        "title": "Wire: Sync File",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "wire-vscode.downloadFile",
+        "title": "Wire: Download File",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "wire-vscode.openResource",
+        "title": "Wire: Open Resource",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "wire-vscode.syncDirectory",
+        "title": "Wire: Sync Directory",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "wire-vscode.authStatus",
+        "title": "Wire: Auth Status",
+        "icon": "$(key)"
+      },
+      {
+        "command": "wire-vscode.compileAndReload",
+        "title": "Wire: Compile and Reload",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "wire-vscode.linkHere",
+          "when": "resourceScheme == file && explorerResourceIsFolder",
+          "group": "2_wire@1"
+        },
+        {
+          "command": "wire-vscode.syncDirectory",
+          "when": "resourceScheme == file && explorerResourceIsFolder",
+          "group": "2_wire@2"
+        },
+        {
+          "command": "wire-vscode.syncFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_wire@1"
+        },
+        {
+          "command": "wire-vscode.downloadFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_wire@2"
+        },
+        {
+          "command": "wire-vscode.openResource",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_wire@3"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "wire-vscode.syncFile",
+          "when": "resourceScheme == file && resourceExtname == .md",
+          "group": "navigation@1"
+        },
+        {
+          "command": "wire-vscode.openResource",
+          "when": "resourceScheme == file && resourceExtname == .md",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "wire-vscode.linkHere"
+        },
+        {
+          "command": "wire-vscode.syncFile"
+        },
+        {
+          "command": "wire-vscode.downloadFile"
+        },
+        {
+          "command": "wire-vscode.openResource"
+        },
+        {
+          "command": "wire-vscode.syncDirectory"
+        },
+        {
+          "command": "wire-vscode.authStatus"
+        },
+        {
+          "command": "wire-vscode.compileAndReload"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "node bump-version.mjs patch && npm run compile",
+    "compile": "npm run build",
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.mjs",
+    "check": "npm run typecheck && npm run build && npm test",
+    "version:patch": "node bump-version.mjs patch",
+    "version:minor": "node bump-version.mjs minor",
+    "version:major": "node bump-version.mjs major"
+  },
+  "dependencies": {
+    "provider-asana": "0.1.0",
+    "provider-chatgpt": "0.1.0",
+    "provider-gmail": "0.1.0",
+    "provider-google-docs": "0.1.0",
+    "provider-notion": "0.1.0",
+    "provider-slack": "0.1.0",
+    "provider-zoom": "0.1.0",
+    "wire-core": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.3",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.25.12",
+    "typescript": "^5.9.3"
+  }
+}

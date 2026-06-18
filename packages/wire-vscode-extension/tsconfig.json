@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "lib": ["ES2023", "DOM"],
+    "types": ["node", "vscode"],
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "wire-core": ["src/wire-core-node.ts"],
+      "provider-asana": ["../provider-asana/src/index.ts"],
+      "provider-chatgpt": ["../provider-chatgpt/src/index.ts"],
+      "provider-gmail": ["../provider-gmail/src/index.ts"],
+      "provider-google-docs": ["../provider-google-docs/src/index.ts"],
+      "provider-notion": ["../provider-notion/src/index.ts"],
+      "provider-slack": ["../provider-slack/src/index.ts"],
+      "provider-zoom": ["../provider-zoom/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}
