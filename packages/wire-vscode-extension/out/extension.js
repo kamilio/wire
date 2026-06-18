@@ -2436,7 +2436,7 @@ function diffNotionBlockTrees(remoteTree, localBlocks, _sidecarBlocks, ambient) 
   if (operations.length > 0 && !operations.some((operation) => operation.path.length === 1 && operation.path[0] === "last_edited_time")) operations.push({ pointer: pointer(remoteTree.id, ambient.spaceId), path: ["last_edited_time"], command: "set", args: ambient.currentTime });
   return { operations, summary };
 }
-function renderNode(tree, indent) {
+function renderNode(tree, indent, parentType = "") {
   const prefix = "  ".repeat(indent);
   const type = tree.block["type"] === "text" && object3(tree.block["format"] ?? {})["toggleable"] === true ? "toggle" : tree.block["type"];
   const properties = object3(tree.block["properties"] ?? {});
@@ -2444,23 +2444,23 @@ function renderNode(tree, indent) {
   const format = object3(tree.block["format"] ?? {});
   if (["header", "sub_header", "sub_sub_header"].includes(type)) {
     const marker = type === "header" ? "#" : type === "sub_header" ? "##" : "###";
-    return [`${prefix}${marker} ${title2}${format["toggleable"] === true ? " {toggle}" : ""}`, ...tree.children.flatMap((child) => renderNode(child, indent + 1))];
+    return [`${prefix}${marker} ${title2}${format["toggleable"] === true ? " {toggle}" : ""}`, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
   }
   if (type === "bulleted_list") {
     const lines = title2.split("\n");
-    return [`${prefix}- ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${line}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1))];
+    return [`${prefix}- ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${line}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
   }
   if (type === "numbered_list") {
     const lines = title2.split("\n");
-    return [`${prefix}1. ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}   ${line}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1))];
+    return [`${prefix}1. ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}   ${line}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
   }
   if (type === "to_do") {
     const checked = richTextText(properties["checked"] ?? [["No"]]) === "Yes";
-    if (title2 === "") return [`${prefix}:::to-do`, `${prefix}:::checked ${JSON.stringify(checked)}`, prefix, ...tree.children.flatMap((child) => renderNode(child, indent + 1)), `${prefix}:::`];
+    if (title2 === "") return [`${prefix}:::to-do`, `${prefix}:::checked ${JSON.stringify(checked)}`, prefix, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type)), `${prefix}:::`];
     const lines = title2.split("\n");
-    return [`${prefix}- [${checked ? "x" : " "}] ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${line}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1))];
+    return [`${prefix}- [${checked ? "x" : " "}] ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${line}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
   }
-  if (type === "quote") return [`${prefix}> ${title2}`, ...tree.children.flatMap((child) => renderNode(child, indent + 1))];
+  if (type === "quote") return [`${prefix}> ${title2}`, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
   if (type === "divider") return [`${prefix}---`];
   if (type === "code") {
     const code = richTextText(properties["title"]);
@@ -2471,11 +2471,11 @@ function renderNode(tree, indent) {
   }
   if (type === "image") return [`${prefix}![${escapeInlineMarkdown(richTextText(properties["alt_text"]))}](${encodeURI(richTextText(properties["source"]))})`];
   if (type === "equation") return [`${prefix}:::equation`, ...title2.split("\n").map((line) => `${prefix}${line}`), `${prefix}:::`];
-  if (type === "page") return [`${prefix}:::page`, `${prefix}${title2}`, ...tree.children.flatMap((child) => renderNode(child, indent + 1)), `${prefix}:::`];
-  if (type === "column_list") return [`${prefix}:::columns`, ...tree.children.flatMap((child) => renderNode(child, indent + 1)), `${prefix}:::`];
-  if (type === "column") return [`${prefix}:::column`, ...format["column_ratio"] === void 0 ? [] : [`${prefix}${format["column_ratio"]}`], ...tree.children.flatMap((child) => renderNode(child, indent + 1)), `${prefix}:::`];
-  if (type === "transclusion_container") return [`${prefix}:::synced`, ...tree.children.flatMap((child) => renderNode(child, indent + 1)), `${prefix}:::`];
-  if (type === "callout" || type === "toggle") return [`${prefix}:::${type}`, `${prefix}${title2}`, ...tree.children.flatMap((child) => renderNode(child, indent + 1)), `${prefix}:::`];
+  if (type === "page") return [`${prefix}:::page`, `${prefix}${title2}`, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type)), `${prefix}:::`];
+  if (type === "column_list") return [`${prefix}:::columns`, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type)), `${prefix}:::`];
+  if (type === "column") return [`${prefix}:::column`, ...format["column_ratio"] === void 0 ? [] : [`${prefix}${format["column_ratio"]}`], ...tree.children.flatMap((child) => renderNode(child, indent + 1, type)), `${prefix}:::`];
+  if (type === "transclusion_container") return [`${prefix}:::synced`, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type)), `${prefix}:::`];
+  if (type === "callout" || type === "toggle") return [`${prefix}:::${type}`, `${prefix}${title2}`, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type)), `${prefix}:::`];
   if (type === "table") {
     const columns = object3(tree.block["format"])["table_block_column_order"];
     const rows = tree.children.map((child) => columns.map((column) => renderRichText(object3(child.block["properties"])[column]).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/<br>/g, "\\<br>").replace(/\n/g, "<br>")));
@@ -2487,7 +2487,7 @@ function renderNode(tree, indent) {
     return opaque;
   }
   if (title2 === "") return [`${prefix}:::text`, `${prefix}:::`];
-  if (indent > 0) return [`${prefix}:::text`, ...title2.split("\n").map((line) => `${prefix}${line}`), `${prefix}:::`];
+  if (["bulleted_list", "numbered_list", "to_do"].includes(parentType)) return [`${prefix}:::text`, ...title2.split("\n").map((line) => `${prefix}${line}`), `${prefix}:::`];
   return [`${prefix}${title2}`];
 }
 function renderNotionTreeToMarkdown(tree, mentions) {
