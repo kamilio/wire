@@ -20,6 +20,7 @@ export type WireWatchConfig = Readonly<{
 export type WireConfig = Readonly<{
   backend: WireBackend;
   path: string;
+  env?: Readonly<Record<string, string>>;
   watch?: Partial<WireWatchConfig>;
 }>;
 
