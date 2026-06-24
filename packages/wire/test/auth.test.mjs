@@ -51,12 +51,26 @@ function runtime(files, requests, writes) {
     openFiles: Object.freeze({ open: async () => {} }),
     configuration: Object.freeze({ get: (name) => ({ GOOGLE_CREDENTIALS_FILE: "/credentials.json", GOOGLE_TOKEN_FILE: "/gmail.json", WIRE_REPOSITORY_ROOT: "/repo" })[name] }),
     secrets: Object.freeze({ get: async () => "asana-token" }),
-    cookies: Object.freeze({ load: async (service) => service === "asana" ? asanaCookies : service === "notion" ? notionCookies : service === "slack" ? slackCookies : service === "chatgpt" ? chatgptCookies : service === "gmail" || service === "google-docs" ? googleCookies : zoomCookies, loadSaved: async (service) => service === "asana" ? asanaCookies : service === "notion" ? notionCookies : service === "slack" ? slackCookies : service === "chatgpt" ? chatgptCookies : service === "gmail" || service === "google-docs" ? googleCookies : zoomCookies, metadata: async (service) => service === "slack" ? slackMetadata : Object.freeze({}), delete: async () => {} }),
+    cookies: Object.freeze({
+      load: async (service) => service === "asana" ? asanaCookies : service === "notion" ? notionCookies : service === "slack" ? slackCookies : service === "chatgpt" ? chatgptCookies : service === "gmail" || service === "google-docs" ? googleCookies : zoomCookies,
+      loadSaved: async (service) => service === "asana" ? asanaCookies : service === "notion" ? notionCookies : service === "slack" ? slackCookies : service === "chatgpt" ? chatgptCookies : service === "gmail" || service === "google-docs" ? googleCookies : zoomCookies,
+      metadata: async (service) => service === "slack" ? slackMetadata : Object.freeze({}),
+      save: async (service, cookies, metadata) => {
+        const path = `/repo/${service}_cookies.txt`;
+        files[path] = serializeCookies(cookies, metadata);
+        writes.push([path, files[path]]);
+      },
+      delete: async () => {},
+    }),
     gmailTokens: Object.freeze({ load: async () => ({ token: "gmail-token", refresh_token: "refresh", token_uri: "uri" }), refresh: async () => ({ token: "gmail-refreshed", refresh_token: "refresh", token_uri: "uri" }) }),
   });
 }
 
 const environment = Object.freeze({ HOME: "/home", WIRE_REPOSITORY_ROOT: "/repo", WIRE_CHROME_EXECUTABLE: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
+
+function serializeCookies(cookies, metadata) {
+  return `${["# Netscape HTTP Cookie File", ...Object.entries(metadata).map(([name, value]) => `# wire\t${name}\t${value}`), ...cookies.map((value) => `${value.httpOnly ? "#HttpOnly_" : ""}${value.domain}\t${value.includeSubdomains ? "TRUE" : "FALSE"}\t${value.path}\t${value.secure ? "TRUE" : "FALSE"}\t${value.expires}\t${value.name}\t${value.value}`)].join("\n")}\n`;
+}
 
 test("auth status verifies every supported service identity", async () => {
   const requests = [];
@@ -136,14 +150,14 @@ test("pasted cookies are detected, verified, normalized, and persisted", async (
   assert.equal(parseNetscapeCookies(files["/repo/chatgpt_cookies.txt"]).find((value) => value.name === "oai-did").domain, ".chatgpt.com");
 });
 
-test("saving cookie auth requires HOME explicitly", async () => {
+test("saving cookie auth delegates to runtime cookie storage", async () => {
   const auth = composeAuth(runtime({}, [], []), Object.freeze({}), async () => { throw new Error("unused"); });
-  await assert.rejects(() => auth.pasteCookies("notion", [
+  await auth.pasteCookies("notion", [
     "# Netscape HTTP Cookie File",
     ".notion.so\tTRUE\t/\tTRUE\t0\ttoken_v2\ttoken",
     ".notion.so\tTRUE\t/\tTRUE\t0\tnotion_user_id\tuser",
     ".notion.so\tTRUE\t/\tTRUE\t0\tnotion_users\t%5B%22user%22%5D",
-  ].join("\n")), /Missing required environment variable: HOME/);
+  ].join("\n"));
 });
 
 test("pasted Slack cookies preserve metadata before verification", async () => {
@@ -212,6 +226,35 @@ test("zoom auth status rejects malformed csrf without opening login", async () =
   });
   await assert.rejects(() => auth.status("zoom"), /zoom cookie authentication is missing or expired\. Run `wire zoom login` once; other commands reuse saved cookies\./);
   assert.equal(extracted, 0);
+});
+
+test("zoom auth status persists cookies refreshed by verification requests", async () => {
+  const files = {};
+  const writes = [];
+  const zoomRuntime = Object.freeze({
+    ...runtime(files, [], writes),
+    cookies: createCookiesCapability({
+      exists: async (path) => path === "/repo/zoom_cookies.txt",
+      readText: async () => [
+        ".zoom.us\tTRUE\t/\tTRUE\t0\tzm_aid\taccount",
+        ".zoom.us\tTRUE\t/\tTRUE\t0\t_zm_ssid\told",
+      ].join("\n"),
+      writeText: async (path, contents) => { writes.push([path, contents]); },
+      delete: async () => {},
+    }, () => "/home", () => "/repo"),
+    http: Object.freeze({ request: async (input) => {
+      const url = input.toString();
+      if (url === "https://zoom.us/csrf_js") return new Response("csrf: token", { headers: [["set-cookie", "csrf_refresh=csrf; Domain=.zoom.us; Path=/; Secure; HttpOnly"]] });
+      if (url.includes("hub.zoom.us/nws/common")) return new Response("a.b.c", { headers: [["set-cookie", "_zm_docs_nak=jwt; Domain=.zoom.us; Path=/; Max-Age=600; Secure; HttpOnly"]] });
+      throw new Error(url);
+    } }),
+  });
+  const auth = composeAuth(zoomRuntime, environment, async () => { throw new Error("unused"); });
+  assert.deepEqual((await auth.status("zoom")).identity, { account_id: "account" });
+  assert.equal(writes.length, 1);
+  const saved = parseNetscapeCookies(writes[0][1]);
+  assert.equal(saved.find((value) => value.name === "csrf_refresh").value, "csrf");
+  assert.equal(saved.find((value) => value.name === "_zm_docs_nak").value, "jwt");
 });
 
 test("chatgpt auth status rejects refresh-token errors without opening login", async () => {

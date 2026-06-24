@@ -34,9 +34,9 @@ __export(extension_exports, {
   deactivate: () => deactivate
 });
 module.exports = __toCommonJS(extension_exports);
-var import_node_child_process = require("node:child_process");
+var import_node_child_process2 = require("node:child_process");
 var import_node_fs2 = require("node:fs");
-var import_promises3 = require("node:fs/promises");
+var import_promises5 = require("node:fs/promises");
 var import_node_path4 = require("node:path");
 var import_node_util = require("node:util");
 var vscode = __toESM(require("vscode"));
@@ -235,6 +235,28 @@ function extractRelationships(markdown, currentId, catalog) {
 function frozenCookie(cookie) {
   return Object.freeze(cookie);
 }
+function cookieDomain(value, domain) {
+  return "domain" in value ? value["domain"].toString() : domain;
+}
+function cookiePath(value) {
+  return "path" in value ? value["path"].toString() : "/";
+}
+function cookieExpires(value) {
+  if ("expires" in value) return Number(value["expires"]);
+  if ("expirationDate" in value) return Number(value["expirationDate"]);
+  return 0;
+}
+function cookieHttpOnly(value) {
+  return "httpOnly" in value ? value["httpOnly"] === true : false;
+}
+function cookieSecure(value) {
+  return "secure" in value ? value["secure"] === true : true;
+}
+function cookieIncludeSubdomains(value, domain) {
+  if ("includeSubdomains" in value) return value["includeSubdomains"] === true;
+  if ("hostOnly" in value) return value["hostOnly"] !== true;
+  return domain.startsWith(".");
+}
 function parseNetscapeCookies(contents) {
   return Object.freeze(contents.split(/\r?\n/).filter((line) => line.trim() !== "" && (!line.startsWith("#") || line.startsWith("#HttpOnly_"))).map((line) => {
     const httpOnly = line.startsWith("#HttpOnly_");
@@ -262,6 +284,65 @@ function detectCookieFormat(contents) {
   });
   return netscapeLine === void 0 ? "header" : "netscape";
 }
+function headerCookieText(contents) {
+  const curlHeader = contents.match(/(?:-H|--header)\s+(['"])Cookie:\s*([\s\S]*?)\1/);
+  if (curlHeader !== null) return curlHeader[2];
+  const headerLine = contents.split(/\r?\n/).find((line) => line.toLowerCase().startsWith("cookie:"));
+  return headerLine === void 0 ? contents.trim() : headerLine.slice(headerLine.indexOf(":") + 1).trim();
+}
+function parseCookieHeader(contents, domain) {
+  return Object.freeze(headerCookieText(contents).split(";").map((pair) => pair.trim()).filter((pair) => pair !== "").map((pair) => {
+    const index = pair.indexOf("=");
+    if (index < 1) throw new Error(pair);
+    return frozenCookie({
+      domain,
+      includeSubdomains: domain.startsWith("."),
+      path: "/",
+      secure: true,
+      expires: 0,
+      name: pair.slice(0, index),
+      value: pair.slice(index + 1),
+      httpOnly: false
+    });
+  }));
+}
+function jsonCookie(value, domain) {
+  const cookie = value;
+  const resolvedDomain = cookieDomain(cookie, domain);
+  return frozenCookie({
+    domain: resolvedDomain,
+    includeSubdomains: cookieIncludeSubdomains(cookie, resolvedDomain),
+    path: cookiePath(cookie),
+    secure: cookieSecure(cookie),
+    expires: cookieExpires(cookie),
+    name: cookie["name"].toString(),
+    value: cookie["value"].toString(),
+    httpOnly: cookieHttpOnly(cookie)
+  });
+}
+function parseJsonCookies(contents, domain) {
+  const value = JSON.parse(contents);
+  if (Array.isArray(value)) return Object.freeze(value.map((cookie) => jsonCookie(cookie, domain)));
+  const object4 = value;
+  if (Array.isArray(object4["cookies"])) return Object.freeze(object4["cookies"].map((cookie) => jsonCookie(cookie, domain)));
+  if ("name" in object4 && "value" in object4) return Object.freeze([jsonCookie(object4, domain)]);
+  return Object.freeze(Object.entries(object4).map(([name, cookieValue]) => frozenCookie({
+    domain,
+    includeSubdomains: domain.startsWith("."),
+    path: "/",
+    secure: true,
+    expires: 0,
+    name,
+    value: cookieValue.toString(),
+    httpOnly: false
+  })));
+}
+function parsePastedCookies(contents, domain) {
+  const format = detectCookieFormat(contents);
+  if (format === "netscape") return parseNetscapeCookies(contents);
+  if (format === "json") return parseJsonCookies(contents, domain);
+  return parseCookieHeader(contents, domain);
+}
 function parseCookieMetadata(contents) {
   return Object.freeze(Object.fromEntries(contents.split(/\r?\n/).filter((line) => line.startsWith("# wire	")).map((line) => {
     const fields = line.split("	");
@@ -275,6 +356,285 @@ function parsePastedCookieMetadata(contents) {
   const value = JSON.parse(contents);
   if (!("metadata" in value)) return Object.freeze({});
   return Object.freeze(Object.fromEntries(Object.entries(value["metadata"]).map(([name, metadataValue]) => [name, metadataValue.toString()])));
+}
+function serializeNetscapeCookies(cookies, metadata) {
+  return `${["# Netscape HTTP Cookie File", ...Object.entries(metadata).map(([name, value]) => `# wire	${name}	${value}`), ...cookies.map((cookie) => `${cookie.httpOnly ? "#HttpOnly_" : ""}${cookie.domain}	${cookie.includeSubdomains ? "TRUE" : "FALSE"}	${cookie.path}	${cookie.secure ? "TRUE" : "FALSE"}	${cookie.expires}	${cookie.name}	${cookie.value}`)].join("\n")}
+`;
+}
+
+// ../wire-core/src/runtime/chrome.ts
+var import_node_child_process = require("node:child_process");
+var import_node_process = require("node:process");
+var import_promises = require("node:readline/promises");
+var import_promises2 = require("node:fs/promises");
+function environmentValue(environment2, name) {
+  const value = environment2[name];
+  if (value === void 0) throw new Error(`Missing required environment variable: ${name}`);
+  return value;
+}
+function chromeUserDataDir(environment2) {
+  return `${environmentValue(environment2, "HOME")}/Library/Application Support/Wire/Chrome`;
+}
+async function chromeLaunchArguments(environment2, startUrl) {
+  const userDataDir = chromeUserDataDir(environment2);
+  return Object.freeze([
+    `--user-data-dir=${userDataDir}`,
+    "--remote-debugging-port=0",
+    "--no-first-run",
+    "--no-default-browser-check",
+    startUrl
+  ]);
+}
+var ChromeConnection = class {
+  socket;
+  pending = /* @__PURE__ */ new Map();
+  events = /* @__PURE__ */ new Map();
+  nextId = 1;
+  constructor(url) {
+    this.socket = new WebSocket(url);
+    this.socket.addEventListener("message", (event) => {
+      const message = JSON.parse(event.data.toString());
+      if (message.id === void 0) {
+        if (message.method !== void 0) {
+          const events = this.events.get(message.method);
+          if (events !== void 0) {
+            const resolve4 = events.shift();
+            if (events.length === 0) this.events.delete(message.method);
+            resolve4(message.params);
+          }
+        }
+        return;
+      }
+      const pending = this.pending.get(message.id);
+      this.pending.delete(message.id);
+      if (message.error === void 0) pending.resolve(message.result);
+      else pending.reject(new Error(JSON.stringify(message.error)));
+    });
+  }
+  opened() {
+    return new Promise((resolve4, reject) => {
+      this.socket.addEventListener("open", () => resolve4(), { once: true });
+      this.socket.addEventListener("error", (event) => reject(event), { once: true });
+    });
+  }
+  request(method, params = {}) {
+    const id = this.nextId;
+    this.nextId += 1;
+    return new Promise((resolve4, reject) => {
+      this.pending.set(id, { resolve: resolve4, reject });
+      this.socket.send(JSON.stringify({ id, method, params }));
+    });
+  }
+  event(method) {
+    return new Promise((resolve4) => {
+      const events = this.events.get(method) ?? [];
+      events.push(resolve4);
+      this.events.set(method, events);
+    });
+  }
+  close() {
+    this.socket.close();
+  }
+};
+function devtoolsUrl(stderr2) {
+  return new Promise((resolve4, reject) => {
+    let contents = "";
+    stderr2.setEncoding("utf8");
+    stderr2.on("data", (chunk) => {
+      contents += chunk;
+      const match = /DevTools listening on (ws:\/\/[^\s]+)/.exec(contents);
+      if (match !== null) resolve4(match[1]);
+    });
+    stderr2.on("end", () => reject(new Error(contents)));
+  });
+}
+async function closeChrome(chrome, connection, pageConnection) {
+  const closed = new Promise((resolve4) => chrome.once("exit", resolve4));
+  if (pageConnection !== void 0) pageConnection.close();
+  connection.close();
+  process.kill(-chrome.pid, "SIGTERM");
+  await closed;
+}
+async function pageDevtoolsUrl(browserUrl, domains) {
+  const endpoint = new URL(browserUrl);
+  endpoint.protocol = "http:";
+  endpoint.pathname = "/json/list";
+  endpoint.search = "";
+  endpoint.hash = "";
+  const targets = await (await fetch(endpoint)).json();
+  return targets.find((target) => target.type === "page" && domains.some((domain) => new URL(target.url).hostname === domain || new URL(target.url).hostname.endsWith(`.${domain}`))).webSocketDebuggerUrl;
+}
+async function chatgptBrowserMetadata(pageConnection) {
+  const evaluation = await pageConnection.request("Runtime.evaluate", {
+    expression: `new Promise((resolve) => {
+      (async () => {
+        if (location.hostname !== "chatgpt.com") {
+          resolve({ ok: false });
+          return;
+        }
+        const response = await fetch("/api/auth/session", { cache: "no-store" });
+        const text = await response.text();
+        if (!text.startsWith("{")) {
+          resolve({ ok: false });
+          return;
+        }
+        const session = JSON.parse(text);
+        if (!("account" in session) || !("id" in session.account) || !("accessToken" in session) || "error" in session) {
+          resolve({ ok: false });
+          return;
+        }
+        const backend = await fetch("/backend-api/conversations?offset=0&limit=1&order=updated&is_archived=false&is_starred=false", {
+          cache: "no-store",
+          headers: {
+            authorization: \`Bearer \${session.accessToken}\`,
+            "chatgpt-account-id": session.account.id
+          }
+        });
+        resolve({ ok: backend.ok, account_id: session.account.id });
+      })().catch(() => resolve({ ok: false }));
+    })`,
+    awaitPromise: true,
+    returnByValue: true
+  });
+  const value = evaluation.result.value;
+  if (value.ok !== true) return null;
+  return Object.freeze({ account_id: value.account_id });
+}
+async function chatgptChallengeUrl(pageConnection) {
+  const evaluation = await pageConnection.request("Runtime.evaluate", {
+    expression: `(() => ({ href: location.href, title: document.title, text: document.body.innerText }))()`,
+    returnByValue: true
+  });
+  const value = evaluation.result.value;
+  const pageText = `${value.href}
+${value.title}
+${value.text}`;
+  if (/cdn-cgi\/challenge-platform|cf_chl|Just a moment|Verify you are human|Cloudflare/i.test(pageText)) return value.href;
+  return null;
+}
+function chromeCookies(values2, domains) {
+  return Object.freeze(values2.filter((cookie) => domains.some((domain) => cookie.domain === domain || cookie.domain.endsWith(`.${domain}`))).map((cookie) => Object.freeze({
+    domain: cookie.domain,
+    includeSubdomains: cookie.domain.startsWith("."),
+    path: cookie.path,
+    secure: cookie.secure,
+    expires: cookie.expires < 0 ? 0 : Math.floor(cookie.expires),
+    name: cookie.name,
+    value: cookie.value,
+    httpOnly: cookie.httpOnly
+  })));
+}
+async function confirmSaveLogin() {
+  const terminal = (0, import_promises.createInterface)({ input: import_node_process.stdin, output: import_node_process.stderr });
+  const answer = await terminal.question("\nDo you want to save login? [y/N] ");
+  terminal.close();
+  return /^(y|yes)$/i.test(answer.trim());
+}
+function sleep(milliseconds) {
+  return new Promise((resolve4) => setTimeout(resolve4, milliseconds));
+}
+async function extractChromeCookies(environment2, extraction) {
+  const profile = chromeUserDataDir(environment2);
+  await (0, import_promises2.mkdir)(profile, { recursive: true });
+  const chrome = (0, import_node_child_process.spawn)("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", [...await chromeLaunchArguments(environment2, extraction.startUrl)], { detached: true, stdio: ["ignore", "ignore", "pipe"] });
+  let interrupted = false;
+  let interrupting = false;
+  let interruptResult;
+  let interruptResolve = () => {
+  };
+  const interruptPromise = new Promise((resolve4) => {
+    interruptResolve = resolve4;
+  });
+  let captureCookies;
+  const captureInterrupt = async () => {
+    if (!interrupted || interrupting || interruptResult !== void 0 || captureCookies === void 0) return;
+    interrupting = true;
+    const result = await captureCookies();
+    const save = await confirmSaveLogin();
+    interruptResult = save ? Object.freeze({ cookies: result.cookies, metadata: result.metadata, manual: true }) : null;
+    interruptResolve();
+  };
+  const interrupt = () => {
+    interrupted = true;
+    void captureInterrupt();
+  };
+  process.on("SIGINT", interrupt);
+  const browserUrl = await devtoolsUrl(chrome.stderr);
+  const connection = new ChromeConnection(browserUrl);
+  await connection.opened();
+  const pageConnection = extraction.metadataExpression === void 0 && extraction.service !== "chatgpt" ? void 0 : new ChromeConnection(await pageDevtoolsUrl(browserUrl, extraction.domains));
+  if (pageConnection !== void 0) await pageConnection.opened();
+  if (pageConnection !== void 0) await Promise.race([sleep(2e3), interruptPromise]);
+  const currentResult = async () => {
+    const result = await connection.request("Storage.getCookies");
+    const cookies = chromeCookies(result.cookies, extraction.domains);
+    let metadata = Object.freeze({});
+    if (extraction.metadataExpression !== void 0 && pageConnection !== void 0) {
+      const evaluation = await pageConnection.request("Runtime.evaluate", { expression: extraction.metadataExpression, returnByValue: true });
+      if (evaluation.result.value !== void 0) metadata = Object.freeze(evaluation.result.value);
+    }
+    return Object.freeze({ cookies, metadata });
+  };
+  captureCookies = currentResult;
+  await captureInterrupt();
+  const interruptedResult = async () => {
+    if (interruptResult === void 0) return void 0;
+    await closeChrome(chrome, connection, pageConnection);
+    process.off("SIGINT", interrupt);
+    if (interruptResult === null) throw new Error("Login not saved");
+    return interruptResult;
+  };
+  for (; ; ) {
+    if (extraction.service === "chatgpt") {
+      const challengeUrl = await chatgptChallengeUrl(pageConnection);
+      const manualResult2 = await interruptedResult();
+      if (manualResult2 !== void 0) return manualResult2;
+      if (challengeUrl !== null) {
+        await closeChrome(chrome, connection, pageConnection);
+        process.off("SIGINT", interrupt);
+        throw new Error(`ChatGPT login is stuck on an HTML challenge: ${challengeUrl}`);
+      }
+    }
+    const result = await currentResult();
+    const manualResult = await interruptedResult();
+    if (manualResult !== void 0) return manualResult;
+    if (extraction.ready(result.cookies)) {
+      let metadata = result.metadata;
+      if (extraction.service === "chatgpt") {
+        const chatgptMetadata = await Promise.race([chatgptBrowserMetadata(pageConnection), interruptPromise.then(() => void 0)]);
+        const interruptedChatgptResult = await interruptedResult();
+        if (interruptedChatgptResult !== void 0) return interruptedChatgptResult;
+        if (chatgptMetadata === void 0) continue;
+        if (chatgptMetadata === null) {
+          await closeChrome(chrome, connection, pageConnection);
+          process.off("SIGINT", interrupt);
+          throw new Error("ChatGPT login is blocked by an HTML challenge. Complete `wire chatgpt login` in the opened Chrome window, then retry.");
+        }
+        metadata = chatgptMetadata;
+      } else if (extraction.metadataExpression !== void 0) {
+        if (Object.keys(metadata).length === 0) {
+          await Promise.race([sleep(1e3), interruptPromise]);
+          const interruptedMetadataResult = await interruptedResult();
+          if (interruptedMetadataResult !== void 0) return interruptedMetadataResult;
+          continue;
+        }
+      }
+      if (extraction.service !== "chatgpt" && !await Promise.race([extraction.verify(result.cookies, metadata), interruptPromise.then(() => false)])) {
+        const interruptedVerifyResult = await interruptedResult();
+        if (interruptedVerifyResult !== void 0) return interruptedVerifyResult;
+        await Promise.race([sleep(1e3), interruptPromise]);
+        const interruptedSleepResult2 = await interruptedResult();
+        if (interruptedSleepResult2 !== void 0) return interruptedSleepResult2;
+        continue;
+      }
+      await closeChrome(chrome, connection, pageConnection);
+      process.off("SIGINT", interrupt);
+      return Object.freeze({ cookies: result.cookies, metadata });
+    }
+    await Promise.race([sleep(1e3), interruptPromise]);
+    const interruptedSleepResult = await interruptedResult();
+    if (interruptedSleepResult !== void 0) return interruptedSleepResult;
+  }
 }
 
 // ../wire-core/src/runtime/google.ts
@@ -614,6 +974,274 @@ function composeWire(dependencies) {
     init: dependencies.workspace.initialize,
     switchBackend: (path) => dependencies.workspace.switchBackend(path, dependencies.home)
   });
+}
+
+// ../wire/src/auth.ts
+function cookieHeader(cookies) {
+  return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
+}
+async function responseJson(response) {
+  const value = await response.json();
+  return response.ok ? value : null;
+}
+async function verifyNotion(runtime2, cookies) {
+  const response = await runtime2.http.request("https://www.notion.so/api/v3/getSpaces", { method: "POST", headers: { cookie: cookieHeader(cookies), "content-type": "application/json", "notion-client-version": "23.13.0.4595", "user-agent": "Mozilla/5.0" }, body: "{}" });
+  const payload = await responseJson(response);
+  if (payload === null) return null;
+  const spaces = payload;
+  const userId = cookies.find((cookie) => cookie.name === "notion_user_id")?.value;
+  const user = Object.values(spaces)[0];
+  if (userId === void 0 || user === void 0) return null;
+  const view = Object.values(user.space_view)[0];
+  if (view === void 0) return null;
+  const spaceId = view.spaceId;
+  return Object.freeze({ service: "notion", identity: Object.freeze({ user_id: userId, space_id: spaceId }) });
+}
+async function verifySlack(runtime2, cookies, metadata) {
+  const cookie = cookieHeader(cookies);
+  const origin = metadata["origin"];
+  const token = metadata["token"];
+  if (origin === void 0 || token === void 0) return null;
+  const response = await runtime2.http.request(`${origin}/api/auth.test`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded", "user-agent": "Mozilla/5.0" }, body: new URLSearchParams({ token }) });
+  const identity = await responseJson(response);
+  if (identity === null) return null;
+  if (identity["ok"] !== true) return null;
+  return Object.freeze({ service: "slack", identity: Object.freeze({ user_id: identity["user_id"], user: identity["user"], team_id: identity["team_id"], team: identity["team"], url: identity["url"] }) });
+}
+async function verifyZoom(runtime2, cookies) {
+  const cookie = cookieHeader(cookies);
+  const csrfResponse = await runtime2.http.request("https://zoom.us/csrf_js", { method: "POST", headers: { cookie, "user-agent": "Mozilla/5.0", "fetch-csrf-token": "1", referer: "https://hub.zoom.us/" }, body: "" });
+  if (!csrfResponse.ok) return null;
+  const csrfText = await csrfResponse.text();
+  const csrfIndex = csrfText.indexOf(":");
+  if (csrfIndex === -1) return null;
+  const csrf = csrfText.slice(csrfIndex + 1).trim();
+  if (csrf === "") return null;
+  const jwtResponse = await runtime2.http.request("https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { cookie, "user-agent": "Mozilla/5.0", "zoom-csrftoken": csrf, "x-requested-with": "XMLHttpRequest", referer: "https://hub.zoom.us/" } });
+  const jwt = (await jwtResponse.text()).trim();
+  const accountId = cookies.find((value) => value.name === "zm_aid")?.value;
+  if (jwt.split(".").length !== 3 || accountId === void 0) return null;
+  return Object.freeze({ service: "zoom", identity: Object.freeze({ account_id: accountId }) });
+}
+function zoomCookieKey(cookie) {
+  return `${cookie.domain}	${cookie.path}	${cookie.name}`;
+}
+function zoomCookieJar(cookies) {
+  return new Map(cookies.map((cookie) => [zoomCookieKey(cookie), cookie]));
+}
+function zoomDomainMatches(cookie, hostname) {
+  const domain = cookie.domain.startsWith(".") ? cookie.domain.slice(1) : cookie.domain;
+  return hostname === domain || cookie.includeSubdomains && hostname.endsWith(`.${domain}`);
+}
+function zoomPathMatches(cookiePath2, requestPath) {
+  return requestPath === cookiePath2 || requestPath.startsWith(cookiePath2.endsWith("/") ? cookiePath2 : `${cookiePath2}/`);
+}
+function zoomRequestCookieHeader(jar, url, now) {
+  const nowSeconds = Math.floor(now.getTime() / 1e3);
+  return [...jar.values()].filter((cookie) => {
+    if (cookie.expires !== 0 && cookie.expires <= nowSeconds) return false;
+    if (cookie.secure && url.protocol !== "https:") return false;
+    if (!zoomDomainMatches(cookie, url.hostname)) return false;
+    return zoomPathMatches(cookie.path, url.pathname);
+  }).map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
+}
+function zoomDefaultCookiePath(pathname) {
+  const index = pathname.lastIndexOf("/");
+  return index <= 0 ? "/" : pathname.slice(0, index);
+}
+function zoomSplitSetCookieHeader(value) {
+  return Object.freeze(value.split(/,(?=\s*[^;,]+=)/).map((item) => item.trim()));
+}
+function zoomSetCookieHeaders(response) {
+  const headers2 = response.headers;
+  const values2 = headers2.getSetCookie?.();
+  if (values2 !== void 0) return Object.freeze(values2);
+  const value = response.headers.get("set-cookie");
+  if (value === null) return Object.freeze([]);
+  return zoomSplitSetCookieHeader(value);
+}
+function zoomCookieAttributes(parts) {
+  return new Map(parts.map((part) => {
+    const index = part.indexOf("=");
+    return index === -1 ? [part.toLowerCase(), ""] : [part.slice(0, index).toLowerCase(), part.slice(index + 1)];
+  }));
+}
+function zoomSetCookieExpires(attributes, now) {
+  if (attributes.has("max-age")) return Math.floor(now.getTime() / 1e3) + Number(attributes.get("max-age"));
+  if (attributes.has("expires")) return Math.floor(Date.parse(attributes.get("expires")) / 1e3);
+  return 0;
+}
+function zoomApplySetCookie(jar, url, header, now) {
+  const parts = header.split(";").map((part) => part.trim());
+  const pair = parts[0];
+  const separator = pair.indexOf("=");
+  const name = pair.slice(0, separator);
+  const value = pair.slice(separator + 1);
+  const attributes = zoomCookieAttributes(parts.slice(1));
+  const domain = attributes.has("domain") ? attributes.get("domain") : url.hostname;
+  const path = attributes.has("path") ? attributes.get("path") : zoomDefaultCookiePath(url.pathname);
+  const expires = zoomSetCookieExpires(attributes, now);
+  const cookie = Object.freeze({
+    domain,
+    includeSubdomains: attributes.has("domain") || domain.startsWith("."),
+    path,
+    secure: attributes.has("secure"),
+    expires,
+    name,
+    value,
+    httpOnly: attributes.has("httponly")
+  });
+  const key2 = zoomCookieKey(cookie);
+  if (expires !== 0 && expires <= Math.floor(now.getTime() / 1e3)) return jar.delete(key2);
+  const existing = jar.get(key2);
+  jar.set(key2, cookie);
+  return existing === void 0 || existing.value !== cookie.value || existing.expires !== cookie.expires || existing.secure !== cookie.secure || existing.httpOnly !== cookie.httpOnly || existing.includeSubdomains !== cookie.includeSubdomains;
+}
+function zoomApplyResponseCookies(jar, url, response, now) {
+  let changed = false;
+  for (const header of zoomSetCookieHeaders(response)) changed = zoomApplySetCookie(jar, url, header, now) || changed;
+  return changed;
+}
+function zoomPruneExpiredCookies(jar, now) {
+  let changed = false;
+  const nowSeconds = Math.floor(now.getTime() / 1e3);
+  for (const [key2, cookie] of jar.entries()) {
+    if (cookie.expires !== 0 && cookie.expires <= nowSeconds) {
+      jar.delete(key2);
+      changed = true;
+    }
+  }
+  return changed;
+}
+async function zoomAuthRequest(runtime2, jar, url, init) {
+  const parsed = new URL(url);
+  const response = await runtime2.http.request(url, { ...init, headers: { ...init.headers, cookie: zoomRequestCookieHeader(jar, parsed, runtime2.clock.now()) } });
+  return Object.freeze({ response, changed: zoomApplyResponseCookies(jar, parsed, response, runtime2.clock.now()) });
+}
+async function verifyZoomCookieState(runtime2, cookies, metadata) {
+  const jar = zoomCookieJar(cookies);
+  let changed = zoomPruneExpiredCookies(jar, runtime2.clock.now());
+  const csrf = await zoomAuthRequest(runtime2, jar, "https://zoom.us/csrf_js", { method: "POST", headers: { "user-agent": "Mozilla/5.0", "fetch-csrf-token": "1", referer: "https://hub.zoom.us/" }, body: "" });
+  changed = csrf.changed || changed;
+  if (!csrf.response.ok) return Object.freeze({ result: null, cookies: Object.freeze([...jar.values()]), metadata, changed });
+  const csrfText = await csrf.response.text();
+  const csrfIndex = csrfText.indexOf(":");
+  if (csrfIndex === -1) return Object.freeze({ result: null, cookies: Object.freeze([...jar.values()]), metadata, changed });
+  const token = csrfText.slice(csrfIndex + 1).trim();
+  if (token === "") return Object.freeze({ result: null, cookies: Object.freeze([...jar.values()]), metadata, changed });
+  const jwt = await zoomAuthRequest(runtime2, jar, "https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { "user-agent": "Mozilla/5.0", "zoom-csrftoken": token, "x-requested-with": "XMLHttpRequest", referer: "https://hub.zoom.us/" } });
+  changed = jwt.changed || changed;
+  const jwtText = (await jwt.response.text()).trim();
+  const accountId = [...jar.values()].find((value) => value.name === "zm_aid")?.value;
+  const result = jwt.response.ok && jwtText.split(".").length === 3 && accountId !== void 0 ? Object.freeze({ service: "zoom", identity: Object.freeze({ account_id: accountId }) }) : null;
+  return Object.freeze({ result, cookies: Object.freeze([...jar.values()]), metadata, changed });
+}
+async function verifyChatgpt(runtime2, cookies) {
+  const deviceId = cookies.find((cookie) => cookie.name === "oai-did")?.value;
+  if (deviceId === void 0) return null;
+  const response = await runtime2.http.request("https://chatgpt.com/api/auth/session", { headers: {
+    cookie: cookieHeader(cookies),
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+    "sec-ch-ua": '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"macOS"',
+    "oai-device-id": deviceId,
+    "oai-language": "en-US",
+    referer: "https://chatgpt.com/"
+  } });
+  const text2 = await response.text();
+  if (!text2.startsWith("{")) return null;
+  const session = JSON.parse(text2);
+  if (!response.ok) return null;
+  if ("error" in session) return null;
+  const account = session["account"];
+  return Object.freeze({ service: "chatgpt", identity: Object.freeze({ account_id: account["id"] }) });
+}
+async function verifyAsana(runtime2, cookies) {
+  const response = await runtime2.http.request("https://app.asana.com/api/1.0/users/me?opt_fields=gid,name,email", { headers: { cookie: cookieHeader(cookies), accept: "application/json", "user-agent": "Mozilla/5.0" } });
+  const payload = await responseJson(response);
+  if (payload === null) return null;
+  const data = payload.data;
+  return Object.freeze({ service: "asana", identity: data });
+}
+async function verifyGmailCookies(runtime2, cookies) {
+  const response = await runtime2.http.request("https://accounts.google.com/ListAccounts?gpsia=1&source=ChromiumBrowser&json=standard", { headers: { cookie: cookieHeader(cookies), accept: "application/json, text/plain, */*", "user-agent": "Mozilla/5.0" } });
+  if (!response.ok) return null;
+  const text2 = await response.text();
+  const email = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.exec(text2)?.[0];
+  if (email === void 0) return null;
+  return Object.freeze({ service: "gmail", identity: Object.freeze({ email }) });
+}
+async function verifyGoogleDocsCookies(runtime2, cookies) {
+  const response = await runtime2.http.request("https://docs.google.com/document/u/0/?tgif=d", { headers: { cookie: cookieHeader(cookies), accept: "text/html,application/xhtml+xml", "user-agent": "Mozilla/5.0" } });
+  if (!response.ok || !response.url.startsWith("https://docs.google.com/")) return null;
+  const text2 = await response.text();
+  const email = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.exec(text2)?.[0];
+  return Object.freeze({ service: "google-docs", identity: Object.freeze(email === void 0 ? { service: "google-docs" } : { email }) });
+}
+function composeAuth(runtime2, environment2, extractCookies) {
+  const cookieDomains = Object.freeze({ asana: ".asana.com", chatgpt: ".chatgpt.com", gmail: ".google.com", "google-docs": ".google.com", notion: ".notion.so", slack: ".slack.com", zoom: ".zoom.us" });
+  const verifyCookies = (service, cookies, metadata) => service === "asana" ? verifyAsana(runtime2, cookies) : service === "chatgpt" ? verifyChatgpt(runtime2, cookies) : service === "gmail" ? verifyGmailCookies(runtime2, cookies) : service === "google-docs" ? verifyGoogleDocsCookies(runtime2, cookies) : service === "notion" ? verifyNotion(runtime2, cookies) : service === "slack" ? verifySlack(runtime2, cookies, metadata) : verifyZoom(runtime2, cookies);
+  const verifyCookieState = async (service, cookies, metadata) => {
+    if (service === "zoom") return verifyZoomCookieState(runtime2, cookies, metadata);
+    return Object.freeze({ result: await verifyCookies(service, cookies, metadata), cookies, metadata, changed: false });
+  };
+  const cookieAuthError = (service) => new Error(`${service} cookie authentication is missing or expired. Run \`wire ${service} login\` once; other commands reuse saved cookies.`);
+  const requiredReady = (required) => (values2) => required.every((name) => values2.some((cookie) => cookie.name === name));
+  const googleReady = (values2) => values2.some((cookie) => (cookie.domain === ".google.com" || cookie.domain.endsWith(".google.com")) && ["SID", "__Secure-1PSID", "LSID", "__Host-1PLSID", "__Host-3PLSID"].includes(cookie.name));
+  const status = async (service) => {
+    const cookies = await runtime2.cookies.loadSaved(service);
+    if (cookies === null) throw cookieAuthError(service);
+    const state = await verifyCookieState(service, cookies, service === "slack" ? await runtime2.cookies.metadata(service) : Object.freeze({}));
+    if (state.changed) await saveCookies(service, state.cookies, state.metadata);
+    if (state.result !== null) return state.result;
+    throw cookieAuthError(service);
+  };
+  const saveCookies = async (service, cookies, metadata) => {
+    await runtime2.cookies.save(service, cookies, metadata);
+  };
+  const pasteCookies = async (service, contents) => {
+    const cookies = parsePastedCookies(contents, cookieDomains[service]);
+    const metadata = parsePastedCookieMetadata(contents);
+    const state = await verifyCookieState(service, cookies, metadata);
+    if (state.result === null) throw new Error(`${service} cookie authentication failed. Run \`wire ${service} login\` once; other commands reuse saved cookies.`);
+    await saveCookies(service, state.cookies, state.metadata);
+    return state.result;
+  };
+  const extract = async (service, startUrl, domains, ready, metadataExpression) => {
+    const extraction = { service, startUrl, domains, ready, verify: async (values2, metadata) => (await verifyCookieState(service, values2, metadata)).result !== null, ...metadataExpression === void 0 ? {} : { metadataExpression } };
+    const result = await extractCookies(environment2, extraction);
+    if (result.manual === true) {
+      await saveCookies(service, result.cookies, result.metadata);
+      return Object.freeze({ service, identity: Object.freeze({ saved: true }) });
+    }
+    if (service === "chatgpt") {
+      await saveCookies(service, result.cookies, result.metadata);
+      const accountId = result.metadata["account_id"];
+      if (accountId === void 0) throw new Error("chatgpt cookie authentication failed. Run `wire chatgpt login` once; other commands reuse saved cookies.");
+      return Object.freeze({ service, identity: Object.freeze({ account_id: accountId }) });
+    }
+    const verified = await verifyCookieState(service, result.cookies, result.metadata);
+    if (verified.result === null) throw new Error(`${service} cookie authentication failed. Run \`wire ${service} login\` once; other commands reuse saved cookies.`);
+    await saveCookies(service, verified.cookies, verified.metadata);
+    return verified.result;
+  };
+  const auth2 = Object.freeze({
+    status,
+    pasteCookies,
+    logout: async (service) => {
+      await runtime2.cookies.delete(service);
+      return Object.freeze({ service, deleted: true });
+    },
+    extractAsana: () => extract("asana", "https://app.asana.com/", ["asana.com"], (values2) => values2.some((cookie) => cookie.domain === ".asana.com" || cookie.domain.endsWith(".asana.com"))),
+    extractChatgpt: () => extract("chatgpt", "https://chatgpt.com/", ["chatgpt.com", "openai.com"], requiredReady(["oai-did", "__Secure-next-auth.session-token"])),
+    extractGmail: () => extract("gmail", "https://mail.google.com/mail/u/0/", ["google.com"], googleReady),
+    extractGoogleDocs: () => extract("google-docs", "https://docs.google.com/", ["google.com"], googleReady),
+    extractNotion: () => extract("notion", "https://www.notion.so/login", ["notion.so", "notion.com"], requiredReady(["token_v2", "notion_user_id", "notion_users"])),
+    extractSlack: () => extract("slack", "https://app.slack.com/client", ["slack.com"], requiredReady(["d"]), `(() => { const value = localStorage.getItem("localConfig_v2"); if (value === null) return {}; const team = Object.values(JSON.parse(value).teams)[0]; if (team === undefined) return {}; return { origin: new URL(team.url).origin, token: team.token }; })()`),
+    extractZoom: () => extract("zoom", "https://hub.zoom.us/", ["zoom.us"], requiredReady(["zm_aid", "_zm_ssid"]))
+  });
+  return auth2;
 }
 
 // ../provider-asana/src/asana-sync.ts
@@ -1064,7 +1692,7 @@ var asanaProvider = Object.freeze({
 function chatgptAuthError() {
   return new Error("ChatGPT authentication is missing or expired. Run `wire chatgpt login` once; other commands reuse saved cookies.");
 }
-function cookieHeader(cookies) {
+function cookieHeader2(cookies) {
   return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
 }
 function headers(cookies, referer) {
@@ -1076,7 +1704,7 @@ function headers(cookies, referer) {
     "oai-device-id": cookies.find((cookie) => cookie.name === "oai-did").value,
     "oai-language": "en-US",
     referer,
-    cookie: cookieHeader(cookies)
+    cookie: cookieHeader2(cookies)
   };
 }
 function formatUpdateTime(value) {
@@ -1293,7 +1921,7 @@ var gmailProvider = Object.freeze({
 });
 
 // ../provider-google-docs/src/google-docs.ts
-async function cookieHeader2(runtime2) {
+async function cookieHeader3(runtime2) {
   const cookies = await runtime2.cookies.loadSaved("google-docs");
   if (cookies === null) throw cookieAuthenticationError();
   return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
@@ -1310,7 +1938,7 @@ function filenameTitle(value, label) {
   return filename.replace(/\.(csv|html|md|txt|xlsx)$/i, "");
 }
 async function googleExport(runtime2, url, label) {
-  const response = await runtime2.http.request(url, { headers: { Cookie: await cookieHeader2(runtime2) } });
+  const response = await runtime2.http.request(url, { headers: { Cookie: await cookieHeader3(runtime2) } });
   if (response.status === 401 || response.status === 403) throw cookieAuthenticationError();
   if (!response.ok) throw new Error(`Google ${label} failed: HTTP ${response.status}`);
   const disposition = response.headers.get("content-disposition");
@@ -1318,7 +1946,7 @@ async function googleExport(runtime2, url, label) {
   return Object.freeze({ title: filenameTitle(disposition, label), text: await response.text() });
 }
 async function googleText(runtime2, url, label) {
-  const response = await runtime2.http.request(url, { headers: { Cookie: await cookieHeader2(runtime2) } });
+  const response = await runtime2.http.request(url, { headers: { Cookie: await cookieHeader3(runtime2) } });
   if (response.status === 401 || response.status === 403) throw cookieAuthenticationError();
   if (!response.ok) throw new Error(`Google ${label} failed: HTTP ${response.status}`);
   return response.text();
@@ -1496,7 +2124,7 @@ async function uploadSheetRows(runtime2, documentId, gid2, key2, cells) {
   const session = sheetSession(await googleText(runtime2, sheetEditUrl(documentId, gid2, key2), "Sheets editor"));
   const bundles = [{ commands: cells.map((cell) => sheetCellCommand(session.gridId, cell.row, cell.column, cell.value)), sid: session.sid, reqId: 0 }];
   const body2 = new URLSearchParams({ rev: String(session.revision), bundles: JSON.stringify(bundles) });
-  const response = await runtime2.http.request(`https://docs.google.com/spreadsheets/u/0/d/${encodeURIComponent(documentId)}/save?id=${encodeURIComponent(documentId)}&token=${encodeURIComponent(session.token)}`, { method: "POST", headers: { Cookie: await cookieHeader2(runtime2), "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: body2.toString() });
+  const response = await runtime2.http.request(`https://docs.google.com/spreadsheets/u/0/d/${encodeURIComponent(documentId)}/save?id=${encodeURIComponent(documentId)}&token=${encodeURIComponent(session.token)}`, { method: "POST", headers: { Cookie: await cookieHeader3(runtime2), "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: body2.toString() });
   if (response.status === 401 || response.status === 403) throw cookieAuthenticationError();
   if (!response.ok) throw new Error(`Google Sheets save failed: HTTP ${response.status}`);
   const text2 = await response.text();
@@ -1641,7 +2269,7 @@ async function uploadDocText(runtime2, documentId, key2, tab, baseMarkdown, loca
   ];
   const params = new URLSearchParams({ id: documentId, sid, vc: "1", c: "1", w: "1", flr: "0", smv: "2147483647", smb: "[2147483647, AAE=]", token: session.token, ouid: session.ouid, includes_info_params: "true", cros_files: "false", nded: "false", tab });
   const body2 = new URLSearchParams({ rev: String(session.revision), bundles: JSON.stringify([{ commands: commands2, sid, reqId: 0 }]) });
-  const response = await runtime2.http.request(`https://docs.google.com/document/d/${encodeURIComponent(documentId)}/save?${params}`, { method: "POST", headers: { Cookie: await cookieHeader2(runtime2), "content-type": "application/x-www-form-urlencoded;charset=UTF-8", origin: "https://docs.google.com", referer: editUrl }, body: body2.toString() });
+  const response = await runtime2.http.request(`https://docs.google.com/document/d/${encodeURIComponent(documentId)}/save?${params}`, { method: "POST", headers: { Cookie: await cookieHeader3(runtime2), "content-type": "application/x-www-form-urlencoded;charset=UTF-8", origin: "https://docs.google.com", referer: editUrl }, body: body2.toString() });
   if (response.status === 401 || response.status === 403) throw cookieAuthenticationError();
   if (!response.ok) throw new Error(`Google Docs save failed: HTTP ${response.status}`);
   const text2 = await response.text();
@@ -2802,8 +3430,8 @@ var userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537
 function zoomAuthError() {
   return new Error("Zoom authentication is missing or expired. Run `wire zoom login` once; other commands reuse saved cookies.");
 }
-function hubHeaders(cookie, jwt, contentType) {
-  return { cookie, "user-agent": userAgent, authorization: `Bearer ${jwt}`, "x-zm-cluster-id": "aw1", "x-zm-docs-container": "drive/browser", "x-zm-docs-loading": "init", "x-requested-with": "XMLHttpRequest", accept: "application/json, text/plain, */*", referer: "https://hub.zoom.us/", ...contentType === void 0 ? {} : { "content-type": contentType } };
+function hubHeaders(jwt, contentType) {
+  return { "user-agent": userAgent, authorization: `Bearer ${jwt}`, "x-zm-cluster-id": "aw1", "x-zm-docs-container": "drive/browser", "x-zm-docs-loading": "init", "x-requested-with": "XMLHttpRequest", accept: "application/json, text/plain, */*", referer: "https://hub.zoom.us/", ...contentType === void 0 ? {} : { "content-type": contentType } };
 }
 function formatMeetingStartTime(value, timezone) {
   return new Intl.DateTimeFormat("en-US", { timeZone: timezone, year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(value));
@@ -2814,7 +3442,7 @@ function meetingDate(value, timezone) {
   return `${values2["year"]}-${values2["month"]}-${values2["day"]}`;
 }
 function transcriptTitle(title2, startTime, timezone) {
-  const base = title2.replace(/\b[0-9]{4}-[0-9]{2}-[0-9]{2}\b/g, " ").replace(/\b[0-9]{1,2}:[0-9]{2}\s*\([^)]*\)/g, " ").replace(/\b[0-9]{3,4}\s*\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
+  const base = title2.replace(/\b[0-9]{4}-[0-9]{2}-[0-9]{2}\b/g, " ").replace(/\b[0-9]{1,2}:?[0-9]{2}\s*\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
   return `${meetingDate(startTime, timezone)}-${base}`;
 }
 async function zoomText(response, label) {
@@ -2841,6 +3469,105 @@ function zoomJwt(text2) {
   if (token.split(".").length !== 3) throw zoomAuthError();
   return token;
 }
+function cookieKey(cookie) {
+  return `${cookie.domain}	${cookie.path}	${cookie.name}`;
+}
+function cookieJar(cookies) {
+  return new Map(cookies.map((cookie) => [cookieKey(cookie), cookie]));
+}
+function domainMatches(cookie, hostname) {
+  const domain = cookie.domain.startsWith(".") ? cookie.domain.slice(1) : cookie.domain;
+  return hostname === domain || cookie.includeSubdomains && hostname.endsWith(`.${domain}`);
+}
+function pathMatches(cookiePath2, requestPath) {
+  return requestPath === cookiePath2 || requestPath.startsWith(cookiePath2.endsWith("/") ? cookiePath2 : `${cookiePath2}/`);
+}
+function requestCookies(jar, url, now) {
+  const nowSeconds = Math.floor(now.getTime() / 1e3);
+  return [...jar.values()].filter((cookie) => {
+    if (cookie.expires !== 0 && cookie.expires <= nowSeconds) return false;
+    if (cookie.secure && url.protocol !== "https:") return false;
+    if (!domainMatches(cookie, url.hostname)) return false;
+    return pathMatches(cookie.path, url.pathname);
+  }).map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
+}
+function defaultCookiePath(pathname) {
+  const index = pathname.lastIndexOf("/");
+  return index <= 0 ? "/" : pathname.slice(0, index);
+}
+function splitSetCookieHeader(value) {
+  return Object.freeze(value.split(/,(?=\s*[^;,]+=)/).map((item) => item.trim()));
+}
+function setCookieHeaders(response) {
+  const headers2 = response.headers;
+  const values2 = headers2.getSetCookie?.();
+  if (values2 !== void 0) return Object.freeze(values2);
+  const value = response.headers.get("set-cookie");
+  if (value === null) return Object.freeze([]);
+  return splitSetCookieHeader(value);
+}
+function cookieAttributes(parts) {
+  return new Map(parts.map((part) => {
+    const index = part.indexOf("=");
+    return index === -1 ? [part.toLowerCase(), ""] : [part.slice(0, index).toLowerCase(), part.slice(index + 1)];
+  }));
+}
+function setCookieExpires(attributes, now) {
+  if (attributes.has("max-age")) return Math.floor(now.getTime() / 1e3) + Number(attributes.get("max-age"));
+  if (attributes.has("expires")) return Math.floor(Date.parse(attributes.get("expires")) / 1e3);
+  return 0;
+}
+function applySetCookie(jar, url, header, now) {
+  const parts = header.split(";").map((part) => part.trim());
+  const pair = parts[0];
+  const separator = pair.indexOf("=");
+  const name = pair.slice(0, separator);
+  const value = pair.slice(separator + 1);
+  const attributes = cookieAttributes(parts.slice(1));
+  const domain = attributes.has("domain") ? attributes.get("domain") : url.hostname;
+  const path = attributes.has("path") ? attributes.get("path") : defaultCookiePath(url.pathname);
+  const expires = setCookieExpires(attributes, now);
+  const cookie = Object.freeze({
+    domain,
+    includeSubdomains: attributes.has("domain") || domain.startsWith("."),
+    path,
+    secure: attributes.has("secure"),
+    expires,
+    name,
+    value,
+    httpOnly: attributes.has("httponly")
+  });
+  const key2 = cookieKey(cookie);
+  if (expires !== 0 && expires <= Math.floor(now.getTime() / 1e3)) return jar.delete(key2);
+  const existing = jar.get(key2);
+  jar.set(key2, cookie);
+  return existing === void 0 || existing.value !== cookie.value || existing.expires !== cookie.expires || existing.secure !== cookie.secure || existing.httpOnly !== cookie.httpOnly || existing.includeSubdomains !== cookie.includeSubdomains;
+}
+function applyResponseCookies(jar, url, response, now) {
+  let changed = false;
+  for (const header of setCookieHeaders(response)) changed = applySetCookie(jar, url, header, now) || changed;
+  return changed;
+}
+function pruneExpiredCookies(jar, now) {
+  let changed = false;
+  const nowSeconds = Math.floor(now.getTime() / 1e3);
+  for (const [key2, cookie] of jar.entries()) {
+    if (cookie.expires !== 0 && cookie.expires <= nowSeconds) {
+      jar.delete(key2);
+      changed = true;
+    }
+  }
+  return changed;
+}
+async function saveZoomCookies(runtime2, jar, metadata) {
+  await runtime2.cookies.save("zoom", Object.freeze([...jar.values()]), metadata);
+}
+async function zoomRequest(runtime2, jar, metadata, url, init) {
+  const parsed = new URL(url);
+  const response = await runtime2.http.request(url, { ...init, headers: { ...init.headers, cookie: requestCookies(jar, parsed, runtime2.clock.now()) } });
+  if (applyResponseCookies(jar, parsed, response, runtime2.clock.now())) await saveZoomCookies(runtime2, jar, metadata);
+  return response;
+}
 var zoomHubService = defineService({
   name: "zoom-hub",
   matches: (url) => url.hostname === "hub.zoom.us" && /^\/doc\/[^/]+\/?$/.test(url.pathname),
@@ -2848,21 +3575,23 @@ var zoomHubService = defineService({
   fetch: async (runtime2, _url, source) => {
     const cookies = await runtime2.cookies.loadSaved("zoom");
     if (cookies === null) throw zoomAuthError();
-    const cookie = cookies.map((value) => `${value.name}=${value.value}`).join("; ");
-    const accountCookie = cookies.find((value) => value.name === "zm_aid");
+    const metadata = await runtime2.cookies.metadata("zoom");
+    const jar = cookieJar(cookies);
+    if (pruneExpiredCookies(jar, runtime2.clock.now())) await saveZoomCookies(runtime2, jar, metadata);
+    const accountCookie = [...jar.values()].find((value) => value.name === "zm_aid");
     if (accountCookie === void 0) throw zoomAuthError();
     const accountId = accountCookie.value;
-    const csrfResponse = await runtime2.http.request("https://zoom.us/csrf_js", { method: "POST", headers: { cookie, "user-agent": userAgent, "fetch-csrf-token": "1", referer: "https://hub.zoom.us/" }, body: "" });
+    const csrfResponse = await zoomRequest(runtime2, jar, metadata, "https://zoom.us/csrf_js", { method: "POST", headers: { "user-agent": userAgent, "fetch-csrf-token": "1", referer: "https://hub.zoom.us/" }, body: "" });
     const csrf = zoomCsrf(await zoomText(csrfResponse, "CSRF"));
-    const jwtResponse = await runtime2.http.request("https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { cookie, "user-agent": userAgent, "zoom-csrftoken": csrf, "x-requested-with": "XMLHttpRequest", accept: "application/json, text/plain, */*", referer: "https://hub.zoom.us/" } });
+    const jwtResponse = await zoomRequest(runtime2, jar, metadata, "https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { "user-agent": userAgent, "zoom-csrftoken": csrf, "x-requested-with": "XMLHttpRequest", accept: "application/json, text/plain, */*", referer: "https://hub.zoom.us/" } });
     const jwt = zoomJwt(await zoomText(jwtResponse, "JWT"));
-    const fileResponse = await runtime2.http.request("https://us01docs.zoom.us/api/file/files/action/batch_get", { method: "POST", headers: hubHeaders(cookie, jwt, "application/json"), body: JSON.stringify({ ids: [source.identifier], accountId }) });
+    const fileResponse = await zoomRequest(runtime2, jar, metadata, "https://us01docs.zoom.us/api/file/files/action/batch_get", { method: "POST", headers: hubHeaders(jwt, "application/json"), body: JSON.stringify({ ids: [source.identifier], accountId }) });
     const files = (await zoomJson(fileResponse, "file batch_get"))["successItems"];
     if (files.length === 0) throw new Error(`Zoom Hub file ${source.identifier} was not returned by batch_get`);
     const document = files[0];
     const notes = document["meetingNotes"];
     const meetingId = notes["meetingId"];
-    const statusResponse = await runtime2.http.request(`https://us01docs.zoom.us/api/meeting/transcript_status?meetingId=${encodeURIComponent(meetingId)}`, { headers: hubHeaders(cookie, jwt) });
+    const statusResponse = await zoomRequest(runtime2, jar, metadata, `https://us01docs.zoom.us/api/meeting/transcript_status?meetingId=${encodeURIComponent(meetingId)}`, { headers: hubHeaders(jwt) });
     const status = (await zoomJson(statusResponse, "transcript status"))["aicTranscript"];
     const base = { recording_id: source.identifier, title: document["title"], source_url: document["fileLink"], meeting_id: meetingId, main_meeting_id: notes["mainMeetingId"], owner: document["owner"]["ownerName"], created_at: document["createdInfo"]["time"], updated_at: document["updatedInfo"]["time"] };
     if (!status["exist"] || !status["canAccess"]) {
@@ -2870,13 +3599,13 @@ var zoomHubService = defineService({
       const markdown = [`# ${result2.title}`, "", `- Transcript state: ${result2.state}`, `- Recording ID: ${result2.recording_id}`, `- Meeting ID: ${result2.meeting_id}`, `- Main meeting ID: ${result2.main_meeting_id}`, `- Owner: ${result2.owner}`, `- Zoom document: ${result2.source_url}`].join("\n");
       return Object.freeze({ title: result2.title, markdown, data: result2 });
     }
-    const transcriptResponse = await runtime2.http.request(`https://us01docs.zoom.us/api/bridge/meeting/transcripts/v2?meetingId=${encodeURIComponent(meetingId)}&fileId=${encodeURIComponent(source.identifier)}`, { headers: hubHeaders(cookie, jwt) });
+    const transcriptResponse = await zoomRequest(runtime2, jar, metadata, `https://us01docs.zoom.us/api/bridge/meeting/transcripts/v2?meetingId=${encodeURIComponent(meetingId)}&fileId=${encodeURIComponent(source.identifier)}`, { headers: hubHeaders(jwt) });
     const raw = await zoomJson(transcriptResponse, "transcript");
     const speakers = raw["speakers"];
     const speakerMap = new Map(speakers.map((speaker) => [speaker["userId"], speaker["username"]]));
     const transcript = raw["items"].map((item) => {
       const userId = item["userId"];
-      return `[${item["startTime"]}] ${speakerMap.get(userId) ?? userId} \u2014 ${item["text"]}`;
+      return `- [${item["startTime"]}] **${speakerMap.get(userId) ?? userId}:** ${item["text"]}`;
     }).join("\n");
     const result = { ...base, meeting_start_time: new Date(Number(raw["meetingStartTime"])).toISOString().replace("Z", "+00:00"), participants: speakers.map((speaker) => speaker["username"]), transcript, raw, state: "ready" };
     const lines = [`# ${result.title}`, "", `- Meeting start: ${formatMeetingStartTime(result.meeting_start_time, runtime2.clock.localTimezone())}`, `- Owner: ${result.owner}`, `- Zoom document: ${result.source_url}`, "", "## Transcript", "", result.transcript];
@@ -2894,11 +3623,11 @@ var serviceCatalog = createServiceRegistry().use(zoomProvider).use(notionProvide
 
 // src/workspace.ts
 var import_node_fs = require("node:fs");
-var import_promises2 = require("node:fs/promises");
+var import_promises4 = require("node:fs/promises");
 var import_node_path3 = require("node:path");
 
 // src/file-registry.ts
-var import_promises = require("node:fs/promises");
+var import_promises3 = require("node:fs/promises");
 var import_node_path2 = require("node:path");
 function fileResourceName(resourceId2) {
   if (resourceId2 !== "." && resourceId2 !== ".." && !resourceId2.includes("/") && !resourceId2.includes("\\") && !resourceId2.includes("\0")) return `${resourceId2}.json`;
@@ -2932,13 +3661,13 @@ var FileRegistry = class {
     for (const url of normalized.urls) {
       if (existing.some((item) => item.urls.includes(url))) throw new Error(`Duplicate URL: ${url}`);
     }
-    await (0, import_promises.mkdir)(this.path, { recursive: true });
-    await (0, import_promises.writeFile)(this.resourcePath(normalized.id), `${stableJsonPretty(normalized)}
+    await (0, import_promises3.mkdir)(this.path, { recursive: true });
+    await (0, import_promises3.writeFile)(this.resourcePath(normalized.id), `${stableJsonPretty(normalized)}
 `, "utf8");
     return normalized;
   }
   async get(resourceId2) {
-    return normalizeResource(JSON.parse(await (0, import_promises.readFile)(this.resourcePath(resourceId2), "utf8")));
+    return normalizeResource(JSON.parse(await (0, import_promises3.readFile)(this.resourcePath(resourceId2), "utf8")));
   }
   async findByIdentifier(service, identifier) {
     const resource = (await this.listResources()).find((item) => item.identifiers.some((candidate) => candidate.service === service && candidate.identifier === identifier));
@@ -2954,13 +3683,13 @@ var FileRegistry = class {
     return (await this.listResources()).filter((resource) => resource.filesystem_links.some((link) => link.path === path.replaceAll("\\", "/")));
   }
   async listResources() {
-    await (0, import_promises.mkdir)(this.path, { recursive: true });
-    const filenames = (await (0, import_promises.readdir)(this.path)).filter((filename) => filename.endsWith(".json")).sort();
-    const resources = await Promise.all(filenames.map(async (filename) => normalizeResource(JSON.parse(await (0, import_promises.readFile)((0, import_node_path2.join)(this.path, filename), "utf8")))));
+    await (0, import_promises3.mkdir)(this.path, { recursive: true });
+    const filenames = (await (0, import_promises3.readdir)(this.path)).filter((filename) => filename.endsWith(".json")).sort();
+    const resources = await Promise.all(filenames.map(async (filename) => normalizeResource(JSON.parse(await (0, import_promises3.readFile)((0, import_node_path2.join)(this.path, filename), "utf8")))));
     return resources.sort((left, right) => left.id.localeCompare(right.id));
   }
   async delete(resourceId2) {
-    await (0, import_promises.rm)(this.resourcePath(resourceId2), { force: true });
+    await (0, import_promises3.rm)(this.resourcePath(resourceId2), { force: true });
   }
   resourcePath(resourceId2) {
     return (0, import_node_path2.join)(this.path, fileResourceName(resourceId2));
@@ -2994,7 +3723,7 @@ function wireRelativePath(path, wireRoot2) {
   return (0, import_node_path3.relative)((0, import_node_path3.dirname)(canonicalPath(wireRoot2)), canonicalPath(path)).replaceAll(import_node_path3.sep, "/");
 }
 async function loadWireConfig(wireRoot2) {
-  return JSON.parse(await (0, import_promises2.readFile)((0, import_node_path3.join)(wireRoot2, "config.json"), "utf8"));
+  return JSON.parse(await (0, import_promises4.readFile)((0, import_node_path3.join)(wireRoot2, "config.json"), "utf8"));
 }
 async function openWireRegistry(path, home) {
   const wireRoot2 = await discoverWireRoot(path, home);
@@ -3005,7 +3734,7 @@ async function openWireRegistry(path, home) {
 async function initializeWire(path, backend, registryPath) {
   if (backend !== "files") throw new Error(`Wire VSCode extension requires files backend: ${backend}`);
   const wireRoot2 = (0, import_node_path3.join)(canonicalPath(path), ".wire");
-  await (0, import_promises2.mkdir)(wireRoot2, { recursive: true });
+  await (0, import_promises4.mkdir)(wireRoot2, { recursive: true });
   const configPath = (0, import_node_path3.join)(wireRoot2, "config.json");
   if ((0, import_node_fs.existsSync)(configPath) && (0, import_node_fs.statSync)(configPath).isFile()) {
     const existing = await loadWireConfig(wireRoot2);
@@ -3013,15 +3742,16 @@ async function initializeWire(path, backend, registryPath) {
     return { root: wireRoot2, backend: existing.backend, path: (0, import_node_path3.join)(wireRoot2, existing.path), created: false };
   }
   const config = { backend, path: registryPath };
-  await (0, import_promises2.writeFile)(configPath, `${stableJsonPretty(config)}
+  await (0, import_promises4.writeFile)(configPath, `${stableJsonPretty(config)}
 `, "utf8");
-  await (0, import_promises2.mkdir)((0, import_node_path3.join)(wireRoot2, registryPath), { recursive: true });
+  await (0, import_promises4.mkdir)((0, import_node_path3.join)(wireRoot2, registryPath), { recursive: true });
   return { root: wireRoot2, backend, path: (0, import_node_path3.join)(wireRoot2, registryPath), created: true };
 }
 
 // src/extension.ts
-var execFileAsync = (0, import_node_util.promisify)(import_node_child_process.execFile);
+var execFileAsync = (0, import_node_util.promisify)(import_node_child_process2.execFile);
 var authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"];
+var wireStatus;
 function setting(name) {
   const value = vscode.workspace.getConfiguration().get(name);
   if (value === void 0 || value.trim() === "") throw new Error(`Missing VSCode setting: ${name}`);
@@ -3044,25 +3774,28 @@ function environment(name) {
   return value;
 }
 function cookiesCapability() {
-  const load = async (service) => parseNetscapeCookies(await (0, import_promises3.readFile)(setting(serviceSetting(service)), "utf8"));
+  const load = async (service) => parseNetscapeCookies(await (0, import_promises5.readFile)(setting(serviceSetting(service)), "utf8"));
   return {
     load,
     loadSaved: load,
-    metadata: async (service) => parsePastedCookieMetadata(await (0, import_promises3.readFile)(setting(serviceSetting(service)), "utf8")),
+    metadata: async (service) => parsePastedCookieMetadata(await (0, import_promises5.readFile)(setting(serviceSetting(service)), "utf8")),
+    save: async (service, cookies, metadata) => {
+      await (0, import_promises5.writeFile)(setting(serviceSetting(service)), serializeNetscapeCookies(cookies, metadata), "utf8");
+    },
     delete: async (service) => {
-      await (0, import_promises3.rm)(setting(serviceSetting(service)));
+      await (0, import_promises5.rm)(setting(serviceSetting(service)));
     }
   };
 }
 function runtime() {
   const filesystem = {
     exists: async (path) => (0, import_node_fs2.existsSync)(path),
-    readText: (path) => (0, import_promises3.readFile)(path, "utf8"),
+    readText: (path) => (0, import_promises5.readFile)(path, "utf8"),
     writeText: async (path, contents) => {
-      await (0, import_promises3.mkdir)((0, import_node_path4.dirname)(path), { recursive: true });
-      await (0, import_promises3.writeFile)(path, contents, "utf8");
+      await (0, import_promises5.mkdir)((0, import_node_path4.dirname)(path), { recursive: true });
+      await (0, import_promises5.writeFile)(path, contents, "utf8");
     },
-    delete: (path) => (0, import_promises3.rm)(path)
+    delete: (path) => (0, import_promises5.rm)(path)
   };
   const clock = {
     now: () => /* @__PURE__ */ new Date(),
@@ -3115,6 +3848,23 @@ function wire() {
     open: capabilities.openFiles.open
   });
 }
+function auth() {
+  return composeAuth(runtime(), process.env, extractChromeCookies);
+}
+function setWireStatus(message) {
+  wireStatus.text = `$(plug) Wire: ${message}`;
+  wireStatus.tooltip = message;
+  wireStatus.show();
+}
+function showWireStatus(message) {
+  setWireStatus(message);
+  vscode.window.showInformationMessage(message);
+}
+function identityText(result) {
+  const entries = Object.entries(result.identity);
+  if (entries.length === 0) return result.service;
+  return `${result.service} ${entries.map(([key2, value]) => `${key2}=${String(value).replace(/[\t\r\n]+/g, " ")}`).join(" ")}`;
+}
 function selectedPath(uri) {
   if (uri !== void 0 && uri.scheme === "file") return uri.fsPath;
   const editor = vscode.window.activeTextEditor;
@@ -3140,35 +3890,67 @@ async function linkHere(uri) {
   const directory = selectedDirectory(uri);
   const url = await vscode.window.showInputBox({ prompt: "Source URL" });
   if (url === void 0 || url.trim() === "") throw new Error("Source URL required");
+  setWireStatus("linking");
   const result = await wire().create(url, directory);
   await vscode.window.showTextDocument(vscode.Uri.file(result.path));
-  vscode.window.showInformationMessage(resultMessage(result));
+  showWireStatus(resultMessage(result));
 }
 async function syncFile(uri) {
   const path = resourceFile(uri);
+  setWireStatus("syncing file");
   const result = await wire().sync(path, (0, import_node_path4.dirname)(path));
-  vscode.window.showInformationMessage(resultMessage(result));
+  showWireStatus(resultMessage(result));
 }
 async function downloadFile(uri) {
   const path = resourceFile(uri);
+  setWireStatus("downloading file");
   const result = await wire().download(path, (0, import_node_path4.dirname)(path));
-  vscode.window.showInformationMessage(resultMessage(result));
+  showWireStatus(resultMessage(result));
 }
 async function openResource(uri) {
   const path = resourceFile(uri);
+  setWireStatus("opening resource");
   const resource = await wire().openResource(path, (0, import_node_path4.dirname)(path));
-  vscode.window.showInformationMessage(`opened ${title(resource)}`);
+  showWireStatus(`opened ${title(resource)}`);
 }
 async function syncDirectory(uri) {
   const directory = selectedDirectory(uri);
+  setWireStatus("syncing directory");
   const results = await wire().syncAll(directory);
-  vscode.window.showInformationMessage(`synced ${results.length} resources`);
+  showWireStatus(`synced ${results.length} resources`);
 }
-async function authStatus() {
+async function selectedAuthService() {
   const service = await vscode.window.showQuickPick([...authServices], { placeHolder: "Service" });
   if (service === void 0) throw new Error("Service required");
-  const cookies = await runtime().cookies.load(service);
-  vscode.window.showInformationMessage(`${service} cookies: ${cookies.length}`);
+  return service;
+}
+async function authStatus() {
+  const service = await selectedAuthService();
+  setWireStatus(`${service} status`);
+  const result = await auth().status(service);
+  showWireStatus(`authenticated ${identityText(result)}`);
+}
+async function authLogin() {
+  const service = await selectedAuthService();
+  setWireStatus(`${service} login waiting for browser`);
+  const authClient = auth();
+  const actions = {
+    asana: authClient.extractAsana,
+    chatgpt: authClient.extractChatgpt,
+    gmail: authClient.extractGmail,
+    "google-docs": authClient.extractGoogleDocs,
+    notion: authClient.extractNotion,
+    slack: authClient.extractSlack,
+    zoom: authClient.extractZoom
+  };
+  const result = await actions[service]();
+  showWireStatus(`login saved ${identityText(result)}`);
+}
+async function authLogout() {
+  const service = await selectedAuthService();
+  setWireStatus(`${service} logout`);
+  await auth().logout(service);
+  showWireStatus(`logged out ${service}`);
 }
 async function compileAndReload() {
   const root = (0, import_node_path4.resolve)(__dirname, "..");
@@ -3177,14 +3959,19 @@ async function compileAndReload() {
   await vscode.commands.executeCommand("workbench.action.reloadWindow");
 }
 function activate(context2) {
+  wireStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  setWireStatus("ready");
   context2.subscriptions.push(
-    vscode.commands.registerCommand("wire-vscode.linkHere", linkHere),
-    vscode.commands.registerCommand("wire-vscode.syncFile", syncFile),
-    vscode.commands.registerCommand("wire-vscode.downloadFile", downloadFile),
-    vscode.commands.registerCommand("wire-vscode.openResource", openResource),
-    vscode.commands.registerCommand("wire-vscode.syncDirectory", syncDirectory),
-    vscode.commands.registerCommand("wire-vscode.authStatus", authStatus),
-    vscode.commands.registerCommand("wire-vscode.compileAndReload", compileAndReload)
+    wireStatus,
+    vscode.commands.registerCommand("wire.linkHere", linkHere),
+    vscode.commands.registerCommand("wire.syncFile", syncFile),
+    vscode.commands.registerCommand("wire.downloadFile", downloadFile),
+    vscode.commands.registerCommand("wire.openResource", openResource),
+    vscode.commands.registerCommand("wire.syncDirectory", syncDirectory),
+    vscode.commands.registerCommand("wire.authStatus", authStatus),
+    vscode.commands.registerCommand("wire.authLogin", authLogin),
+    vscode.commands.registerCommand("wire.authLogout", authLogout),
+    vscode.commands.registerCommand("wire.compileAndReload", compileAndReload)
   );
 }
 function deactivate() {

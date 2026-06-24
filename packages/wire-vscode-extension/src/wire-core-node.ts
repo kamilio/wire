@@ -7,6 +7,11 @@ export type { ServiceProvider, ServiceRegistry } from "../../../packages/wire-co
 export { extractRelationships, formatAsanaTask, gmailMessageBody, markdownFilename, slackText, slackTitle } from "../../../packages/wire-core/src/core/transform.js";
 export { createCookiesCapability, detectCookieFormat, parseCookieHeader, parseJsonCookies, parseNetscapeCookies, parsePastedCookieMetadata, parsePastedCookies, repositoryCookiesFile, serializeNetscapeCookies } from "../../../packages/wire-core/src/runtime/cookies.js";
 export type { CookieTextFormat } from "../../../packages/wire-core/src/runtime/cookies.js";
+export { extractChromeCookies } from "../../../packages/wire-core/src/runtime/chrome.js";
+export type { ChromeCookieExtraction, ChromeCookieResult } from "../../../packages/wire-core/src/runtime/chrome.js";
 export { createGoogleTokensCapability } from "../../../packages/wire-core/src/runtime/google.js";
+export type { NodeEnvironment } from "../../../packages/wire-core/src/runtime/node.js";
 export { composeWire } from "../../../packages/wire-core/src/operations.js";
 export type { Wire, WireAction, WireDependencies, WireFilesystem, WireResult, WireWatchSession } from "../../../packages/wire-core/src/operations.js";
+export { composeAuth } from "../../../packages/wire/src/auth.js";
+export type { Auth, AuthResult, AuthService, CookieAuthService, CookieExtractor } from "../../../packages/wire/src/auth.js";

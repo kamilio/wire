@@ -85,6 +85,7 @@ export interface CookiesCapability {
     load(service: string): Promise<readonly Cookie[]>;
     loadSaved(service: string): Promise<readonly Cookie[] | null>;
     metadata(service: string): Promise<Readonly<Record<string, string>>>;
+    save(service: string, cookies: readonly Cookie[], metadata: Readonly<Record<string, string>>): Promise<void>;
     delete(service: string): Promise<void>;
 }
 export interface GoogleTokenDocument {

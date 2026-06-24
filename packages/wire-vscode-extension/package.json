@@ -11,13 +11,15 @@
   "categories": ["Other"],
   "activationEvents": [
     "onStartupFinished",
-    "onCommand:wire-vscode.linkHere",
-    "onCommand:wire-vscode.syncFile",
-    "onCommand:wire-vscode.downloadFile",
-    "onCommand:wire-vscode.openResource",
-    "onCommand:wire-vscode.syncDirectory",
-    "onCommand:wire-vscode.authStatus",
-    "onCommand:wire-vscode.compileAndReload"
+    "onCommand:wire.linkHere",
+    "onCommand:wire.syncFile",
+    "onCommand:wire.downloadFile",
+    "onCommand:wire.openResource",
+    "onCommand:wire.syncDirectory",
+    "onCommand:wire.authStatus",
+    "onCommand:wire.authLogin",
+    "onCommand:wire.authLogout",
+    "onCommand:wire.compileAndReload"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -73,102 +75,127 @@
     },
     "commands": [
       {
-        "command": "wire-vscode.linkHere",
-        "title": "Wire: Link URL Here",
+        "command": "wire.linkHere",
+        "title": "Link URL Here",
+        "category": "Wire",
         "icon": "$(link)"
       },
       {
-        "command": "wire-vscode.syncFile",
-        "title": "Wire: Sync File",
+        "command": "wire.syncFile",
+        "title": "Sync File",
+        "category": "Wire",
         "icon": "$(sync)"
       },
       {
-        "command": "wire-vscode.downloadFile",
-        "title": "Wire: Download File",
+        "command": "wire.downloadFile",
+        "title": "Download File",
+        "category": "Wire",
         "icon": "$(cloud-download)"
       },
       {
-        "command": "wire-vscode.openResource",
-        "title": "Wire: Open Resource",
+        "command": "wire.openResource",
+        "title": "Open Resource",
+        "category": "Wire",
         "icon": "$(globe)"
       },
       {
-        "command": "wire-vscode.syncDirectory",
-        "title": "Wire: Sync Directory",
+        "command": "wire.syncDirectory",
+        "title": "Sync Directory",
+        "category": "Wire",
         "icon": "$(sync)"
       },
       {
-        "command": "wire-vscode.authStatus",
-        "title": "Wire: Auth Status",
+        "command": "wire.authStatus",
+        "title": "Auth Status",
+        "category": "Wire",
         "icon": "$(key)"
       },
       {
-        "command": "wire-vscode.compileAndReload",
-        "title": "Wire: Compile and Reload",
+        "command": "wire.authLogin",
+        "title": "Login",
+        "category": "Wire",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "wire.authLogout",
+        "title": "Logout",
+        "category": "Wire",
+        "icon": "$(sign-out)"
+      },
+      {
+        "command": "wire.compileAndReload",
+        "title": "Compile and Reload",
+        "category": "Wire",
         "icon": "$(refresh)"
       }
     ],
     "menus": {
       "explorer/context": [
         {
-          "command": "wire-vscode.linkHere",
+          "command": "wire.linkHere",
           "when": "resourceScheme == file && explorerResourceIsFolder",
           "group": "2_wire@1"
         },
         {
-          "command": "wire-vscode.syncDirectory",
+          "command": "wire.syncDirectory",
           "when": "resourceScheme == file && explorerResourceIsFolder",
           "group": "2_wire@2"
         },
         {
-          "command": "wire-vscode.syncFile",
+          "command": "wire.syncFile",
           "when": "resourceScheme == file && !explorerResourceIsFolder",
           "group": "2_wire@1"
         },
         {
-          "command": "wire-vscode.downloadFile",
+          "command": "wire.downloadFile",
           "when": "resourceScheme == file && !explorerResourceIsFolder",
           "group": "2_wire@2"
         },
         {
-          "command": "wire-vscode.openResource",
+          "command": "wire.openResource",
           "when": "resourceScheme == file && !explorerResourceIsFolder",
           "group": "2_wire@3"
         }
       ],
       "editor/title": [
         {
-          "command": "wire-vscode.syncFile",
+          "command": "wire.syncFile",
           "when": "resourceScheme == file && resourceExtname == .md",
           "group": "navigation@1"
         },
         {
-          "command": "wire-vscode.openResource",
+          "command": "wire.openResource",
           "when": "resourceScheme == file && resourceExtname == .md",
           "group": "navigation@2"
         }
       ],
       "commandPalette": [
         {
-          "command": "wire-vscode.linkHere"
+          "command": "wire.linkHere"
         },
         {
-          "command": "wire-vscode.syncFile"
+          "command": "wire.syncFile"
         },
         {
-          "command": "wire-vscode.downloadFile"
+          "command": "wire.downloadFile"
         },
         {
-          "command": "wire-vscode.openResource"
+          "command": "wire.openResource"
         },
         {
-          "command": "wire-vscode.syncDirectory"
+          "command": "wire.syncDirectory"
         },
         {
-          "command": "wire-vscode.authStatus"
+          "command": "wire.authStatus"
         },
         {
-          "command": "wire-vscode.compileAndReload"
+          "command": "wire.authLogin"
+        },
+        {
+          "command": "wire.authLogout"
+        },
+        {
+          "command": "wire.compileAndReload"
         }
       ]
     }

@@ -1,1 +1,1 @@
-{"version":3,"file":"zoom-hub.d.ts","sourceRoot":"","sources":["../src/zoom-hub.ts"],"names":[],"mappings":"AAEA,OAAO,KAAK,EAAE,mBAAmB,EAAE,MAAM,WAAW,CAAC;AAuDrD,eAAO,MAAM,cAAc;;;;;;;;;;;;;;;;;;;;;;;;;EAyCzB,CAAC"}
+{"version":3,"file":"zoom-hub.d.ts","sourceRoot":"","sources":["../src/zoom-hub.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,mBAAmB,EAAE,MAAM,WAAW,CAAC;AA2KrD,eAAO,MAAM,cAAc;;;;;;;;;;;;;;;;;;;;;;;;;EA2CzB,CAAC"}

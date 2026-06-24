@@ -15,6 +15,10 @@ function exportResponseWithDisposition(disposition, text) {
   return new Response(text, { headers: { "content-disposition": disposition } });
 }
 
+function testCookie(name, value, domain) {
+  return { domain, includeSubdomains: domain.startsWith("."), path: "/", secure: true, expires: 0, name, value, httpOnly: true };
+}
+
 function sheetHtml(revision = 7, sid = "sid-1", gridId = 7) {
   return new Response(`<script>_docs_flag_initialData={"info_params":{"token":"token-1"}}</script><script>var bootstrapData = ${JSON.stringify({ gridId, changes: { revision, sid } })}; function loadWaffle() {}</script>`);
 }
@@ -43,7 +47,7 @@ function runtime(handler) {
       "op://Agents/Slack/token": "slack-token",
       "op://Agents/Slack/workspace_origin": "https://quora.slack.com",
     })[reference] }),
-    cookies: Object.freeze({ load: async (service) => service === "asana" ? [{ name: "ticket", value: "session" }] : service === "zoom" ? [{ name: "zm_aid", value: "account" }] : service === "chatgpt" ? [{ name: "oai-did", value: "device" }, { name: "__Secure-next-auth.session-token", value: "session" }] : service === "google-docs" ? [{ name: "SID", value: "google-session" }] : [{ name: "notion_user_id", value: "user" }], loadSaved: async (service) => service === "asana" ? [{ name: "ticket", value: "session" }] : service === "zoom" ? [{ name: "zm_aid", value: "account" }] : service === "chatgpt" ? [{ name: "oai-did", value: "device" }, { name: "__Secure-next-auth.session-token", value: "session" }] : service === "google-docs" ? [{ name: "SID", value: "google-session" }] : [{ name: "notion_user_id", value: "user" }], metadata: async () => Object.freeze({ token: "xoxc-token" }), delete: async () => {} }),
+    cookies: Object.freeze({ load: async (service) => service === "asana" ? [{ name: "ticket", value: "session" }] : service === "zoom" ? [testCookie("zm_aid", "account", ".zoom.us"), testCookie("_zm_ssid", "session", ".zoom.us")] : service === "chatgpt" ? [{ name: "oai-did", value: "device" }, { name: "__Secure-next-auth.session-token", value: "session" }] : service === "google-docs" ? [{ name: "SID", value: "google-session" }] : [{ name: "notion_user_id", value: "user" }], loadSaved: async (service) => service === "asana" ? [{ name: "ticket", value: "session" }] : service === "zoom" ? [testCookie("zm_aid", "account", ".zoom.us"), testCookie("_zm_ssid", "session", ".zoom.us")] : service === "chatgpt" ? [{ name: "oai-did", value: "device" }, { name: "__Secure-next-auth.session-token", value: "session" }] : service === "google-docs" ? [{ name: "SID", value: "google-session" }] : [{ name: "notion_user_id", value: "user" }], metadata: async () => Object.freeze({ token: "xoxc-token" }), save: async () => {}, delete: async () => {} }),
     gmailTokens: Object.freeze({ load: async () => ({ token: "google-token", refresh_token: "refresh", token_uri: "token-uri" }), refresh: async () => ({ token: "google-token", refresh_token: "refresh", token_uri: "token-uri" }) }),
   });
 }
@@ -1838,7 +1842,7 @@ test("zoom adapter performs auth exchange and renders transcript", async () => {
   });
   const document = await fetchSource(Object.freeze({ ...zoomRuntime, clock: Object.freeze({ ...zoomRuntime.clock, localTimezone: () => "America/Chicago" }) }), "https://hub.zoom.us/doc/id", serviceCatalog);
   assert.equal(document.title, "2026-06-09-Meeting");
-  assert.equal(document.markdown, "# Meeting\n\n- Meeting start: Jun 9, 2026, 4:32 PM CDT\n- Owner: Owner\n- Zoom document: https://hub.zoom.us/doc/id\n\n## Transcript\n\n[00:01] Alice — Hello");
+  assert.equal(document.markdown, "# Meeting\n\n- Meeting start: Jun 9, 2026, 4:32 PM CDT\n- Owner: Owner\n- Zoom document: https://hub.zoom.us/doc/id\n\n## Transcript\n\n- [00:01] **Alice:** Hello");
   assert.ok(!document.markdown.includes("State:"));
   assert.ok(!document.markdown.includes("Recording ID:"));
   assert.ok(!document.markdown.includes("Meeting ID:"));
@@ -1850,13 +1854,13 @@ test("zoom adapter uses meeting date before transcript title", async () => {
     const url = String(input);
     if (url.endsWith("csrf_js")) return response(null, "token: csrf");
     if (url.includes("/nak?")) return response(null, "header.payload.signature");
-    if (url.includes("batch_get")) return response({ successItems: [{ title: "Poe team meeting 2026-06-11 15:01(GMT-5:00)", fileLink: "https://hub.zoom.us/doc/id", meetingNotes: { meetingId: "meeting", mainMeetingId: "main" }, owner: { ownerName: "Owner" }, createdInfo: { time: "created" }, updatedInfo: { time: "updated" } }] });
+    if (url.includes("batch_get")) return response({ successItems: [{ title: "Poe team meeting 2026-06-18 1630(GMT-500)", fileLink: "https://hub.zoom.us/doc/id", meetingNotes: { meetingId: "meeting", mainMeetingId: "main" }, owner: { ownerName: "Owner" }, createdInfo: { time: "created" }, updatedInfo: { time: "updated" } }] });
     if (url.includes("transcript_status")) return response({ aicTranscript: { exist: true, canAccess: true } });
-    return response({ meetingStartTime: 1781208060000, speakers: [{ userId: "u", username: "Alice" }], items: [{ startTime: "00:01", userId: "u", text: "Hello" }] });
+    return response({ meetingStartTime: 1781818200000, speakers: [{ userId: "u", username: "Alice" }], items: [{ startTime: "00:01", userId: "u", text: "Hello" }] });
   });
   const document = await fetchSource(Object.freeze({ ...zoomRuntime, clock: Object.freeze({ ...zoomRuntime.clock, localTimezone: () => "America/Chicago" }) }), "https://hub.zoom.us/doc/id", serviceCatalog);
-  assert.equal(document.title, "2026-06-11-Poe team meeting");
-  assert.equal(markdownFilename(document.title), "2026-06-11-poe-team-meeting.md");
+  assert.equal(document.title, "2026-06-18-Poe team meeting");
+  assert.equal(markdownFilename(document.title), "2026-06-18-poe-team-meeting.md");
 });
 
 test("zoom adapter renders unknown transcript speakers as user ids", async () => {
@@ -1869,8 +1873,56 @@ test("zoom adapter renders unknown transcript speakers as user ids", async () =>
     return response({ meetingStartTime: 1781040729626, speakers: [{ userId: "u", username: "Alice" }], items: [{ startTime: "00:01", userId: "missing-user", text: "Hello" }] });
   });
   const document = await fetchSource(Object.freeze({ ...zoomRuntime, clock: Object.freeze({ ...zoomRuntime.clock, localTimezone: () => "UTC" }) }), "https://hub.zoom.us/doc/id", serviceCatalog);
-  assert.match(document.markdown, /\[00:01\] missing-user — Hello/);
+  assert.match(document.markdown, /- \[00:01\] \*\*missing-user:\*\* Hello/);
   assert.ok(!document.markdown.includes("undefined"));
+});
+
+test("zoom adapter refreshes and persists cookies after every Zoom response", async () => {
+  const sentCookies = [];
+  const savedCookies = [];
+  const initialCookies = Object.freeze([
+    testCookie("zm_aid", "account", ".zoom.us"),
+    testCookie("_zm_ssid", "old-session", ".zoom.us"),
+    { ...testCookie("expired", "stale", ".zoom.us"), expires: 1 },
+  ]);
+  const zoomRuntime = runtime(async (input, init) => {
+    const url = String(input);
+    sentCookies.push({ url, cookie: init.headers.cookie });
+    if (url.endsWith("csrf_js")) return new Response("token: csrf", { headers: [["set-cookie", "csrf_refresh=csrf; Domain=.zoom.us; Path=/; Secure; HttpOnly"]] });
+    if (url.includes("/nak?")) {
+      assert.match(init.headers.cookie, /csrf_refresh=csrf/);
+      return new Response("header.payload.signature", { headers: [["set-cookie", "_zm_docs_nak=jwt; Domain=.zoom.us; Path=/; Max-Age=600; Secure; HttpOnly"]] });
+    }
+    if (url.includes("batch_get")) {
+      assert.match(init.headers.cookie, /_zm_docs_nak=jwt/);
+      assert.doesNotMatch(init.headers.cookie, /expired=stale/);
+      return new Response(JSON.stringify({ successItems: [{ title: "Meeting", fileLink: "https://hub.zoom.us/doc/id", meetingNotes: { meetingId: "meeting", mainMeetingId: "main" }, owner: { ownerName: "Owner" }, createdInfo: { time: "created" }, updatedInfo: { time: "updated" } }] }), { headers: [["content-type", "application/json"], ["set-cookie", "docs_cookie=docs; Domain=.us01docs.zoom.us; Path=/; Secure; HttpOnly"]] });
+    }
+    if (url.includes("transcript_status")) {
+      assert.match(init.headers.cookie, /docs_cookie=docs/);
+      return new Response(JSON.stringify({ aicTranscript: { exist: true, canAccess: true } }), { headers: [["content-type", "application/json"], ["set-cookie", "csrf_refresh=deleted; Domain=.zoom.us; Path=/; Max-Age=0; Secure; HttpOnly"]] });
+    }
+    assert.match(init.headers.cookie, /_zm_docs_nak=jwt/);
+    assert.match(init.headers.cookie, /docs_cookie=docs/);
+    assert.doesNotMatch(init.headers.cookie, /csrf_refresh=/);
+    return response({ meetingStartTime: 1781040729626, speakers: [{ userId: "u", username: "Alice" }], items: [{ startTime: "00:01", userId: "u", text: "Hello" }] });
+  });
+  await fetchSource(Object.freeze({
+    ...zoomRuntime,
+    cookies: Object.freeze({
+      ...zoomRuntime.cookies,
+      loadSaved: async () => initialCookies,
+      metadata: async () => Object.freeze({}),
+      save: async (_service, cookies) => { savedCookies.push(cookies); },
+    }),
+  }), "https://hub.zoom.us/doc/id", serviceCatalog);
+  assert.equal(sentCookies[0].cookie.includes("expired=stale"), false);
+  assert.equal(savedCookies.length, 5);
+  const lastNames = savedCookies.at(-1).map((cookie) => cookie.name);
+  assert.equal(lastNames.includes("_zm_docs_nak"), true);
+  assert.equal(lastNames.includes("docs_cookie"), true);
+  assert.equal(lastNames.includes("csrf_refresh"), false);
+  assert.equal(lastNames.includes("expired"), false);
 });
 
 test("zoom adapter renders missing transcript state and ids", async () => {
@@ -1887,7 +1939,7 @@ test("zoom adapter renders missing transcript state and ids", async () => {
 
 test("zoom adapter reports missing saved authentication with login command", async () => {
   await assert.rejects(
-    () => fetchSource(Object.freeze({ ...runtime(async () => response({})), cookies: Object.freeze({ load: async () => [], loadSaved: async () => null, metadata: async () => Object.freeze({}), delete: async () => {} }) }), "https://hub.zoom.us/doc/id", serviceCatalog),
+    () => fetchSource(Object.freeze({ ...runtime(async () => response({})), cookies: Object.freeze({ load: async () => [], loadSaved: async () => null, metadata: async () => Object.freeze({}), save: async () => {}, delete: async () => {} }) }), "https://hub.zoom.us/doc/id", serviceCatalog),
     /Zoom authentication is missing or expired\. Run `wire zoom login` once; other commands reuse saved cookies\./,
   );
 });

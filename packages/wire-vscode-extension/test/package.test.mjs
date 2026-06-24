@@ -14,14 +14,29 @@ test("package contributes file, directory, auth, and reload commands", async () 
   const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
   const commands = packageJson.contributes.commands.map((command) => command.command);
   assert.deepEqual(commands, [
-    "wire-vscode.linkHere",
-    "wire-vscode.syncFile",
-    "wire-vscode.downloadFile",
-    "wire-vscode.openResource",
-    "wire-vscode.syncDirectory",
-    "wire-vscode.authStatus",
-    "wire-vscode.compileAndReload"
+    "wire.linkHere",
+    "wire.syncFile",
+    "wire.downloadFile",
+    "wire.openResource",
+    "wire.syncDirectory",
+    "wire.authStatus",
+    "wire.authLogin",
+    "wire.authLogout",
+    "wire.compileAndReload"
   ]);
+  assert.deepEqual(packageJson.contributes.commands.map((command) => command.title), [
+    "Link URL Here",
+    "Sync File",
+    "Download File",
+    "Open Resource",
+    "Sync Directory",
+    "Auth Status",
+    "Login",
+    "Logout",
+    "Compile and Reload"
+  ]);
+  assert.equal(packageJson.contributes.commands.every((command) => command.category === "Wire"), true);
+  assert.equal(packageJson.contributes.submenus, undefined);
   assert.equal(packageJson.scripts.compile, "npm run build");
   assert.equal(packageJson.scripts.watch, "node build.mjs --watch");
 });

@@ -189,6 +189,11 @@ export function createCookiesCapability(filesystem: FilesystemCapability, home: 
       if (path === null) throw new Error(`${service} cookie authentication is missing. Run \`wire ${service} login\` once; other commands reuse saved cookies.`);
       return parseCookieMetadata(await filesystem.readText(path));
     },
+    save: async (service: string, cookies: readonly Cookie[], metadata: Readonly<Record<string, string>>) => {
+      const candidatePaths = paths(service);
+      const path = await existingCookiesFile(filesystem, candidatePaths) ?? candidatePaths[0]!;
+      await filesystem.writeText(path, serializeNetscapeCookies(cookies, metadata));
+    },
     delete: async (service: string) => {
       for (const path of paths(service)) if (await filesystem.exists(path)) await filesystem.delete(path);
     },

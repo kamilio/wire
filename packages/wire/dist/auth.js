@@ -1,4 +1,4 @@
-import { cookiesFile, parsePastedCookieMetadata, parsePastedCookies, repositoryCookiesFile, serializeNetscapeCookies } from "wire-core";
+import { parsePastedCookieMetadata, parsePastedCookies } from "wire-core";
 function cookieHeader(cookies) {
     return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
 }
@@ -55,6 +55,131 @@ async function verifyZoom(runtime, cookies) {
         return null;
     return Object.freeze({ service: "zoom", identity: Object.freeze({ account_id: accountId }) });
 }
+function zoomCookieKey(cookie) {
+    return `${cookie.domain}\t${cookie.path}\t${cookie.name}`;
+}
+function zoomCookieJar(cookies) {
+    return new Map(cookies.map((cookie) => [zoomCookieKey(cookie), cookie]));
+}
+function zoomDomainMatches(cookie, hostname) {
+    const domain = cookie.domain.startsWith(".") ? cookie.domain.slice(1) : cookie.domain;
+    return hostname === domain || (cookie.includeSubdomains && hostname.endsWith(`.${domain}`));
+}
+function zoomPathMatches(cookiePath, requestPath) {
+    return requestPath === cookiePath || requestPath.startsWith(cookiePath.endsWith("/") ? cookiePath : `${cookiePath}/`);
+}
+function zoomRequestCookieHeader(jar, url, now) {
+    const nowSeconds = Math.floor(now.getTime() / 1000);
+    return [...jar.values()].filter((cookie) => {
+        if (cookie.expires !== 0 && cookie.expires <= nowSeconds)
+            return false;
+        if (cookie.secure && url.protocol !== "https:")
+            return false;
+        if (!zoomDomainMatches(cookie, url.hostname))
+            return false;
+        return zoomPathMatches(cookie.path, url.pathname);
+    }).map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
+}
+function zoomDefaultCookiePath(pathname) {
+    const index = pathname.lastIndexOf("/");
+    return index <= 0 ? "/" : pathname.slice(0, index);
+}
+function zoomSplitSetCookieHeader(value) {
+    return Object.freeze(value.split(/,(?=\s*[^;,]+=)/).map((item) => item.trim()));
+}
+function zoomSetCookieHeaders(response) {
+    const headers = response.headers;
+    const values = headers.getSetCookie?.();
+    if (values !== undefined)
+        return Object.freeze(values);
+    const value = response.headers.get("set-cookie");
+    if (value === null)
+        return Object.freeze([]);
+    return zoomSplitSetCookieHeader(value);
+}
+function zoomCookieAttributes(parts) {
+    return new Map(parts.map((part) => {
+        const index = part.indexOf("=");
+        return index === -1 ? [part.toLowerCase(), ""] : [part.slice(0, index).toLowerCase(), part.slice(index + 1)];
+    }));
+}
+function zoomSetCookieExpires(attributes, now) {
+    if (attributes.has("max-age"))
+        return Math.floor(now.getTime() / 1000) + Number(attributes.get("max-age"));
+    if (attributes.has("expires"))
+        return Math.floor(Date.parse(attributes.get("expires")) / 1000);
+    return 0;
+}
+function zoomApplySetCookie(jar, url, header, now) {
+    const parts = header.split(";").map((part) => part.trim());
+    const pair = parts[0];
+    const separator = pair.indexOf("=");
+    const name = pair.slice(0, separator);
+    const value = pair.slice(separator + 1);
+    const attributes = zoomCookieAttributes(parts.slice(1));
+    const domain = attributes.has("domain") ? attributes.get("domain") : url.hostname;
+    const path = attributes.has("path") ? attributes.get("path") : zoomDefaultCookiePath(url.pathname);
+    const expires = zoomSetCookieExpires(attributes, now);
+    const cookie = Object.freeze({
+        domain,
+        includeSubdomains: attributes.has("domain") || domain.startsWith("."),
+        path,
+        secure: attributes.has("secure"),
+        expires,
+        name,
+        value,
+        httpOnly: attributes.has("httponly"),
+    });
+    const key = zoomCookieKey(cookie);
+    if (expires !== 0 && expires <= Math.floor(now.getTime() / 1000))
+        return jar.delete(key);
+    const existing = jar.get(key);
+    jar.set(key, cookie);
+    return existing === undefined || existing.value !== cookie.value || existing.expires !== cookie.expires || existing.secure !== cookie.secure || existing.httpOnly !== cookie.httpOnly || existing.includeSubdomains !== cookie.includeSubdomains;
+}
+function zoomApplyResponseCookies(jar, url, response, now) {
+    let changed = false;
+    for (const header of zoomSetCookieHeaders(response))
+        changed = zoomApplySetCookie(jar, url, header, now) || changed;
+    return changed;
+}
+function zoomPruneExpiredCookies(jar, now) {
+    let changed = false;
+    const nowSeconds = Math.floor(now.getTime() / 1000);
+    for (const [key, cookie] of jar.entries()) {
+        if (cookie.expires !== 0 && cookie.expires <= nowSeconds) {
+            jar.delete(key);
+            changed = true;
+        }
+    }
+    return changed;
+}
+async function zoomAuthRequest(runtime, jar, url, init) {
+    const parsed = new URL(url);
+    const response = await runtime.http.request(url, { ...init, headers: { ...init.headers, cookie: zoomRequestCookieHeader(jar, parsed, runtime.clock.now()) } });
+    return Object.freeze({ response, changed: zoomApplyResponseCookies(jar, parsed, response, runtime.clock.now()) });
+}
+async function verifyZoomCookieState(runtime, cookies, metadata) {
+    const jar = zoomCookieJar(cookies);
+    let changed = zoomPruneExpiredCookies(jar, runtime.clock.now());
+    const csrf = await zoomAuthRequest(runtime, jar, "https://zoom.us/csrf_js", { method: "POST", headers: { "user-agent": "Mozilla/5.0", "fetch-csrf-token": "1", referer: "https://hub.zoom.us/" }, body: "" });
+    changed = csrf.changed || changed;
+    if (!csrf.response.ok)
+        return Object.freeze({ result: null, cookies: Object.freeze([...jar.values()]), metadata, changed });
+    const csrfText = await csrf.response.text();
+    const csrfIndex = csrfText.indexOf(":");
+    if (csrfIndex === -1)
+        return Object.freeze({ result: null, cookies: Object.freeze([...jar.values()]), metadata, changed });
+    const token = csrfText.slice(csrfIndex + 1).trim();
+    if (token === "")
+        return Object.freeze({ result: null, cookies: Object.freeze([...jar.values()]), metadata, changed });
+    const jwt = await zoomAuthRequest(runtime, jar, "https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { "user-agent": "Mozilla/5.0", "zoom-csrftoken": token, "x-requested-with": "XMLHttpRequest", referer: "https://hub.zoom.us/" } });
+    changed = jwt.changed || changed;
+    const jwtText = (await jwt.response.text()).trim();
+    const accountId = [...jar.values()].find((value) => value.name === "zm_aid")?.value;
+    const result = jwt.response.ok && jwtText.split(".").length === 3 && accountId !== undefined ? Object.freeze({ service: "zoom", identity: Object.freeze({ account_id: accountId }) }) : null;
+    return Object.freeze({ result, cookies: Object.freeze([...jar.values()]), metadata, changed });
+}
 async function verifyChatgpt(runtime, cookies) {
     const deviceId = cookies.find((cookie) => cookie.name === "oai-did")?.value;
     if (deviceId === undefined)
@@ -106,15 +231,14 @@ async function verifyGoogleDocsCookies(runtime, cookies) {
     const email = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.exec(text)?.[0];
     return Object.freeze({ service: "google-docs", identity: Object.freeze(email === undefined ? { service: "google-docs" } : { email }) });
 }
-function environmentValue(environment, name) {
-    const value = environment[name];
-    if (value === undefined)
-        throw new Error(`Missing required environment variable: ${name}`);
-    return value;
-}
 export function composeAuth(runtime, environment, extractCookies) {
     const cookieDomains = Object.freeze({ asana: ".asana.com", chatgpt: ".chatgpt.com", gmail: ".google.com", "google-docs": ".google.com", notion: ".notion.so", slack: ".slack.com", zoom: ".zoom.us" });
     const verifyCookies = (service, cookies, metadata) => service === "asana" ? verifyAsana(runtime, cookies) : service === "chatgpt" ? verifyChatgpt(runtime, cookies) : service === "gmail" ? verifyGmailCookies(runtime, cookies) : service === "google-docs" ? verifyGoogleDocsCookies(runtime, cookies) : service === "notion" ? verifyNotion(runtime, cookies) : service === "slack" ? verifySlack(runtime, cookies, metadata) : verifyZoom(runtime, cookies);
+    const verifyCookieState = async (service, cookies, metadata) => {
+        if (service === "zoom")
+            return verifyZoomCookieState(runtime, cookies, metadata);
+        return Object.freeze({ result: await verifyCookies(service, cookies, metadata), cookies, metadata, changed: false });
+    };
     const cookieAuthError = (service) => new Error(`${service} cookie authentication is missing or expired. Run \`wire ${service} login\` once; other commands reuse saved cookies.`);
     const requiredReady = (required) => (values) => required.every((name) => values.some((cookie) => cookie.name === name));
     const googleReady = (values) => values.some((cookie) => (cookie.domain === ".google.com" || cookie.domain.endsWith(".google.com")) && ["SID", "__Secure-1PSID", "LSID", "__Host-1PLSID", "__Host-3PLSID"].includes(cookie.name));
@@ -122,41 +246,44 @@ export function composeAuth(runtime, environment, extractCookies) {
         const cookies = await runtime.cookies.loadSaved(service);
         if (cookies === null)
             throw cookieAuthError(service);
-        const result = await verifyCookies(service, cookies, service === "slack" ? await runtime.cookies.metadata(service) : Object.freeze({}));
-        if (result !== null)
-            return result;
+        const state = await verifyCookieState(service, cookies, service === "slack" ? await runtime.cookies.metadata(service) : Object.freeze({}));
+        if (state.changed)
+            await saveCookies(service, state.cookies, state.metadata);
+        if (state.result !== null)
+            return state.result;
         throw cookieAuthError(service);
     };
     const saveCookies = async (service, cookies, metadata) => {
-        const home = environmentValue(environment, "HOME");
-        const repositoryRoot = environment["WIRE_REPOSITORY_ROOT"];
-        await runtime.filesystem.writeText(repositoryRoot === undefined ? cookiesFile(home, service) : repositoryCookiesFile(repositoryRoot, service), serializeNetscapeCookies(cookies, metadata));
+        await runtime.cookies.save(service, cookies, metadata);
     };
     const pasteCookies = async (service, contents) => {
         const cookies = parsePastedCookies(contents, cookieDomains[service]);
         const metadata = parsePastedCookieMetadata(contents);
-        const result = await verifyCookies(service, cookies, metadata);
-        if (result === null)
+        const state = await verifyCookieState(service, cookies, metadata);
+        if (state.result === null)
             throw new Error(`${service} cookie authentication failed. Run \`wire ${service} login\` once; other commands reuse saved cookies.`);
-        await saveCookies(service, cookies, metadata);
-        return result;
+        await saveCookies(service, state.cookies, state.metadata);
+        return state.result;
     };
     const extract = async (service, startUrl, domains, ready, metadataExpression) => {
-        const extraction = { service, startUrl, domains, ready, verify: async (values, metadata) => await verifyCookies(service, values, metadata) !== null, ...(metadataExpression === undefined ? {} : { metadataExpression }) };
+        const extraction = { service, startUrl, domains, ready, verify: async (values, metadata) => (await verifyCookieState(service, values, metadata)).result !== null, ...(metadataExpression === undefined ? {} : { metadataExpression }) };
         const result = await extractCookies(environment, extraction);
-        await saveCookies(service, result.cookies, result.metadata);
-        if (result.manual === true)
+        if (result.manual === true) {
+            await saveCookies(service, result.cookies, result.metadata);
             return Object.freeze({ service, identity: Object.freeze({ saved: true }) });
+        }
         if (service === "chatgpt") {
+            await saveCookies(service, result.cookies, result.metadata);
             const accountId = result.metadata["account_id"];
             if (accountId === undefined)
                 throw new Error("chatgpt cookie authentication failed. Run `wire chatgpt login` once; other commands reuse saved cookies.");
             return Object.freeze({ service, identity: Object.freeze({ account_id: accountId }) });
         }
-        const verified = await verifyCookies(service, result.cookies, result.metadata);
-        if (verified === null)
+        const verified = await verifyCookieState(service, result.cookies, result.metadata);
+        if (verified.result === null)
             throw new Error(`${service} cookie authentication failed. Run \`wire ${service} login\` once; other commands reuse saved cookies.`);
-        return verified;
+        await saveCookies(service, verified.cookies, verified.metadata);
+        return verified.result;
     };
     const auth = Object.freeze({
         status,
