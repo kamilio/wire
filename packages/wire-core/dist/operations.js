@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { extractRelationships, markdownFilename } from "./core/transform.js";
 import { resourceId } from "./core/resource.js";
 import { fetchSource, parseSourceUrl, synchronizeSource, uploadSource } from "./core/source.js";
@@ -128,14 +128,38 @@ export function composeWire(dependencies) {
         };
         const stored = await registry.put(resource);
         const changes = changeSummary(summaryMarkdown ?? previous, summaryAfterMarkdown);
-        const resolvedAction = action === "created" && current !== null && previous !== "" ? changes.added === 0 && changes.modified === 0 && changes.removed === 0 ? "synced" : "downloaded" : action;
+        const resolvedAction = action === "attached" && current !== null && previous !== "" ? changes.added === 0 && changes.modified === 0 && changes.removed === 0 ? "synced" : "downloaded" : action;
         return { resource: stored, path: outputPath, markdown: fetched.markdown, summary: { action: resolvedAction, ...changes, remote: url, local: outputPath } };
     };
-    const create = async (url, path) => {
+    const attach = async (url, path) => {
         const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
-        return store(url, path, fetched, null, "created", undefined, undefined, fetched.markdown);
+        return store(url, path, fetched, null, "attached", undefined, undefined, fetched.markdown);
     };
+    const create = attach;
     const view = (url) => fetchSource(dependencies.fetchInput, url, dependencies.catalog);
+    const downloadSource = async (url, path) => {
+        const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
+        const source = parseSourceUrl(url, dependencies.catalog);
+        const cleanPath = join(resolve(path), markdownFilename(fetched.title));
+        const outputPath = await dependencies.filesystem.exists(cleanPath) ? join(resolve(path), collisionFilename(fetched.title, source.service, source.identifier)) : cleanPath;
+        const previous = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
+        await dependencies.filesystem.writeText(outputPath, fetched.markdown);
+        const id = resourceId(source);
+        const resource = {
+            id,
+            type: source.type,
+            identifiers: [{ service: source.service, identifier: source.identifier }],
+            urls: [url],
+            filesystem_links: [{ path: basename(outputPath), role: "primary", data: { format: "markdown" } }],
+            data: [
+                { namespace: "wire", key: "title", value: fetched.title },
+                { namespace: "wire", key: "synced_at", value: dependencies.now().toISOString() },
+                { namespace: source.service, key: "snapshot", value: fetched.data },
+            ],
+            relationships: extractRelationships(fetched.markdown, id, dependencies.catalog),
+        };
+        return { resource, path: outputPath, markdown: fetched.markdown, summary: { action: "downloaded", ...changeSummary(previous, fetched.markdown), remote: url, local: outputPath } };
+    };
     const resolveResource = async (registry, value, root, path) => {
         if (value.startsWith("http://") || value.startsWith("https://")) {
             const source = parseSourceUrl(value, dependencies.catalog);
@@ -193,15 +217,16 @@ export function composeWire(dependencies) {
         const fetched = await fetchSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog);
         return store(resource.urls[0], dirname(outputPath), fetched, markdown, "downloaded", undefined, undefined, fetched.markdown);
     };
-    const unlink = async (value, path) => {
+    const detach = async (value, path) => {
         const candidatePath = resolve(path, value);
         const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
         const resource = await resolveResource(registry, value, root, path);
         const result = await download(value, path);
         await registry.delete(resource.id);
-        return { ...result, summary: { ...result.summary, action: "unlinked" } };
+        return { ...result, summary: { ...result.summary, action: "detached" } };
     };
+    const unlink = detach;
     const watch = async (value, path) => {
         const candidatePath = resolve(path, value);
         const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
@@ -287,10 +312,13 @@ export function composeWire(dependencies) {
         return resolveResource(registry, value, root, path);
     };
     return Object.freeze({
+        attach,
         create,
         view,
+        downloadSource,
         sync,
         download,
+        detach,
         unlink,
         watch,
         openResource,

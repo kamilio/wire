@@ -116,7 +116,7 @@ async function updateMovedResult(options: WireHookOptions, wireRoot: string, res
       { ...primary, path: relativePath },
     ],
   };
-  if (result.summary.action !== "unlinked") await (await openWireRegistry(wireRoot, options.home)).put(resource);
+  if (result.summary.action !== "detached") await (await openWireRegistry(wireRoot, options.home)).put(resource);
   return { ...result, resource, path: outputPath, summary: { ...result.summary, local: outputPath } };
 }
 
@@ -185,10 +185,12 @@ async function runBatchHooks(options: WireHookOptions, command: string, results:
 export function withWireHooks(wire: Wire, options: WireHookOptions): Wire {
   return Object.freeze({
     ...wire,
-    create: async (url, path) => runSingleResultHooks(options, "link", await wire.create(url, path)),
+    attach: async (url, path) => runSingleResultHooks(options, "attach", await wire.attach(url, path)),
+    create: async (url, path) => runSingleResultHooks(options, "attach", await wire.create(url, path)),
     sync: async (value, path) => runSingleResultHooks(options, "sync", await wire.sync(value, path)),
     download: async (value, path) => runSingleResultHooks(options, "download", await wire.download(value, path)),
-    unlink: async (value, path) => runSingleResultHooks(options, "unlink", await wire.unlink(value, path)),
+    detach: async (value, path) => runSingleResultHooks(options, "detach", await wire.detach(value, path)),
+    unlink: async (value, path) => runSingleResultHooks(options, "detach", await wire.unlink(value, path)),
     syncAll: async (path) => runBatchHooks(options, "sync-all", await wire.syncAll(path)),
   });
 }

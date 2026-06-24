@@ -14,9 +14,11 @@ test("package contributes file, directory, auth, and reload commands", async () 
   const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
   const commands = packageJson.contributes.commands.map((command) => command.command);
   assert.deepEqual(commands, [
-    "wire.linkHere",
+    "wire.attachHere",
+    "wire.downloadHere",
+    "wire.previewUrl",
     "wire.syncFile",
-    "wire.downloadFile",
+    "wire.detachFile",
     "wire.openResource",
     "wire.syncDirectory",
     "wire.authStatus",
@@ -25,9 +27,11 @@ test("package contributes file, directory, auth, and reload commands", async () 
     "wire.compileAndReload"
   ]);
   assert.deepEqual(packageJson.contributes.commands.map((command) => command.title), [
-    "Link URL Here",
+    "Attach URL Here",
+    "Download URL Here",
+    "Preview URL",
     "Sync File",
-    "Download File",
+    "Detach File",
     "Open Resource",
     "Sync Directory",
     "Auth Status",
@@ -48,7 +52,7 @@ test("build bundles Wire SDK code without Wire CLI entrypoints", async () => {
   assert.doesNotMatch(bundle, /runWireCli|wire\\.mjs|wire-mcp/);
 });
 
-test("files workspace adapter links and syncs through composeWire", async () => {
+test("files workspace adapter attaches, downloads, syncs, and detaches through composeWire", async () => {
   await rm(outRoot, { recursive: true, force: true });
   await mkdir(outRoot, { recursive: true });
   const entry = join(outRoot, "harness.ts");
@@ -70,7 +74,7 @@ test("files workspace adapter links and syncs through composeWire", async () => 
       parse: (url) => ({ service: "notion", identifier: url.pathname.slice(1), type: "document" }),
       fetch: async () => {
         revision += 1;
-        return { title: "Linked Page", markdown: \`# Revision \${revision}\\n\`, data: { revision } };
+        return { title: "Attached Page", markdown: \`# Revision \${revision}\\n\`, data: { revision } };
       }
     })]);
     const wire = composeWire({
@@ -91,14 +95,20 @@ test("files workspace adapter links and syncs through composeWire", async () => 
       now: () => new Date("2026-06-17T12:00:00.000Z"),
       open: async () => {}
     });
-    const created = await wire.create("https://notion.test/page", project);
+    const created = await wire.attach("https://notion.test/page", project);
     assert.equal(created.resource.id, "notion:page");
-    assert.equal(created.path, join(project, "linked-page.md"));
+    assert.equal(created.path, join(project, "attached-page.md"));
     assert.equal(await readFile(created.path, "utf8"), "# Revision 1\\n");
     const synced = await wire.sync(created.path, project);
     assert.equal(synced.summary.action, "downloaded");
     assert.equal(await readFile(created.path, "utf8"), "# Revision 2\\n");
+    const downloaded = await wire.downloadSource("https://notion.test/downloaded", project);
+    assert.equal(downloaded.path, join(project, "attached-page-notion-downloaded.md"));
+    assert.equal(downloaded.summary.action, "downloaded");
     assert.deepEqual((await wire.listResources(project)).map((resource) => resource.id), ["notion:page"]);
+    const detached = await wire.detach(created.path, project);
+    assert.equal(detached.summary.action, "detached");
+    assert.deepEqual(await wire.listResources(project), []);
   `);
   const bundle = join(outRoot, "harness.mjs");
   await esbuild.build({ entryPoints: [entry], bundle: true, platform: "node", format: "esm", outfile: bundle });

@@ -26,7 +26,7 @@ function normalizeDefaultCommandArgv(argv: readonly string[]): readonly string[]
   const normalized = normalizeBareDebugArgv(debugTargeted);
   const words = positionalWords(normalized);
   if (normalized.length === 2) return [normalized[0]!, normalized[1]!, "--help"];
-  if (hasHelp(normalized) && words !== null && words.length > 0 && isSourceUrl(words[0]!)) return [normalized[0]!, normalized[1]!, "link", "--help"];
+  if (hasHelp(normalized) && words !== null && words.length > 0 && isSourceUrl(words[0]!)) return [normalized[0]!, normalized[1]!, "attach", "--help"];
   if (!hasHelpOrVersion(normalized) && !hasInvalidGlobalControl(normalized) && words?.length === 0) return [...normalized, "--help"];
   if (!hasHelpOrVersion(normalized) && !hasInvalidGlobalControl(normalized) && words?.length === 1 && authServices.has(words[0]!)) return [...normalized, "--help"];
   return normalized;
@@ -107,23 +107,25 @@ function normalizeBareDebugArgv(argv: readonly string[]): readonly string[] {
 }
 
 const fixedCommandPositionals = Object.freeze({
-  download: Object.freeze({ expected: 1, name: "resource" }),
+  attach: Object.freeze({ expected: 1, name: "url" }),
+  detach: Object.freeze({ expected: 1, name: "resource" }),
+  download: Object.freeze({ expected: 1, name: "url" }),
   init: Object.freeze({ expected: 0, name: "" }),
-  link: Object.freeze({ expected: 1, name: "url" }),
   open: Object.freeze({ expected: 1, name: "resource" }),
   preview: Object.freeze({ expected: 1, name: "url" }),
   "switch-db": Object.freeze({ expected: 0, name: "" }),
   sync: Object.freeze({ expected: 1, name: "resource" }),
   "sync-all": Object.freeze({ expected: 0, name: "" }),
-  unlink: Object.freeze({ expected: 1, name: "resource" }),
   watch: Object.freeze({ expected: 1, name: "file" }),
 });
 const authServices = new Set(["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"]);
 const authCommands = new Set(["login", "logout", "status"]);
 const removedCommandNames = Object.freeze({
   auth: "Use `wire <service> status`, `wire <service> login`, or `wire <service> logout`.",
-  create: "Use `wire link <url>` or `wire <url>`.",
-  fetch: "Use `wire link <url>` or `wire <url>`.",
+  create: "Use `wire attach <url>` or `wire <url>`.",
+  fetch: "Use `wire download <url>`.",
+  link: "Use `wire attach <url>` or `wire <url>`.",
+  unlink: "Use `wire detach <resource>`.",
   view: "Use `wire preview <url>`.",
 });
 const outputFormatNames = new Set(["rich", "md", "markdown", "json"]);
@@ -239,7 +241,7 @@ function excessPositionals(argv: readonly string[]): Readonly<{ commandPath: str
     if (authCommand === undefined || !authCommands.has(authCommand)) return null;
     return Object.freeze({ commandPath: `${command} ${authCommand}`, expected: 0, received: words.length - 2 });
   }
-  if (isSourceUrl(command)) return Object.freeze({ commandPath: "link", expected: 1, received: words.length });
+  if (isSourceUrl(command)) return Object.freeze({ commandPath: "attach", expected: 1, received: words.length });
   return null;
 }
 
@@ -313,7 +315,7 @@ function renderAuthCommandAfterServiceSeparator(argv: readonly string[]): boolea
 function renderInvalidSourceUrl(argv: readonly string[]): boolean {
   if (hasRootSeparator(argv)) return false;
   const words = positionalWords(argv);
-  if (words === null || words.length < 2 || (words[0] !== "link" && words[0] !== "preview") || isSourceUrl(words[1]!)) return false;
+  if (words === null || words.length < 2 || (words[0] !== "attach" && words[0] !== "download" && words[0] !== "preview") || isSourceUrl(words[1]!)) return false;
   renderCliError(argv, expectedSourceMessage("Expected source URL", words[1]!), `wire ${words[0]} --help`, expectedSourceMessage("Expected source URL", cliValue(words[1]!)));
   return true;
 }
@@ -321,19 +323,19 @@ function renderInvalidSourceUrl(argv: readonly string[]): boolean {
 function renderSchemelessResourceUrl(argv: readonly string[]): boolean {
   if (hasRootSeparator(argv)) return false;
   const words = positionalWords(argv);
-  if (words === null || words.length < 2 || (words[0] !== "sync" && words[0] !== "download" && words[0] !== "unlink" && words[0] !== "open") || !isSourceLikeWithoutScheme(words[1]!)) return false;
+  if (words === null || words.length < 2 || (words[0] !== "sync" && words[0] !== "detach" && words[0] !== "open") || !isSourceLikeWithoutScheme(words[1]!)) return false;
   renderCliError(argv, `Expected resource URL or Markdown path: ${words[1]}\nAdd \`https://\` and retry.`, `wire ${words[0]} --help`, `Expected resource URL or Markdown path: ${cliValue(words[1]!)}\nAdd \`https://\` and retry.`);
   return true;
 }
 
 function renderControlLikeResourceAfterSeparator(argv: readonly string[]): boolean {
   const words = positionalWords(argv);
-  if (words === null || words.length < 2 || (words[0] !== "sync" && words[0] !== "download" && words[0] !== "unlink" && words[0] !== "open" && words[0] !== "watch")) return false;
+  if (words === null || words.length < 2 || (words[0] !== "attach" && words[0] !== "download" && words[0] !== "preview" && words[0] !== "sync" && words[0] !== "detach" && words[0] !== "open" && words[0] !== "watch")) return false;
   const separator = argv.indexOf("--", 2);
   if (separator <= 2) return false;
   const value = argv[separator + 1];
   if (value === undefined || !value.startsWith("-") || words.length - 1 !== fixedCommandPositionals[words[0]! as keyof typeof fixedCommandPositionals].expected) return false;
-  const label = words[0] === "watch" ? "Markdown path" : "resource URL or Markdown path";
+  const label = words[0] === "watch" ? "Markdown path" : words[0] === "attach" || words[0] === "download" || words[0] === "preview" ? "source URL" : "resource URL or Markdown path";
   renderCliError(argv, `Expected ${label}: ${value}`, `wire ${words[0]} --help`, `Expected ${label}: ${cliValue(value)}`);
   return true;
 }
@@ -378,7 +380,7 @@ function outputFormats(argv: readonly string[]): readonly string[] {
 function outputHelpCommandPath(argv: readonly string[]): string | null {
   const words = positionalWords(argv);
   if (words === null || words.length === 0) return null;
-  if (isSourceUrl(words[0]!)) return "link";
+  if (isSourceUrl(words[0]!)) return "attach";
   if (authServices.has(words[0]!)) return words[1] !== undefined && authCommands.has(words[1]!) ? `${words[0]} ${words[1]}` : words[0]!;
   if (words[0]! in fixedCommandPositionals) return words[0]!;
   return null;

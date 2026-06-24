@@ -8,7 +8,7 @@ Use it when important working context lives in tools like Notion, Google Docs, G
 
 - Commit notes, specs, meeting docs, and project plans into the codebase.
 - Give coding agents access to live product docs, task context, and decisions without copy-paste.
-- Keep local Markdown linked to the original source so updates can be pulled again later.
+- Attach local Markdown to the original source so updates can be pulled again later.
 - Edit supported Markdown files locally and sync changes back to the source.
 - Run local automation after syncs, such as moving files, indexing docs, or notifying another tool.
 
@@ -20,16 +20,34 @@ Initialize a workspace:
 wire init
 ```
 
-Link a source URL as Markdown:
+Attach a source URL as Markdown:
 
 ```sh
 wire https://www.notion.so/example/page
+```
+
+Download a source URL once without tracking it:
+
+```sh
+wire download https://www.notion.so/example/page
 ```
 
 Refresh one file:
 
 ```sh
 wire sync docs/example.md
+```
+
+Detach one file after downloading the latest source copy:
+
+```sh
+wire detach docs/example.md
+```
+
+Preview a source URL without writing a file:
+
+```sh
+wire preview https://www.notion.so/example/page
 ```
 
 Refresh the current directory tree:

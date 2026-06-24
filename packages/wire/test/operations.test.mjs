@@ -140,7 +140,7 @@ for (const backend of ["sqlite", "files"]) {
       revision += 1;
       return { title: revision === 1 ? "Original" : "Renamed", markdown: `# Revision ${revision}\n`, data: { revision } };
     });
-    const first = await wire.create("https://notion.test/page", join(project, "docs"));
+    const first = await wire.attach("https://notion.test/page", join(project, "docs"));
     const registry = await openWireRegistry(project, project);
     await registry.put({
       ...first.resource,
@@ -174,6 +174,18 @@ test("view returns fetched document without writes or registry mutation", async 
   assert.deepEqual(await wire.view("https://notion.test/page"), { title: "Viewed", markdown: "# Viewed\n", data: { viewed: true } });
   assert.equal(await filesystem().exists(join(project, ".wire")), false);
   assert.deepEqual(await import("node:fs/promises").then(({ readdir }) => readdir(project)), []);
+});
+
+test("downloadSource writes Markdown without creating a registry entry", async () => {
+  const project = join(testRoot, "download-source");
+  await mkdir(project);
+  await initializeWire(project, "sqlite", "registry.sqlite3");
+  const wire = createWire(project, async () => ({ title: "Downloaded Page", markdown: "# Downloaded\n", data: { revision: 1 } }));
+  const result = await wire.downloadSource("https://notion.test/page", project);
+  assert.equal(result.path, join(project, "downloaded-page.md"));
+  assert.equal(await readFile(result.path, "utf8"), "# Downloaded\n");
+  assert.deepEqual(result.summary, { action: "downloaded", added: 1, modified: 0, removed: 0, remote: "https://notion.test/page", local: result.path });
+  assert.deepEqual(await (await openWireRegistry(project, project)).listResources(), []);
 });
 
 test("registered-resource operations require an initialized workspace without creating one", async () => {
@@ -227,12 +239,12 @@ test("create extracts supported relationships and returns JSON-shaped data", asy
     markdown: "https://slack.test/thread https://notion.test/page https://example.com/ignored https://slack.test/thread.",
     data: { blocks: [1, 2] },
   }));
-  const result = await wire.create("https://notion.test/page", project);
+  const result = await wire.attach("https://notion.test/page", project);
   assert.deepEqual(result.resource.relationships, [{ target_id: "slack:thread", type: "references", data: { url: "https://slack.test/thread" } }]);
   assert.deepEqual(JSON.parse(JSON.stringify(result)), result);
   assert.equal(result.markdown, await readFile(result.path, "utf8"));
-  assert.deepEqual(result.summary, { action: "created", added: 1, modified: 0, removed: 0, remote: "https://notion.test/page", local: result.path });
-  const repeated = await wire.create("https://notion.test/page", project);
+  assert.deepEqual(result.summary, { action: "attached", added: 1, modified: 0, removed: 0, remote: "https://notion.test/page", local: result.path });
+  const repeated = await wire.attach("https://notion.test/page", project);
   assert.equal(repeated.path, result.path);
   assert.deepEqual(repeated.summary, { action: "synced", added: 0, modified: 0, removed: 0, remote: "https://notion.test/page", local: result.path });
 });
@@ -242,10 +254,10 @@ test("create keeps clean titles and adds stable identity only on filename collis
   await mkdir(project);
   await initializeWire(project, "sqlite", "registry.sqlite3");
   const wire = createWire(project, async () => ({ title: "Weekly Sync", markdown: "# Weekly Sync\n", data: {} }));
-  const first = await wire.create("https://notion.test/one", project);
-  const second = await wire.create("https://notion.test/two", project);
+  const first = await wire.attach("https://notion.test/one", project);
+  const second = await wire.attach("https://notion.test/two", project);
   const longIdentifier = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-extra";
-  const third = await wire.create(`https://notion.test/${longIdentifier}`, project);
+  const third = await wire.attach(`https://notion.test/${longIdentifier}`, project);
   const suffix = `notion-${longIdentifier}`;
   const compact = `${suffix.slice(0, 32)}-${createHash("sha256").update(suffix).digest("hex").slice(0, 10)}`;
   assert.equal(first.path, join(project, "weekly-sync.md"));
@@ -259,8 +271,8 @@ test("sync-all preserves registered subdirectories", async () => {
   await mkdir(join(project, "two", "nested"), { recursive: true });
   await initializeWire(project, "sqlite", "registry.sqlite3");
   const wire = createWire(project, async (url) => ({ title: url.endsWith("one") ? "One" : "Two", markdown: `# ${url}\n`, data: {} }));
-  await wire.create("https://notion.test/one", join(project, "one"));
-  await wire.create("https://notion.test/two", join(project, "two", "nested"));
+  await wire.attach("https://notion.test/one", join(project, "one"));
+  await wire.attach("https://notion.test/two", join(project, "two", "nested"));
   const results = await wire.syncAll(project);
   assert.deepEqual(results.map((result) => result.path), [join(project, "one", "one.md"), join(project, "two", "nested", "two.md")]);
 });
@@ -271,8 +283,8 @@ test("sync-all launched from a subdirectory syncs only resources inside that tre
   await mkdir(join(project, "two", "nested"), { recursive: true });
   await initializeWire(project, "sqlite", "registry.sqlite3");
   const wire = createWire(project, async (url) => ({ title: url.endsWith("one") ? "One" : "Two", markdown: `# ${url}\n`, data: {} }));
-  await wire.create("https://notion.test/one", join(project, "one"));
-  await wire.create("https://notion.test/two", join(project, "two", "nested"));
+  await wire.attach("https://notion.test/one", join(project, "one"));
+  await wire.attach("https://notion.test/two", join(project, "two", "nested"));
   const oneResults = await wire.syncAll(join(project, "one"));
   assert.deepEqual(oneResults.map((result) => result.path), [join(project, "one", "one.md")]);
   const twoResults = await wire.syncAll(join(project, "two"));
@@ -287,8 +299,8 @@ test("sync-all scopes symlinked launch directories to matching workspace resourc
   await symlink(realProject, linkedProject, "dir");
   await initializeWire(realProject, "sqlite", "registry.sqlite3");
   const wire = createWire(realProject, async (url) => ({ title: url.endsWith("one") ? "One" : "Two", markdown: `# ${url}\n`, data: {} }));
-  await wire.create("https://notion.test/one", join(realProject, "one"));
-  await wire.create("https://notion.test/two", join(realProject, "two"));
+  await wire.attach("https://notion.test/one", join(realProject, "one"));
+  await wire.attach("https://notion.test/two", join(realProject, "two"));
   const results = await wire.syncAll(join(linkedProject, "one"));
   assert.deepEqual(results.map((result) => result.path), [join(realProject, "one", "one.md")]);
 });
@@ -302,7 +314,7 @@ test("sync passes stored snapshot and edited Markdown into service synchronizati
     calls.push({ url, source, base, markdown, markdownPath });
     return { title: "Project", markdown: "# Merged\n", data: { revision: 2 } };
   });
-  const created = await wire.create("https://sync.test/project", project);
+  const created = await wire.attach("https://sync.test/project", project);
   await writeFile(created.path, "# Local edit\n");
   const synced = await wire.sync(created.path, project);
   assert.deepEqual(calls, [{ url: "https://sync.test/project", source: { service: "sync", identifier: "project", type: "project" }, base: { revision: 1 }, markdown: "# Local edit\n", markdownPath: created.path }]);
@@ -316,7 +328,7 @@ test("sync summary counts same-line replacements as modified", async () => {
   await mkdir(project);
   await initializeWire(project, "sqlite", "registry.sqlite3");
   const wire = createSynchronizingWire(project, async () => ({ title: "Project", markdown: "| id | new |\n", data: { revision: 2 } }));
-  const created = await wire.create("https://sync.test/project", project);
+  const created = await wire.attach("https://sync.test/project", project);
   await writeFile(created.path, "| id | old |\n");
   const synced = await wire.sync(created.path, project);
   assert.deepEqual(synced.summary, { action: "downloaded", added: 0, modified: 1, removed: 0, remote: "https://sync.test/project", local: created.path });
@@ -342,7 +354,7 @@ test("sync marks registered snapshot edits as uploaded and summarizes the base-t
     now: () => new Date("2026-06-10T12:00:00.000Z"),
     open: async () => {},
   });
-  const created = await wire.create("https://sync.test/project", project);
+  const created = await wire.attach("https://sync.test/project", project);
   await writeFile(created.path, "# Local edit\n");
   const synced = await wire.sync(created.path, project);
   assert.deepEqual(synced.summary, { action: "uploaded", added: 0, modified: 1, removed: 0, remote: "https://sync.test/project", local: created.path });
@@ -368,7 +380,7 @@ test("sync upload summary ignores provider Markdown canonicalization", async () 
     now: () => new Date("2026-06-10T12:00:00.000Z"),
     open: async () => {},
   });
-  const created = await wire.create("https://sync.test/project", project);
+  const created = await wire.attach("https://sync.test/project", project);
   await writeFile(created.path, "A\nB\nC\n");
   const synced = await wire.sync(created.path, project);
   assert.equal(await readFile(created.path, "utf8"), "A\nB normalized\nC\n");
@@ -395,7 +407,7 @@ test("sync marks local Markdown-only canonicalization as synced", async () => {
     now: () => new Date("2026-06-10T12:00:00.000Z"),
     open: async () => {},
   });
-  const created = await wire.create("https://sync.test/project", project);
+  const created = await wire.attach("https://sync.test/project", project);
   await writeFile(created.path, "| id | value |\n| :--- | ---: |\n| 1 | old |\n");
   const synced = await wire.sync(created.path, project);
   assert.equal(await readFile(created.path, "utf8"), "| id | value |\n| --- | --- |\n| 1 | old |\n");
@@ -411,7 +423,7 @@ test("download returns the same compact summary shape as sync", async () => {
     revision += 1;
     return { title: "Document", markdown: `# Remote ${revision}\n`, data: { revision } };
   });
-  const created = await wire.create("https://notion.test/page", project);
+  const created = await wire.attach("https://notion.test/page", project);
   await writeFile(created.path, "# Local edit\n");
   const downloaded = await wire.download(created.path, project);
   assert.equal(await readFile(created.path, "utf8"), "# Remote 2\n");
@@ -423,14 +435,14 @@ test("download reports downloaded when local Markdown already matches remote", a
   await mkdir(project);
   await initializeWire(project, "sqlite", "registry.sqlite3");
   const wire = createWire(project, async () => ({ title: "Document", markdown: "# Remote\n", data: {} }));
-  const created = await wire.create("https://notion.test/page", project);
+  const created = await wire.attach("https://notion.test/page", project);
   const downloaded = await wire.download(created.path, project);
   assert.equal(await readFile(created.path, "utf8"), "# Remote\n");
   assert.deepEqual(downloaded.summary, { action: "downloaded", added: 0, modified: 0, removed: 0, remote: "https://notion.test/page", local: created.path });
 });
 
-test("unlink downloads latest Markdown and removes the resource from future syncs", async () => {
-  const project = join(testRoot, "unlink-download-remove");
+test("detach downloads latest Markdown and removes the resource from future syncs", async () => {
+  const project = join(testRoot, "detach-download-remove");
   await mkdir(project);
   await initializeWire(project, "sqlite", "registry.sqlite3");
   let revision = 0;
@@ -438,13 +450,13 @@ test("unlink downloads latest Markdown and removes the resource from future sync
     revision += 1;
     return { title: "Document", markdown: `# Remote ${revision}\n`, data: { revision } };
   });
-  const created = await wire.create("https://notion.test/page", project);
+  const created = await wire.attach("https://notion.test/page", project);
   await writeFile(created.path, "# Local edit\n");
-  const unlinked = await wire.unlink(created.path, project);
+  const detached = await wire.detach(created.path, project);
   const registry = await openWireRegistry(project, project);
   assert.equal(await readFile(created.path, "utf8"), "# Remote 2\n");
   assert.deepEqual(await registry.listResources(), []);
-  assert.deepEqual(unlinked.summary, { action: "unlinked", added: 0, modified: 1, removed: 0, remote: "https://notion.test/page", local: created.path });
+  assert.deepEqual(detached.summary, { action: "detached", added: 0, modified: 1, removed: 0, remote: "https://notion.test/page", local: created.path });
   await assert.rejects(() => wire.sync("notion:page", project), /Resource not found: notion:page/);
   assert.deepEqual(await wire.syncAll(project), []);
 });
@@ -455,7 +467,7 @@ test("sync absolute file uses its workspace registry", async () => {
   await mkdir(project);
   await mkdir(elsewhere);
   const wire = createWire(elsewhere, async () => ({ title: "Document", markdown: "# Document\n", data: {} }));
-  const created = await wire.create("https://notion.test/page", project);
+  const created = await wire.attach("https://notion.test/page", project);
   const synced = await wire.sync(created.path, elsewhere);
   assert.equal(synced.resource.id, "notion:page");
   assert.equal(synced.path, created.path);
@@ -468,7 +480,7 @@ test("open and show absolute files use their workspace registry", async () => {
   await mkdir(elsewhere);
   const opened = [];
   const wire = createWire(elsewhere, async () => ({ title: "Document", markdown: "# Document\n", data: {} }), opened);
-  const created = await wire.create("https://notion.test/page", project);
+  const created = await wire.attach("https://notion.test/page", project);
   assert.equal((await wire.showResource(created.path, elsewhere)).id, "notion:page");
   assert.equal((await wire.openResource(created.path, elsewhere)).id, "notion:page");
   assert.deepEqual(opened, ["https://notion.test/page"]);
@@ -479,7 +491,7 @@ test("sync relative file resolves from the launch directory", async () => {
   await mkdir(project);
   await initializeWire(project, "sqlite", "registry.sqlite3");
   const wire = createWire(project, async () => ({ title: "Document", markdown: "# Document\n", data: {} }));
-  const created = await wire.create("https://notion.test/page", project);
+  const created = await wire.attach("https://notion.test/page", project);
   const registry = await openWireRegistry(project, project);
   assert.equal((await registry.findByPath(wireRelativePath(created.path, join(project, ".wire"))))[0].id, "notion:page");
   const synced = await wire.sync("document.md", project);
@@ -497,7 +509,7 @@ test("sync recreates deleted registered Markdown files by path", async () => {
       revision += 1;
       return { title: "Document", markdown: `# Revision ${revision}\n`, data: { revision } };
     });
-    const created = await wire.create("https://notion.test/page", project);
+    const created = await wire.attach("https://notion.test/page", project);
     await unlink(created.path);
     const synced = await wire.sync("document.md", project);
     assert.equal(synced.path, created.path);
@@ -515,7 +527,7 @@ test("sync preserves service metadata written during synchronization", async () 
     await registry.put({ ...resource, data: [...resource.data, { namespace: "sync", key: "sidecar", value: { blocks: [] } }] });
     return { title: "Project", markdown, data: { revision: 2, path: markdownPath } };
   });
-  const created = await wire.create("https://sync.test/project", project);
+  const created = await wire.attach("https://sync.test/project", project);
   const synced = await wire.sync(created.path, project);
   assert.deepEqual(synced.resource.data.find((item) => item.namespace === "sync" && item.key === "sidecar").value, { blocks: [] });
 });
@@ -525,7 +537,7 @@ test("sync conflict leaves edited Markdown and stored snapshot unchanged", async
   await mkdir(project);
   await initializeWire(project, "sqlite", "registry.sqlite3");
   const wire = createSynchronizingWire(project, async () => { throw new Error("Conflicting edits"); });
-  const created = await wire.create("https://sync.test/project", project);
+  const created = await wire.attach("https://sync.test/project", project);
   await writeFile(created.path, "# Local edit\n");
   await assert.rejects(() => wire.sync(created.path, project), /Conflicting edits/);
   assert.equal(await readFile(created.path, "utf8"), "# Local edit\n");
@@ -542,8 +554,8 @@ test("sync-all invokes service synchronization for every registered resource", a
     calls += 1;
     return { title: "Project", markdown: `# Merged ${calls}\n`, data: { revision: base.revision + 1 } };
   });
-  await wire.create("https://sync.test/one", project);
-  await wire.create("https://sync.test/two", project);
+  await wire.attach("https://sync.test/one", project);
+  await wire.attach("https://sync.test/two", project);
   assert.deepEqual((await wire.listResources(project)).map((resource) => ({ id: resource.id, urls: resource.urls })), [
     { id: "sync:one", urls: ["https://sync.test/one"] },
     { id: "sync:two", urls: ["https://sync.test/two"] },
@@ -567,8 +579,8 @@ test("sync-all records resource failures and continues syncing remaining resourc
     if (url.endsWith("/one")) throw new Error("Remote document disappeared");
     return { title: "Project", markdown: `# Merged ${base.revision + 1}\n`, data: { revision: base.revision + 1 } };
   });
-  await wire.create("https://sync.test/one", project);
-  await wire.create("https://sync.test/two", project);
+  await wire.attach("https://sync.test/one", project);
+  await wire.attach("https://sync.test/two", project);
   const results = await wire.syncAll(project);
   assert.deepEqual(calls, ["https://sync.test/one", "https://sync.test/two"]);
   assert.deepEqual(results.map((result) => result.summary.action), ["failed", "downloaded"]);
@@ -589,9 +601,9 @@ test("sync-all records object-shaped resource failures readably", async () => {
     if (url.endsWith("/two")) throw { error: "Remote returned malformed payload" };
     return { title: "Project", markdown: `# Merged ${base.revision + 1}\n`, data: { revision: base.revision + 1 } };
   });
-  await wire.create("https://sync.test/one", project);
-  await wire.create("https://sync.test/two", project);
-  await wire.create("https://sync.test/three", project);
+  await wire.attach("https://sync.test/one", project);
+  await wire.attach("https://sync.test/two", project);
+  await wire.attach("https://sync.test/three", project);
   const results = await wire.syncAll(project);
   assert.deepEqual(calls, ["https://sync.test/one", "https://sync.test/three", "https://sync.test/two"]);
   assert.deepEqual(results.map((result) => result.summary.action), ["failed", "downloaded", "failed"]);
@@ -613,7 +625,7 @@ test("watch two-way syncs debounced file changes and polls", async () => {
     calls.push({ base, markdown, markdownPath });
     return { title: "Project", markdown: `# Merged ${calls.length}\n`, data: { revision: base.revision + 1 } };
   }, harness.capability);
-  const created = await wire.create("https://sync.test/project", project);
+  const created = await wire.attach("https://sync.test/project", project);
   const session = await wire.watch(created.path, project);
   assert.equal(session.path, created.path);
   assert.equal(session.mode, "two-way");
@@ -669,7 +681,7 @@ test("watch recreates deleted registered Markdown before watching", async () => 
     now: () => new Date("2026-06-10T12:00:00.000Z"),
     open: async () => {},
   });
-  const created = await wire.create("https://sync.test/project", project);
+  const created = await wire.attach("https://sync.test/project", project);
   await unlink(created.path);
   const session = await wire.watch(created.path, project);
   assert.equal(await readFile(created.path, "utf8"), "# Remote 2\n");
@@ -710,7 +722,7 @@ test("watch download mode uses polling without local file watchers", async () =>
     now: () => new Date("2026-06-10T12:00:00.000Z"),
     open: async () => {},
   });
-  const created = await wire.create("https://sync.test/project", project);
+  const created = await wire.attach("https://sync.test/project", project);
   const session = await wire.watch(created.path, project);
   assert.equal(session.mode, "download");
   assert.deepEqual(harness.fileWatchers, []);
@@ -755,7 +767,7 @@ test("watch download mode recreates deleted registered Markdown without synchron
     now: () => new Date("2026-06-10T12:00:00.000Z"),
     open: async () => {},
   });
-  const created = await wire.create("https://sync.test/project", project);
+  const created = await wire.attach("https://sync.test/project", project);
   await unlink(created.path);
   const session = await wire.watch(created.path, project);
   assert.equal(await readFile(created.path, "utf8"), "# Remote 2\n");
@@ -777,7 +789,7 @@ test("moving a workspace preserves registry and document resolution", async () =
       return { title: "Portable", markdown: `# Revision ${revision}\n`, data: { revision } };
     };
     const originalWire = createWire(original, fetches);
-    const created = await originalWire.create("https://notion.test/portable", join(original, "docs"));
+    const created = await originalWire.attach("https://notion.test/portable", join(original, "docs"));
     assert.deepEqual(created.resource.filesystem_links, [{ path: "docs/portable.md", role: "primary", data: { format: "markdown" } }]);
     await rename(original, moved);
     const opened = [];
@@ -798,7 +810,7 @@ test("show, resolve, sync, and open support URL, path, and id", async () => {
   await mkdir(project);
   const opened = [];
   const wire = createWire(project, async () => ({ title: "Page", markdown: "# Page\n", data: {} }), opened);
-  const created = await wire.create("https://notion.test/page", project);
+  const created = await wire.attach("https://notion.test/page", project);
   assert.equal((await wire.showResource("https://notion.test/page", project)).id, "notion:page");
   assert.equal((await wire.showResource(created.path, project)).id, "notion:page");
   assert.equal((await wire.showResource("notion:page", project)).id, "notion:page");
@@ -813,8 +825,8 @@ test("path resolution rejects shared and missing registry paths", async () => {
     await mkdir(project);
     await initializeWire(project, backend, backend === "sqlite" ? "registry.sqlite3" : "records");
     const wire = createWire(project, async () => ({ title: "Shared", markdown: "# Shared\n", data: {} }));
-    const first = await wire.create("https://notion.test/one", project);
-    const second = await wire.create("https://slack.test/two", project);
+    const first = await wire.attach("https://notion.test/one", project);
+    const second = await wire.attach("https://slack.test/two", project);
     const registry = await openWireRegistry(project, project);
     await registry.put({ ...second.resource, filesystem_links: first.resource.filesystem_links });
     await assert.rejects(() => wire.showResource(first.path, project), /Ambiguous resource path shared\.md: notion:one, slack:two\. Use a resource id or URL\./);

@@ -11,9 +11,11 @@
   "categories": ["Other"],
   "activationEvents": [
     "onStartupFinished",
-    "onCommand:wire.linkHere",
+    "onCommand:wire.attachHere",
+    "onCommand:wire.downloadHere",
+    "onCommand:wire.previewUrl",
     "onCommand:wire.syncFile",
-    "onCommand:wire.downloadFile",
+    "onCommand:wire.detachFile",
     "onCommand:wire.openResource",
     "onCommand:wire.syncDirectory",
     "onCommand:wire.authStatus",
@@ -75,10 +77,22 @@
     },
     "commands": [
       {
-        "command": "wire.linkHere",
-        "title": "Link URL Here",
+        "command": "wire.attachHere",
+        "title": "Attach URL Here",
         "category": "Wire",
-        "icon": "$(link)"
+        "icon": "$(plug)"
+      },
+      {
+        "command": "wire.downloadHere",
+        "title": "Download URL Here",
+        "category": "Wire",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "wire.previewUrl",
+        "title": "Preview URL",
+        "category": "Wire",
+        "icon": "$(preview)"
       },
       {
         "command": "wire.syncFile",
@@ -87,10 +101,10 @@
         "icon": "$(sync)"
       },
       {
-        "command": "wire.downloadFile",
-        "title": "Download File",
+        "command": "wire.detachFile",
+        "title": "Detach File",
         "category": "Wire",
-        "icon": "$(cloud-download)"
+        "icon": "$(debug-disconnect)"
       },
       {
         "command": "wire.openResource",
@@ -132,14 +146,19 @@
     "menus": {
       "explorer/context": [
         {
-          "command": "wire.linkHere",
+          "command": "wire.attachHere",
           "when": "resourceScheme == file && explorerResourceIsFolder",
           "group": "2_wire@1"
         },
         {
-          "command": "wire.syncDirectory",
+          "command": "wire.downloadHere",
           "when": "resourceScheme == file && explorerResourceIsFolder",
           "group": "2_wire@2"
+        },
+        {
+          "command": "wire.syncDirectory",
+          "when": "resourceScheme == file && explorerResourceIsFolder",
+          "group": "2_wire@3"
         },
         {
           "command": "wire.syncFile",
@@ -147,7 +166,7 @@
           "group": "2_wire@1"
         },
         {
-          "command": "wire.downloadFile",
+          "command": "wire.detachFile",
           "when": "resourceScheme == file && !explorerResourceIsFolder",
           "group": "2_wire@2"
         },
@@ -171,13 +190,19 @@
       ],
       "commandPalette": [
         {
-          "command": "wire.linkHere"
+          "command": "wire.attachHere"
+        },
+        {
+          "command": "wire.downloadHere"
+        },
+        {
+          "command": "wire.previewUrl"
         },
         {
           "command": "wire.syncFile"
         },
         {
-          "command": "wire.downloadFile"
+          "command": "wire.detachFile"
         },
         {
           "command": "wire.openResource"

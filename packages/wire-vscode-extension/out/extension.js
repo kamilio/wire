@@ -809,14 +809,38 @@ function composeWire(dependencies) {
     };
     const stored = await registry.put(resource);
     const changes = changeSummary(summaryMarkdown ?? previous, summaryAfterMarkdown);
-    const resolvedAction = action === "created" && current !== null && previous !== "" ? changes.added === 0 && changes.modified === 0 && changes.removed === 0 ? "synced" : "downloaded" : action;
+    const resolvedAction = action === "attached" && current !== null && previous !== "" ? changes.added === 0 && changes.modified === 0 && changes.removed === 0 ? "synced" : "downloaded" : action;
     return { resource: stored, path: outputPath, markdown: fetched.markdown, summary: { action: resolvedAction, ...changes, remote: url, local: outputPath } };
   };
-  const create = async (url, path) => {
+  const attach = async (url, path) => {
     const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
-    return store(url, path, fetched, null, "created", void 0, void 0, fetched.markdown);
+    return store(url, path, fetched, null, "attached", void 0, void 0, fetched.markdown);
   };
+  const create = attach;
   const view = (url) => fetchSource(dependencies.fetchInput, url, dependencies.catalog);
+  const downloadSource = async (url, path) => {
+    const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
+    const source = parseSourceUrl(url, dependencies.catalog);
+    const cleanPath = (0, import_node_path.join)((0, import_node_path.resolve)(path), markdownFilename(fetched.title));
+    const outputPath = await dependencies.filesystem.exists(cleanPath) ? (0, import_node_path.join)((0, import_node_path.resolve)(path), collisionFilename(fetched.title, source.service, source.identifier)) : cleanPath;
+    const previous = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
+    await dependencies.filesystem.writeText(outputPath, fetched.markdown);
+    const id = resourceId(source);
+    const resource = {
+      id,
+      type: source.type,
+      identifiers: [{ service: source.service, identifier: source.identifier }],
+      urls: [url],
+      filesystem_links: [{ path: (0, import_node_path.basename)(outputPath), role: "primary", data: { format: "markdown" } }],
+      data: [
+        { namespace: "wire", key: "title", value: fetched.title },
+        { namespace: "wire", key: "synced_at", value: dependencies.now().toISOString() },
+        { namespace: source.service, key: "snapshot", value: fetched.data }
+      ],
+      relationships: extractRelationships(fetched.markdown, id, dependencies.catalog)
+    };
+    return { resource, path: outputPath, markdown: fetched.markdown, summary: { action: "downloaded", ...changeSummary(previous, fetched.markdown), remote: url, local: outputPath } };
+  };
   const resolveResource = async (registry, value, root, path) => {
     if (value.startsWith("http://") || value.startsWith("https://")) {
       const source = parseSourceUrl(value, dependencies.catalog);
@@ -870,15 +894,16 @@ function composeWire(dependencies) {
     const fetched = await fetchSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog);
     return store(resource.urls[0], (0, import_node_path.dirname)(outputPath), fetched, markdown, "downloaded", void 0, void 0, fetched.markdown);
   };
-  const unlink = async (value, path) => {
+  const detach = async (value, path) => {
     const candidatePath = (0, import_node_path.resolve)(path, value);
     const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
     const result = await download(value, path);
     await registry.delete(resource.id);
-    return { ...result, summary: { ...result.summary, action: "unlinked" } };
+    return { ...result, summary: { ...result.summary, action: "detached" } };
   };
+  const unlink = detach;
   const watch = async (value, path) => {
     const candidatePath = (0, import_node_path.resolve)(path, value);
     const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
@@ -961,10 +986,13 @@ function composeWire(dependencies) {
     return resolveResource(registry, value, root, path);
   };
   return Object.freeze({
+    attach,
     create,
     view,
+    downloadSource,
     sync,
     download,
+    detach,
     unlink,
     watch,
     openResource: openResource2,
@@ -3886,14 +3914,32 @@ function title(resource) {
 function resultMessage(result) {
   return `${result.summary.action} +${result.summary.added} ~${result.summary.modified} -${result.summary.removed} ${title(result.resource)}`;
 }
-async function linkHere(uri) {
+async function attachHere(uri) {
   const directory = selectedDirectory(uri);
   const url = await vscode.window.showInputBox({ prompt: "Source URL" });
   if (url === void 0 || url.trim() === "") throw new Error("Source URL required");
-  setWireStatus("linking");
-  const result = await wire().create(url, directory);
+  setWireStatus("attaching");
+  const result = await wire().attach(url, directory);
   await vscode.window.showTextDocument(vscode.Uri.file(result.path));
   showWireStatus(resultMessage(result));
+}
+async function downloadHere(uri) {
+  const directory = selectedDirectory(uri);
+  const url = await vscode.window.showInputBox({ prompt: "Source URL" });
+  if (url === void 0 || url.trim() === "") throw new Error("Source URL required");
+  setWireStatus("downloading");
+  const result = await wire().downloadSource(url, directory);
+  await vscode.window.showTextDocument(vscode.Uri.file(result.path));
+  showWireStatus(resultMessage(result));
+}
+async function previewUrl() {
+  const url = await vscode.window.showInputBox({ prompt: "Source URL" });
+  if (url === void 0 || url.trim() === "") throw new Error("Source URL required");
+  setWireStatus("previewing");
+  const result = await wire().view(url);
+  const document = await vscode.workspace.openTextDocument({ language: "markdown", content: result.markdown });
+  await vscode.window.showTextDocument(document);
+  showWireStatus(`previewed ${result.title}`);
 }
 async function syncFile(uri) {
   const path = resourceFile(uri);
@@ -3901,10 +3947,10 @@ async function syncFile(uri) {
   const result = await wire().sync(path, (0, import_node_path4.dirname)(path));
   showWireStatus(resultMessage(result));
 }
-async function downloadFile(uri) {
+async function detachFile(uri) {
   const path = resourceFile(uri);
-  setWireStatus("downloading file");
-  const result = await wire().download(path, (0, import_node_path4.dirname)(path));
+  setWireStatus("detaching file");
+  const result = await wire().detach(path, (0, import_node_path4.dirname)(path));
   showWireStatus(resultMessage(result));
 }
 async function openResource(uri) {
@@ -3963,9 +4009,11 @@ function activate(context2) {
   setWireStatus("ready");
   context2.subscriptions.push(
     wireStatus,
-    vscode.commands.registerCommand("wire.linkHere", linkHere),
+    vscode.commands.registerCommand("wire.attachHere", attachHere),
+    vscode.commands.registerCommand("wire.downloadHere", downloadHere),
+    vscode.commands.registerCommand("wire.previewUrl", previewUrl),
     vscode.commands.registerCommand("wire.syncFile", syncFile),
-    vscode.commands.registerCommand("wire.downloadFile", downloadFile),
+    vscode.commands.registerCommand("wire.detachFile", detachFile),
     vscode.commands.registerCommand("wire.openResource", openResource),
     vscode.commands.registerCommand("wire.syncDirectory", syncDirectory),
     vscode.commands.registerCommand("wire.authStatus", authStatus),

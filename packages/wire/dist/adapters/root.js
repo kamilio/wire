@@ -1,8 +1,10 @@
 import { UserError, defineCommand, defineGroup, S } from "toolcraft";
 const authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"];
 const removedCliCommandNames = Object.freeze({
-    create: "Use `wire link <url>` or `wire <url>`.",
-    fetch: "Use `wire link <url>` or `wire <url>`.",
+    create: "Use `wire attach <url>` or `wire <url>`.",
+    fetch: "Use `wire download <url>`.",
+    link: "Use `wire attach <url>` or `wire <url>`.",
+    unlink: "Use `wire detach <resource>`.",
     view: "Use `wire preview <url>`.",
 });
 function wireTitle(resource) {
@@ -115,7 +117,7 @@ function formatInitializedWire(value) {
     const registry = value.path.startsWith(prefix) ? value.path.slice(prefix.length) : value.path;
     const lines = [`${value.created ? "workspace created" : "workspace ready"}`, `root:    ${lineText(value.root)}`, `backend: ${lineText(value.backend)}`, `registry: ${lineText(registry)}`];
     if (value.created)
-        lines.push("add:     wire <url>");
+        lines.push("attach:  wire <url>");
     return lines.join("\n");
 }
 function watchSessionJson(value) {
@@ -131,7 +133,7 @@ function wireUserErrorDisplayMessage(message) {
         return `unsupported source\nurl: ${lineText(unsupportedSource[1])}\nsupported: Asana, ChatGPT, Gmail, Google Docs/Sheets, Notion, Slack, Zoom`;
     const missingWorkspace = /^Wire workspace not initialized\. Run `wire init` or `wire <url>` first\.$/.exec(message);
     if (missingWorkspace !== null)
-        return "workspace not initialized\nrun: wire init\nadd: wire <url>";
+        return "workspace not initialized\nrun: wire init\nattach: wire <url>";
     const existingWorkspace = /^Wire workspace already initialized with (sqlite|files) registry at ([\s\S]+)\. Existing registries are not overwritten\.$/.exec(message);
     if (existingWorkspace !== null)
         return `workspace already initialized\nbackend: ${existingWorkspace[1]}\nregistry: ${lineText(existingWorkspace[2])}\nkept: existing registry`;
@@ -306,11 +308,11 @@ function formatAuthStatus(value) {
 export const wirePresentation = Object.freeze({
     init: render(formatInitializedWire),
     switchBackend: render(formatSwitchedBackend),
-    create: { json: wireResultJson, markdown: formatWireResult, rich: (value, primitives) => richText(formatWireResultRich(value, primitives), primitives) },
+    attach: { json: wireResultJson, markdown: formatWireResult, rich: (value, primitives) => richText(formatWireResultRich(value, primitives), primitives) },
     view: render((value) => value.markdown),
     sync: { json: wireResultJson, markdown: formatWireResult, rich: (value, primitives) => richText(formatWireResultRich(value, primitives), primitives) },
     download: { json: wireResultJson, markdown: formatWireResult, rich: (value, primitives) => richText(formatWireResultRich(value, primitives), primitives) },
-    unlink: { json: wireResultJson, markdown: formatWireResult, rich: (value, primitives) => richText(formatWireResultRich(value, primitives), primitives) },
+    detach: { json: wireResultJson, markdown: formatWireResult, rich: (value, primitives) => richText(formatWireResultRich(value, primitives), primitives) },
     watch: {
         json: watchSessionJson,
         markdown: formatWatchSession,
@@ -331,22 +333,21 @@ function authGroup(service, description, loginDescription, auth, readInput) {
         ] });
 }
 export function createRoot(wire, currentDirectory, auth, readInput) {
-    const createFromCliUrl = (url) => {
+    const attachFromCliUrl = (url) => {
         const removedCommand = removedCliCommandNames[url];
         if (removedCommand !== undefined)
             throw new UserError(`Unknown command: ${url}. ${removedCommand}`);
         if (!/^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(url))
             throw new UserError(`Expected source URL: ${url}`);
-        return userFacing(() => wire.create(url, currentDirectory));
+        return userFacing(() => wire.attach(url, currentDirectory));
     };
-    const defaultCreate = defineCommand({
-        name: "link",
-        description: "Link a source URL as Markdown. Shorthand: wire <url>.",
-        scope: ["cli"],
+    const defaultAttach = defineCommand({
+        name: "attach",
+        description: "Track a source URL as local Markdown. Shorthand: wire <url>.",
         positional: ["url"],
-        params: S.Object({ url: S.String({ description: "Supported source URL to link." }) }),
-        handler: ({ params }) => createFromCliUrl(params.url),
-        render: wirePresentation.create,
+        params: S.Object({ url: S.String({ description: "Supported source URL to attach." }) }),
+        handler: ({ params }) => attachFromCliUrl(params.url),
+        render: wirePresentation.attach,
     });
     const authCommand = (service) => {
         const title = serviceTitle(service);
@@ -357,7 +358,7 @@ export function createRoot(wire, currentDirectory, auth, readInput) {
         description: "Sync web resources with local Markdown.",
         scope: ["cli", "mcp", "sdk"],
         children: [
-            defaultCreate,
+            defaultAttach,
             defineCommand({
                 name: "init",
                 description: "Initialize a wire workspace in the current directory.",
@@ -394,19 +395,19 @@ export function createRoot(wire, currentDirectory, auth, readInput) {
             }),
             defineCommand({
                 name: "download",
-                description: "Replace local Markdown for a registered resource.",
-                positional: ["resource"],
-                params: S.Object({ resource: S.String({ description: "Registered resource URL, resource ID, or Markdown path." }) }),
-                handler: ({ params }) => userFacing(() => wire.download(params.resource, currentDirectory)),
+                description: "Download a source URL as local Markdown without tracking it.",
+                positional: ["url"],
+                params: S.Object({ url: S.String({ description: "Supported source URL to download." }) }),
+                handler: ({ params }) => userFacing(() => wire.downloadSource(params.url, currentDirectory)),
                 render: wirePresentation.download,
             }),
             defineCommand({
-                name: "unlink",
-                description: "Download one registered resource and stop syncing it.",
+                name: "detach",
+                description: "Download one registered resource and stop tracking it.",
                 positional: ["resource"],
                 params: S.Object({ resource: S.String({ description: "Registered resource URL, resource ID, or Markdown path." }) }),
-                handler: ({ params }) => userFacing(() => wire.unlink(params.resource, currentDirectory)),
-                render: wirePresentation.unlink,
+                handler: ({ params }) => userFacing(() => wire.detach(params.resource, currentDirectory)),
+                render: wirePresentation.detach,
             }),
             defineCommand({
                 name: "watch",
@@ -434,7 +435,7 @@ export function createRoot(wire, currentDirectory, auth, readInput) {
             }),
             ...(auth === undefined ? [] : authServices.map(authCommand)),
         ],
-        default: defaultCreate,
+        default: defaultAttach,
     });
 }
 //# sourceMappingURL=root.js.map

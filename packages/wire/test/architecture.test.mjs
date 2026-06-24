@@ -295,7 +295,7 @@ test("packed package installs and runs outside the repository", async (context) 
       async get(resourceId) { return resources.get(resourceId)!; },
       async findByIdentifier(service, identifier) { return [...resources.values()].find((resource) => resource.identifiers.some((item) => item.service === service && item.identifier === identifier))!; },
       async findByUrl(url) { return [...resources.values()].find((resource) => resource.urls.includes(url))!; },
-      async findByPath(path) { return [...resources.values()].filter((resource) => resource.filesystem_links.some((link) => link.path === path)); },
+      async findByPath(path) { return [...resources.values()].filter((resource) => resource.filesystem_links.some((attach) => attach.path === path)); },
       async listResources() { return [...resources.values()]; },
       async delete(resourceId) { resources.delete(resourceId); },
     };
@@ -329,7 +329,7 @@ test("packed package installs and runs outside the repository", async (context) 
       open: async () => {},
     });
     const viewed = await wire.view("https://consumer.example/page");
-    const created = await wire.create("https://consumer.example/page", "/workspace");
+    const created = await wire.attach("https://consumer.example/page", "/workspace");
     const root: WireRoot = createRoot(wire, "/workspace");
     const children = [...root.children];
     const server = createWireMcpServer(root);
@@ -346,7 +346,7 @@ test("packed package installs and runs outside the repository", async (context) 
   await context.test("fake runtime", () => assert.deepEqual(consumer.viewed.data, { runtime: "Consumer document" }));
   await context.test("direct operation calls", () => {
     assert.deepEqual(consumer.writes, [["/workspace/consumer-document.md", "# page\n"]]);
-    assert.deepEqual(consumer.operations, ["create", "download", "init", "listResources", "openResource", "showResource", "switchBackend", "sync", "syncAll", "unlink", "view", "watch"]);
+    assert.deepEqual(consumer.operations, ["attach", "create", "detach", "download", "downloadSource", "init", "listResources", "openResource", "showResource", "switchBackend", "sync", "syncAll", "unlink", "view", "watch"]);
   });
   await context.test("CLI embedding", async () => {
     const execution = await execFileAsync(process.execPath, [join(consumerRoot, "dist", "consumer.js")], { cwd: consumerRoot, env: { WIRE_CONSUMER_CLI: "1", NO_COLOR: "1" } });
@@ -355,21 +355,21 @@ test("packed package installs and runs outside the repository", async (context) 
   await context.test("MCP construction", () => {
     assert.equal(consumer.server, "function");
     assert.equal(consumer.unchanged, true);
-    assert.deepEqual(consumer.commands, ["link", "init", "preview", "switch-db", "sync", "download", "unlink", "watch", "open", "sync-all"]);
+    assert.deepEqual(consumer.commands, ["attach", "init", "preview", "switch-db", "sync", "download", "detach", "watch", "open", "sync-all"]);
   });
   assert.equal(consumer.executable, "function");
   assert.deepEqual(consumer.environment, []);
   const environment = { ...process.env, HOME: consumerRoot, NO_COLOR: "1" };
   const cli = await execFileAsync(join(consumerRoot, "node_modules", ".bin", "wire"), ["--help"], { cwd: consumerRoot, env: environment });
-  for (const name of ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom", "link", "init", "preview", "sync", "download", "unlink", "watch", "open", "sync-all"]) assert.match(cli.stdout, new RegExp(`\\b${name}\\b`));
+  for (const name of ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom", "attach", "init", "preview", "sync", "download", "detach", "watch", "open", "sync-all"]) assert.match(cli.stdout, new RegExp(`\\b${name}\\b`));
   assert.doesNotMatch(cli.stdout, /\bapprovals\b/);
   assert.doesNotMatch(cli.stdout, /^\s+view(?:\s|$)/m);
   assert.match(cli.stdout, /<url>/);
-  assert.match(cli.stdout, /Link a source URL as Markdown\./);
+  assert.match(cli.stdout, /Track a source URL as local Markdown\./);
   assert.doesNotMatch(cli.stdout, /^\s+create(?:\s|$)/m);
   assert.doesNotMatch(cli.stdout, /^\s+list\s+List registered resources without syncing them\./m);
   assert.doesNotMatch(cli.stdout, /^\s+show <resource>\s+Show registered resource details without opening the source URL\./m);
   assert.doesNotMatch(cli.stdout, /--path/);
   assert.doesNotMatch(cli.stdout, /switch-db/);
-  assert.deepEqual(await mcpTools(join(consumerRoot, "node_modules", ".bin", "wire-mcp"), consumerRoot, environment), ["init", "preview", "sync", "download", "unlink", "open", "sync_all", "asana__status", "asana__login", "asana__logout", "chatgpt__status", "chatgpt__login", "chatgpt__logout", "gmail__status", "gmail__login", "gmail__logout", "google_docs__status", "google_docs__login", "google_docs__logout", "notion__status", "notion__login", "notion__logout", "slack__status", "slack__login", "slack__logout", "zoom__status", "zoom__login", "zoom__logout"]);
+  assert.deepEqual(await mcpTools(join(consumerRoot, "node_modules", ".bin", "wire-mcp"), consumerRoot, environment), ["attach", "init", "preview", "sync", "download", "detach", "open", "sync_all", "asana__status", "asana__login", "asana__logout", "chatgpt__status", "chatgpt__login", "chatgpt__logout", "gmail__status", "gmail__login", "gmail__logout", "google_docs__status", "google_docs__login", "google_docs__logout", "notion__status", "notion__login", "notion__logout", "slack__status", "slack__login", "slack__logout", "zoom__status", "zoom__login", "zoom__logout"]);
 });

@@ -10,9 +10,9 @@ const resource = Object.freeze({
   ],
   relationships: [],
 });
-const result = Object.freeze({ resource, path: "/workspace/Document.md", markdown: "# Document\n", summary: { action: "created", added: 1, modified: 0, removed: 0, remote: "https://www.notion.so/page-1", local: "/workspace/Document.md" } });
+const result = Object.freeze({ resource, path: "/workspace/Document.md", markdown: "# Document\n", summary: { action: "attached", added: 1, modified: 0, removed: 0, remote: "https://www.notion.so/page-1", local: "/workspace/Document.md" } });
 const downloadedResult = Object.freeze({ ...result, summary: { ...result.summary, action: "downloaded" } });
-const unlinkedResult = Object.freeze({ ...result, summary: { ...result.summary, action: "unlinked" } });
+const detachedResult = Object.freeze({ ...result, summary: { ...result.summary, action: "detached" } });
 
 export function createFakeWire() {
   return Object.freeze({
@@ -20,11 +20,14 @@ export function createFakeWire() {
       if (process.env.WIRE_FAKE_INIT_ERROR !== undefined) throw new Error(process.env.WIRE_FAKE_INIT_ERROR);
       return { root: `${path}/.wire`, backend, path: registryPath, created: true };
     },
+    attach: async () => result,
     create: async () => result,
     view: async () => ({ title: "Document", markdown: "# Document\n", data: { page_id: "page-1" } }),
+    downloadSource: async () => downloadedResult,
     sync: async () => downloadedResult,
     download: async () => downloadedResult,
-    unlink: async () => unlinkedResult,
+    detach: async () => detachedResult,
+    unlink: async () => detachedResult,
     watch: async () => ({ resource, path: result.path, mode: "two-way", debounceMs: 1000, pollMs: 60000, closed: Promise.resolve(), close: () => {} }),
     openResource: async () => resource,
     syncAll: async () => [downloadedResult],
@@ -37,4 +40,4 @@ export function createFakeWire() {
   });
 }
 
-export { resource, result, downloadedResult, unlinkedResult };
+export { resource, result, downloadedResult, detachedResult };

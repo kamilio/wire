@@ -79,14 +79,14 @@ set -eu
 printf "%s\\n%s\\n%s" "$WIRE_EVENT" "$WIRE_RESULT_COUNT" "$WIRE_PATH" > post-command.txt
 `);
 
-  const result = await createWire(project).create("https://notion.test/page", project);
+  const result = await createWire(project).attach("https://notion.test/page", project);
   const registry = await openWireRegistry(project, project);
   const resource = await registry.get(result.resource.id);
 
   assert.equal(result.path, join(project, "docs/notion/First.md"));
   await assert.rejects(() => access(join(project, "First.md")));
   assert.equal(await readFile(join(project, "docs/notion/First.md"), "utf8"), "# First\n");
-  assert.equal(resource.filesystem_links.find((link) => link.role === "primary").path, "docs/notion/First.md");
+  assert.equal(resource.filesystem_links.find((attach) => attach.role === "primary").path, "docs/notion/First.md");
   assert.equal(await readFile(join(project, "hook-path.txt"), "utf8"), join(project, "docs/notion/First.md"));
   assert.equal(await readFile(join(project, "post-command.txt"), "utf8"), `post-command\n1\n${join(project, "docs/notion/First.md")}`);
 });

@@ -10,15 +10,15 @@ import { createExecutableRoot } from "../dist/executable.js";
 import { initializeWire, openWireRegistry } from "../dist/index.js";
 import { createWireMcpServer } from "../dist/mcp.js";
 import { runWireCli } from "../dist/cli.js";
-import { createFakeWire, downloadedResult, resource, result, unlinkedResult } from "./support/fake-wire.mjs";
+import { createFakeWire, downloadedResult, resource, result, detachedResult } from "./support/fake-wire.mjs";
 
 const execFileAsync = promisify(execFile);
 const fixture = resolve(import.meta.dirname, "support/cli-fixture.mjs");
 const testRoot = resolve(import.meta.dirname, "../../../out/wire-ts-toolcraft");
 const authResult = { service: "notion", identity: { user_id: "user", space_id: "space" } };
-const resultJson = { resource_id: "notion:page-1", title: "Document", action: "created", added: 1, modified: 0, removed: 0, remote: "https://www.notion.so/page-1", local: "Document.md", path: "/workspace/Document.md" };
+const resultJson = { resource_id: "notion:page-1", title: "Document", action: "attached", added: 1, modified: 0, removed: 0, remote: "https://www.notion.so/page-1", local: "Document.md", path: "/workspace/Document.md" };
 const downloadedResultJson = { ...resultJson, action: "downloaded" };
-const unlinkedResultJson = { ...resultJson, action: "unlinked" };
+const detachedResultJson = { ...resultJson, action: "detached" };
 const resourceJson = { resource_id: "notion:page-1", title: "Document", type: "document", remote: "https://www.notion.so/page-1", local: "Document.md", path: "Document.md", synced_at: "2026-06-10T12:00:00.000Z" };
 const switchedBackendJson = { root: "/workspace/.wire", from: "sqlite", to: "files", fromPath: "/workspace/.wire/registry.sqlite3", toPath: "/workspace/.wire/records", resources: 1 };
 const colorEnv = () => {
@@ -65,14 +65,14 @@ function waitForClose(child) {
 }
 
 const cliCases = [
-  ["default create", ["https://www.notion.so/page-1"], resultJson],
-  ["link", ["link", "https://www.notion.so/page-1"], resultJson],
+  ["default attach", ["https://www.notion.so/page-1"], resultJson],
+  ["attach", ["attach", "https://www.notion.so/page-1"], resultJson],
   ["init", ["init"], { root: "/workspace/.wire", backend: "sqlite", path: "registry.sqlite3", created: true }],
   ["init files", ["init", "--backend", "files"], { root: "/workspace/.wire", backend: "files", path: "records", created: true }],
   ["preview", ["preview", "https://www.notion.so/page-1"], { title: "Document", markdown: "# Document\n", data: { page_id: "page-1" } }],
   ["sync", ["sync", "notion:page-1"], downloadedResultJson],
-  ["download", ["download", "notion:page-1"], downloadedResultJson],
-  ["unlink", ["unlink", "notion:page-1"], unlinkedResultJson],
+  ["download", ["download", "https://www.notion.so/page-1"], downloadedResultJson],
+  ["detach", ["detach", "notion:page-1"], detachedResultJson],
   ["open", ["open", "notion:page-1"], resourceJson],
   ["sync-all", ["sync-all"], [downloadedResultJson]],
   ["switch-db", ["switch-db"], switchedBackendJson],
@@ -85,13 +85,13 @@ for (const [name, args, expected] of cliCases) {
   });
 }
 
-test("CLI help renders the URL link command without a blank command name", async () => {
+test("CLI help renders the URL attach command without a blank command name", async () => {
   const execution = await execFileAsync(process.execPath, [fixture, "--help"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.match(execution.stdout, /link <url>\s+Link a source URL as Markdown\. Shorthand: wire <url>\./);
+  assert.match(execution.stdout, /attach <url>\s+Track a source URL as local Markdown\. Shorthand: wire <url>\./);
   assert.match(execution.stdout, /preview <url>\s+Preview a source URL without writing files\./);
   assert.match(execution.stdout, /sync <resource>\s+Two-way sync one registered resource\./);
-  assert.match(execution.stdout, /download <resource>\s+Replace local Markdown for a registered resource\./);
-  assert.match(execution.stdout, /unlink <resource>\s+Download one registered resource and stop syncing it\./);
+  assert.match(execution.stdout, /download <url>\s+Download a source URL as local Markdown without tracking it\./);
+  assert.match(execution.stdout, /detach <resource>\s+Download one registered resource and stop tracking it\./);
   assert.match(execution.stdout, /watch <file>\s+Continuously sync a registered Markdown file\./);
   assert.match(execution.stdout, /sync-all\s+Sync this directory tree; continue after failures\./);
   assert.match(execution.stdout, /open <resource>\s+Open a registered resource URL and show details\./);
@@ -130,13 +130,13 @@ test("CLI help command renders root and command help", async () => {
     assert.equal(sync.stderr, "");
   }
   for (const args of [["help", "https://www.notion.so/page-1"], ["https://www.notion.so/page-1", "help"], ["https://www.notion.so/page-1", "--help"]]) {
-    const link = await execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } });
-    assert.match(link.stdout, /^link (?:-|—) Link a source URL as Markdown\./m);
-    assert.match(link.stdout, /Shorthand: wire <url>\./m);
-    assert.match(link.stdout, /Usage: wire link \[OPTIONS\] <url>/);
-    assert.doesNotMatch(link.stdout, /^wire (?:-|—) Sync web resources with local Markdown\./m);
-    assert.doesNotMatch(link.stdout, /Expected source URL or command|Unknown command|Use --debug/);
-    assert.equal(link.stderr, "");
+    const attach = await execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } });
+    assert.match(attach.stdout, /^attach (?:-|—) Track a source URL as local Markdown\./m);
+    assert.match(attach.stdout, /Shorthand: wire <url>\./m);
+    assert.match(attach.stdout, /Usage: wire attach \[OPTIONS\] <url>/);
+    assert.doesNotMatch(attach.stdout, /^wire (?:-|—) Sync web resources with local Markdown\./m);
+    assert.doesNotMatch(attach.stdout, /Expected source URL or command|Unknown command|Use --debug/);
+    assert.equal(attach.stderr, "");
   }
   const service = await execFileAsync(process.execPath, [fixture, "google-docs", "help"], { env: { ...process.env, NO_COLOR: "1" } });
   assert.match(service.stdout, /^google-docs (?:-|—) Manage Google Docs\/Sheets login\./m);
@@ -211,7 +211,7 @@ test("CLI init help names backend choices", async () => {
 test("CLI preview help names preview URL input", async () => {
   const execution = await execFileAsync(process.execPath, [fixture, "preview", "--help"], { env: { ...process.env, NO_COLOR: "1" } });
   assert.match(execution.stdout, /<url>\s+Supported source URL to preview\. \(required\)/);
-  assert.doesNotMatch(execution.stdout, /Supported source URL to link/);
+  assert.doesNotMatch(execution.stdout, /Supported source URL to attach/);
 });
 
 test("CLI open help describes URL opening and resource details", async () => {
@@ -220,18 +220,18 @@ test("CLI open help describes URL opening and resource details", async () => {
   assert.match(execution.stdout, /<resource>\s+Registered resource URL, resource ID, or Markdown path\. \(required\)/);
 });
 
-test("CLI sync and download help distinguish two-way sync from remote overwrite", async () => {
+test("CLI sync, download, and detach help distinguish tracking semantics", async () => {
   const sync = await execFileAsync(process.execPath, [fixture, "sync", "--help"], { env: { ...process.env, NO_COLOR: "1" } });
   assert.match(sync.stdout, /^sync (?:-|—) Two-way sync one registered resource\./m);
   assert.match(sync.stdout, /<resource>\s+Registered resource URL, resource ID, or Markdown path\. \(required\)/);
-  assert.doesNotMatch(sync.stdout, /Replace local Markdown/);
+  assert.doesNotMatch(sync.stdout, /without tracking/);
   const download = await execFileAsync(process.execPath, [fixture, "download", "--help"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.match(download.stdout, /^download (?:-|—) Replace local Markdown for a registered resource\./m);
-  assert.match(download.stdout, /<resource>\s+Registered resource URL, resource ID, or Markdown path\. \(required\)/);
+  assert.match(download.stdout, /^download (?:-|—) Download a source URL as local Markdown without tracking it\./m);
+  assert.match(download.stdout, /<url>\s+Supported source URL to download\. \(required\)/);
   assert.doesNotMatch(download.stdout, /Two-way sync/);
-  const unlink = await execFileAsync(process.execPath, [fixture, "unlink", "--help"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.match(unlink.stdout, /^unlink (?:-|—) Download one registered resource and stop syncing it\./m);
-  assert.match(unlink.stdout, /<resource>\s+Registered resource URL, resource ID, or Markdown path\. \(required\)/);
+  const detach = await execFileAsync(process.execPath, [fixture, "detach", "--help"], { env: { ...process.env, NO_COLOR: "1" } });
+  assert.match(detach.stdout, /^detach (?:-|—) Download one registered resource and stop tracking it\./m);
+  assert.match(detach.stdout, /<resource>\s+Registered resource URL, resource ID, or Markdown path\. \(required\)/);
 });
 
 test("CLI sync-all help describes current directory scope", async () => {
@@ -279,8 +279,8 @@ test("CLI help in a tty does not render literal command row backticks", async (t
     else Object.defineProperty(process.stdout, "isTTY", originalIsTty);
   });
   await runWireCli(createRoot(createFakeWire(), "/workspace", auth, async () => ""), ["node", "wire", "--help"], "/workspace");
-  assert.match(output, /^\s+link <url>\s+Link a source URL as/m);
-  assert.doesNotMatch(output, /^\s+`link <url>`/m);
+  assert.match(output, /^\s+attach <url>\s+Track a source URL as/m);
+  assert.doesNotMatch(output, /^\s+`attach <url>`/m);
 });
 
 test("CLI help ignores requested data output formats", async () => {
@@ -326,7 +326,7 @@ test("CLI Markdown output keeps resource titles and paths on one display line", 
   };
   assert.equal(wirePresentation.open.markdown(messyResource), "opened  Document Second Tab\nremote: https://www.notion.so/page-1 tracking\nlocal:  Folder Document.md\nid:     notion:page-1 continued");
   assert.equal(wirePresentation.sync.markdown({ ...downloadedResult, resource: messyResource }), "downloaded  +1 ~0 -0  Document Second Tab\nlocal:  Folder Document.md");
-  assert.equal(wirePresentation.unlink.markdown({ ...unlinkedResult, resource: messyResource }), "unlinked  +1 ~0 -0  Document Second Tab\nlocal:  Folder Document.md");
+  assert.equal(wirePresentation.detach.markdown({ ...detachedResult, resource: messyResource }), "detached  +1 ~0 -0  Document Second Tab\nlocal:  Folder Document.md");
 });
 
 test("CLI Markdown output keeps workspace and watch fields on one display line", async () => {
@@ -344,8 +344,8 @@ test("CLI Markdown output keeps workspace and watch fields on one display line",
   const initializedAbsolute = { root: "/workspace/.wire", backend: "sqlite", path: "/workspace/.wire/registry.sqlite3", created: true };
   const switched = { root: "/workspace\nproject/.wire", from: "sqlite\nold", to: "files\nnew", fromPath: "/workspace\nproject/.wire/registry.sqlite3", toPath: "/workspace\nproject/.wire/records", resources: 1 };
   const watchSession = { resource: messyResource, path: "/workspace/Folder\nDocument.md", mode: "two-way\npoll", debounceMs: 1000, pollMs: 60000, closed: Promise.resolve(), close: () => {} };
-  assert.equal(wirePresentation.init.markdown(initialized), "workspace created\nroot:    /workspace project/.wire\nbackend: sqlite registry\nregistry: registry .sqlite3\nadd:     wire <url>");
-  assert.equal(wirePresentation.init.markdown(initializedAbsolute), "workspace created\nroot:    /workspace/.wire\nbackend: sqlite\nregistry: registry.sqlite3\nadd:     wire <url>");
+  assert.equal(wirePresentation.init.markdown(initialized), "workspace created\nroot:    /workspace project/.wire\nbackend: sqlite registry\nregistry: registry .sqlite3\nattach:  wire <url>");
+  assert.equal(wirePresentation.init.markdown(initializedAbsolute), "workspace created\nroot:    /workspace/.wire\nbackend: sqlite\nregistry: registry.sqlite3\nattach:  wire <url>");
   assert.deepEqual(wirePresentation.init.json(initialized), initialized);
   assert.deepEqual(wirePresentation.init.json(initializedAbsolute), initializedAbsolute);
   assert.equal(wirePresentation.switchBackend.markdown(switched), "registry switched\nbackend:   sqlite old -> files new\nresources: 1\nfrom:      /workspace project/.wire/registry.sqlite3\nto:        /workspace project/.wire/records");
@@ -373,12 +373,12 @@ test("CLI suppresses broken pipe stacks when stdout closes early", async () => {
 
 test("CLI init Markdown output is compact", async () => {
   const execution = await execFileAsync(process.execPath, [fixture, "init", "--output", "markdown"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.equal(execution.stdout, "workspace created\nroot:    /workspace/.wire\nbackend: sqlite\nregistry: registry.sqlite3\nadd:     wire <url>\n");
+  assert.equal(execution.stdout, "workspace created\nroot:    /workspace/.wire\nbackend: sqlite\nregistry: registry.sqlite3\nattach:  wire <url>\n");
 });
 
 test("CLI init files Markdown output uses the files registry path", async () => {
   const execution = await execFileAsync(process.execPath, [fixture, "init", "--backend", "files", "--output", "markdown"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.equal(execution.stdout, "workspace created\nroot:    /workspace/.wire\nbackend: files\nregistry: records\nadd:     wire <url>\n");
+  assert.equal(execution.stdout, "workspace created\nroot:    /workspace/.wire\nbackend: files\nregistry: records\nattach:  wire <url>\n");
 });
 
 test("CLI switch-db Markdown output is compact", async () => {
@@ -408,7 +408,7 @@ test("CLI bin suppresses Node experimental warnings even when reexec marker is p
 });
 
 test("CLI bin rebuilds with workspace TypeScript when dev-linked", async (t) => {
-  const root = resolve(import.meta.dirname, "../../../../out/wire-ts-bin-dev-link");
+  const root = resolve(import.meta.dirname, "../../../../out/wire-ts-bin-dev-attach");
   const workspace = join(root, "workspace");
   const packageRoot = join(workspace, "packages", "wire");
   const marker = join(root, "tsc-marker.txt");
@@ -429,7 +429,7 @@ test("CLI bin rebuilds with workspace TypeScript when dev-linked", async (t) => 
 });
 
 test("MCP bin rebuilds with workspace TypeScript when dev-linked", async (t) => {
-  const root = resolve(import.meta.dirname, "../../../../out/wire-ts-mcp-bin-dev-link");
+  const root = resolve(import.meta.dirname, "../../../../out/wire-ts-mcp-bin-dev-attach");
   const workspace = join(root, "workspace");
   const packageRoot = join(workspace, "packages", "wire");
   const marker = join(root, "tsc-marker.txt");
@@ -512,7 +512,7 @@ test("CLI sync Markdown output renders compact local summary", async () => {
 });
 
 test("CLI download Markdown output renders compact local summary", async () => {
-  const execution = await execFileAsync(process.execPath, [fixture, "download", resource.id, "--output", "markdown"], { env: { ...process.env, NO_COLOR: "1" } });
+  const execution = await execFileAsync(process.execPath, [fixture, "download", resource.urls[0], "--output", "markdown"], { env: { ...process.env, NO_COLOR: "1" } });
   assert.equal(execution.stdout, "downloaded  +1 ~0 -0  Document\nlocal:  Document.md\n");
 });
 
@@ -673,7 +673,7 @@ test("CLI resource lookup errors keep interpolated values on one display line", 
     },
   );
   await assert.rejects(
-    () => execFileAsync(process.execPath, [fixture, "download", "missing.md", "--json"], { env: { ...process.env, NO_COLOR: "1", WIRE_FAKE_DOWNLOAD_ERROR: "Resource URL not found: https://example.com/a\nnext\tpart" } }),
+    () => execFileAsync(process.execPath, [fixture, "detach", "https://example.com/a", "--json"], { env: { ...process.env, NO_COLOR: "1", WIRE_FAKE_DETACH_ERROR: "Resource URL not found: https://example.com/a\nnext\tpart" } }),
     (error) => {
       assert.deepEqual(JSON.parse(error.stdout), jsonError("resource not found\nurl: https://example.com/a next part"));
       assert.equal(error.stderr, "");
@@ -716,7 +716,7 @@ test("CLI missing workspace errors are user-facing", async () => {
     (error) => {
       assert.match(error.stdout, /workspace not initialized/);
       assert.match(error.stdout, /run: wire init/);
-      assert.match(error.stdout, /add: wire <url>/);
+      assert.match(error.stdout, /attach: wire <url>/);
       assert.doesNotMatch(error.stdout, /Use --debug/);
       assert.doesNotMatch(error.stdout, /for usage/);
       assert.equal(error.stderr, "");
@@ -728,7 +728,7 @@ test("CLI missing workspace errors are user-facing", async () => {
     (error) => {
       assert.match(error.stdout, /workspace not initialized/);
       assert.match(error.stdout, /run: wire init/);
-      assert.match(error.stdout, /add: wire <url>/);
+      assert.match(error.stdout, /attach: wire <url>/);
       assert.doesNotMatch(error.stdout, /Use --debug/);
       assert.doesNotMatch(error.stdout, /for usage/);
       assert.equal(error.stderr, "");
@@ -756,8 +756,7 @@ test("CLI init conflict errors are user-facing", async () => {
 test("CLI operation user errors honor JSON output", async () => {
   for (const [args, expected, env] of [
     [["sync", "missing.md", "--json"], jsonError("resource not found\npath: missing.md"), { WIRE_FAKE_SYNC_ERROR: "Resource path not found: missing.md" }],
-    [["download", "missing.md", "--output", "json"], jsonError("resource not found\npath: missing.md"), { WIRE_FAKE_DOWNLOAD_ERROR: "Resource path not found: missing.md" }],
-    [["download", "draft.md", "--json"], jsonError("resource not registered\npath: draft.md"), { WIRE_FAKE_DOWNLOAD_ERROR: "Resource path is not registered: draft.md" }],
+    [["download", "https://example.com", "--output", "json"], jsonError("unsupported source\nurl: https://example.com/\nsupported: Asana, ChatGPT, Gmail, Google Docs/Sheets, Notion, Slack, Zoom"), { WIRE_FAKE_DOWNLOAD_ERROR: "Unsupported source URL: https://example.com/" }],
     [["preview", "https://example.com", "--json"], jsonError("unsupported source\nurl: https://example.com/\nsupported: Asana, ChatGPT, Gmail, Google Docs/Sheets, Notion, Slack, Zoom"), { WIRE_FAKE_PREVIEW_ERROR: "Unsupported source URL: https://example.com/" }],
     [["sync", "ambiguous.md", "--json"], jsonError("ambiguous resource\npath: ambiguous.md\nmatches: notion:one, notion:two\nuse: resource id or URL"), { WIRE_FAKE_SYNC_ERROR: "Ambiguous resource path ambiguous.md: notion:one, notion:two. Use a resource id or URL." }],
     [["google-docs", "status", "--json"], jsonError("login required\nservice: Google Docs/Sheets\nrun: wire google-docs login"), { WIRE_FAKE_AUTH_STATUS_ERROR: "google-docs cookie authentication is missing or expired. Run `wire google-docs login` once; other commands reuse saved cookies." }],
@@ -770,7 +769,7 @@ test("CLI operation user errors honor JSON output", async () => {
     [["sync", "Document.md", "--json"], jsonError("api failed\nservice: Zoom\noperation: file batch_get\nstatus: HTTP 403\ndetail: {\"error\":\"denied\"}"), { WIRE_FAKE_SYNC_ERROR: "Zoom Hub file batch_get failed: HTTP 403 {\"error\":\"denied\"}" }],
     [["sync", "Document.md", "--json"], jsonError("local markdown invalid\nservice: Asana\nline: 4\ndetail: not a task"), { WIRE_FAKE_SYNC_ERROR: "Unsupported Asana Markdown at line 4: not a task" }],
     [["sync", "Document.md", "--json"], jsonError("sync conflict\nservice: Notion\nresolve: edit Notion or local Markdown, then sync again"), { WIRE_FAKE_SYNC_ERROR: "Markdown and Notion changed since last sync" }],
-    [["switch-db", "--json"], jsonError("workspace not initialized\nrun: wire init\nadd: wire <url>"), { WIRE_FAKE_SWITCH_DB_ERROR: "Wire workspace not initialized. Run `wire init` or `wire <url>` first." }],
+    [["switch-db", "--json"], jsonError("workspace not initialized\nrun: wire init\nattach: wire <url>"), { WIRE_FAKE_SWITCH_DB_ERROR: "Wire workspace not initialized. Run `wire init` or `wire <url>` first." }],
     [["init", "--backend", "files", "--json"], jsonError("workspace already initialized\nbackend: sqlite\nregistry: registry.sqlite3\nkept: existing registry"), { WIRE_FAKE_INIT_ERROR: "Wire workspace already initialized with sqlite registry at registry.sqlite3. Existing registries are not overwritten." }],
   ]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1", ...env } }),
@@ -817,7 +816,7 @@ test("CLI unknown object-shaped operation errors avoid object placeholders", asy
 });
 
 test("CLI missing positional errors render once without raw stderr", async () => {
-  for (const [command, argument] of [["link", "url"], ["preview", "url"], ["sync", "resource"], ["download", "resource"], ["unlink", "resource"], ["open", "resource"], ["watch", "file"]]) await assert.rejects(
+  for (const [command, argument] of [["attach", "url"], ["preview", "url"], ["sync", "resource"], ["download", "url"], ["detach", "resource"], ["open", "resource"], ["watch", "file"]]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, command], { env: { ...process.env, NO_COLOR: "1" } }),
     (error) => {
       assert.match(error.stdout, new RegExp(`Missing required argument: ${argument}`));
@@ -833,7 +832,8 @@ test("CLI missing positional errors render once without raw stderr", async () =>
 test("CLI pre-parse errors honor JSON output", async () => {
   for (const [args, expected] of [
     [["sync", "--json"], { error: { message: "Missing required argument: resource", usage: "wire sync --help" } }],
-    [["unlink", "--json"], { error: { message: "Missing required argument: resource", usage: "wire unlink --help" } }],
+    [["download", "--json"], { error: { message: "Missing required argument: url", usage: "wire download --help" } }],
+    [["detach", "--json"], { error: { message: "Missing required argument: resource", usage: "wire detach --help" } }],
     [["sync", "Document.md", "extra", "--json"], { error: { message: "Too many arguments: expected 1 argument, got 2.", usage: "wire sync --help" } }],
     [["google-docs", "frobnicate", "--json"], { error: { message: "Unknown command: frobnicate", usage: "wire google-docs --help" } }],
     [["preview", "frobnicate", "--json"], { error: { message: "Expected source URL: frobnicate", usage: "wire preview --help" } }],
@@ -841,6 +841,7 @@ test("CLI pre-parse errors honor JSON output", async () => {
     [["frobnicate", "--json"], { error: { message: "Expected source URL or command: frobnicate", usage: "wire --help" } }],
     [["docs.google.com/spreadsheets/d/sheet/edit", "--json"], { error: { message: "Expected source URL or command: docs.google.com/spreadsheets/d/sheet/edit\nAdd `https://` and retry.", usage: "wire --help" } }],
     [["sync", "docs.google.com/spreadsheets/d/sheet/edit", "--json"], { error: { message: "Expected resource URL or Markdown path: docs.google.com/spreadsheets/d/sheet/edit\nAdd `https://` and retry.", usage: "wire sync --help" } }],
+    [["download", "docs.google.com/spreadsheets/d/sheet/edit", "--json"], { error: { message: "Expected source URL: docs.google.com/spreadsheets/d/sheet/edit\nAdd `https://` and retry.", usage: "wire download --help" } }],
   ]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } }),
     (error) => {
@@ -908,7 +909,7 @@ test("CLI excess positional errors render before side effects", async () => {
     [["sync-all", "extra"], "sync-all", 0, 1],
     [["switch-db", "extra"], "switch-db", 0, 1],
     [["google-docs", "login", "extra"], "google-docs login", 0, 1],
-    [["https://www.notion.so/page-1", "extra"], "link", 1, 2],
+    [["https://www.notion.so/page-1", "extra"], "attach", 1, 2],
   ]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } }),
     (error) => {
@@ -927,7 +928,7 @@ test("CLI invalid output format renders once without raw commander help", async 
     [["sync", "Document.md", "--output", "xml"], "wire sync --help", "xml"],
     [["sync", "--output", "xml"], "wire sync --help", "xml"],
     [["--output", "yaml"], "wire --help", "yaml"],
-    [["https://www.notion.so/page-1", "--output=yaml"], "wire link --help", "yaml"],
+    [["https://www.notion.so/page-1", "--output=yaml"], "wire attach --help", "yaml"],
     [["sync", "Document.md", "--markdown", "--output=xml"], "wire sync --help", "xml"],
   ]) {
     await assert.rejects(
@@ -1001,7 +1002,7 @@ test("CLI invalid init backend honors JSON output", async () => {
 test("CLI init backend option does not mask unknown options on other commands", async () => {
   for (const [args, usage] of [
     [["sync", "--backend"], "wire sync --help"],
-    [["unlink", "--backend", "sqlite"], "wire unlink --help"],
+    [["detach", "--backend", "sqlite"], "wire detach --help"],
     [["google-docs", "status", "--backend=sqlite"], "wire google-docs status --help"],
   ]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } }),
@@ -1029,7 +1030,7 @@ test("CLI init backend option unknown command errors honor JSON output", async (
 test("CLI auth paste option does not mask unknown options on other commands", async () => {
   for (const [args, usage] of [
     [["sync", "--paste"], "wire sync --help"],
-    [["unlink", "--paste"], "wire unlink --help"],
+    [["detach", "--paste"], "wire detach --help"],
     [["google-docs", "status", "--paste"], "wire google-docs status --help"],
   ]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } }),
@@ -1043,7 +1044,7 @@ test("CLI auth paste option does not mask unknown options on other commands", as
   );
 });
 
-test("CLI URL shorthand unknown options point to link help", async () => {
+test("CLI URL shorthand unknown options point to attach help", async () => {
   await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, resource.urls[0], "--frobnicate"], { env: { ...process.env, NO_COLOR: "1" } }),
     (error) => {
@@ -1232,7 +1233,7 @@ test("CLI Google expired cookie sync failures are user-facing", async () => {
 
 test("CLI URL auth failures omit internal fetch usage", async () => {
   await assert.rejects(
-    () => execFileAsync(process.execPath, [fixture, "https://hub.zoom.us/doc/BxttW9eMTd2QDRNz6tWJ8g?from=hub&skipCheck=1"], { env: { ...colorEnv(), WIRE_FAKE_CREATE_ERROR: "Zoom authentication is missing or expired. Run `wire zoom login` once; other commands reuse saved cookies." } }),
+    () => execFileAsync(process.execPath, [fixture, "https://hub.zoom.us/doc/BxttW9eMTd2QDRNz6tWJ8g?from=hub&skipCheck=1"], { env: { ...colorEnv(), WIRE_FAKE_ATTACH_ERROR: "Zoom authentication is missing or expired. Run `wire zoom login` once; other commands reuse saved cookies." } }),
     (error) => {
       assert.match(error.stdout, /login required/);
       assert.match(error.stdout, /service: Zoom/);
@@ -1485,7 +1486,7 @@ test("CLI rejects non-Toolcraft output and command shims", async () => {
 });
 
 test("CLI removed command shims point to root help", async () => {
-  for (const [command, replacement] of [["auth", "Use `wire <service> status`, `wire <service> login`, or `wire <service> logout`."], ["create", "Use `wire link <url>` or `wire <url>`."], ["fetch", "Use `wire link <url>` or `wire <url>`."], ["view", "Use `wire preview <url>`."]]) await assert.rejects(
+  for (const [command, replacement] of [["auth", "Use `wire <service> status`, `wire <service> login`, or `wire <service> logout`."], ["create", "Use `wire attach <url>` or `wire <url>`."], ["fetch", "Use `wire download <url>`."], ["link", "Use `wire attach <url>` or `wire <url>`."], ["unlink", "Use `wire detach <resource>`."], ["view", "Use `wire preview <url>`."]]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, command], { env: { ...process.env, NO_COLOR: "1" } }),
     (error) => {
       assert.match(error.stdout, new RegExp(`Unknown command: ${command}`));
@@ -1661,7 +1662,7 @@ test("CLI bare non-URL input points to root help", async () => {
 });
 
 test("CLI source commands reject non-URLs before provider execution", async () => {
-  for (const command of ["link", "preview"]) await assert.rejects(
+  for (const command of ["attach", "download", "preview"]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, command, "frobnicate"], { env: { ...process.env, NO_COLOR: "1" } }),
     (error) => {
       assert.match(error.stdout, /Expected source URL: frobnicate/);
@@ -1685,7 +1686,7 @@ test("CLI source commands reject non-URLs before provider execution", async () =
 });
 
 test("CLI resource commands reject schemeless source-looking URLs before lookup", async () => {
-  for (const command of ["sync", "download", "unlink", "open"]) await assert.rejects(
+  for (const command of ["sync", "detach", "open"]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, command, "docs.google.com/spreadsheets/d/sheet/edit"], { env: { ...process.env, NO_COLOR: "1" } }),
     (error) => {
       assert.match(error.stdout, /Expected resource URL or Markdown path: docs\.google\.com\/spreadsheets\/d\/sheet\/edit/);
@@ -1699,7 +1700,7 @@ test("CLI resource commands reject schemeless source-looking URLs before lookup"
 });
 
 test("CLI resource command separators keep control tokens literal", async () => {
-  for (const [command, value, label] of [["sync", "--help", "resource URL or Markdown path"], ["download", "--version", "resource URL or Markdown path"], ["unlink", "-V", "resource URL or Markdown path"], ["open", "--json", "resource URL or Markdown path"], ["watch", "--help", "Markdown path"]]) await assert.rejects(
+  for (const [command, value, label] of [["sync", "--help", "resource URL or Markdown path"], ["download", "--version", "source URL"], ["detach", "-V", "resource URL or Markdown path"], ["open", "--json", "resource URL or Markdown path"], ["watch", "--help", "Markdown path"]]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, command, "--", value], { env: { ...process.env, NO_COLOR: "1" } }),
     (error) => {
       assert.match(error.stdout, new RegExp(`Expected ${label}: ${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
@@ -1792,7 +1793,7 @@ test("CLI accepts debug before default URL", async () => {
   assert.deepEqual(JSON.parse(equals.stdout), resultJson);
 });
 
-test("CLI default URL link does not invoke login extraction", async () => {
+test("CLI default URL attach does not invoke login extraction", async () => {
   const execution = await execFileAsync(process.execPath, [fixture, resource.urls[0], "--output", "json"], { env: { ...process.env, NO_COLOR: "1", WIRE_FAKE_AUTH_EXTRACT_ERROR: "login extractor must not run" } });
   assert.deepEqual(JSON.parse(execution.stdout), resultJson);
 });
@@ -1887,8 +1888,8 @@ test("every Wire and auth command invokes its structured operation", async () =>
   assert.deepEqual(await commands.get("preview").handler(context({ url: resource.urls[0] })), { title: "Document", markdown: "# Document\n", data: { page_id: "page-1" } });
   assert.deepEqual(await commands.get("switch-db").handler(context({})), { root: "/workspace/.wire", from: "sqlite", to: "files", fromPath: "/workspace/.wire/registry.sqlite3", toPath: "/workspace/.wire/records", resources: 1 });
   assert.deepEqual(await commands.get("sync").handler(context({ resource: resource.id })), downloadedResult);
-  assert.deepEqual(await commands.get("download").handler(context({ resource: resource.id })), downloadedResult);
-  assert.deepEqual(await commands.get("unlink").handler(context({ resource: resource.id })), unlinkedResult);
+  assert.deepEqual(await commands.get("download").handler(context({ url: resource.urls[0] })), downloadedResult);
+  assert.deepEqual(await commands.get("detach").handler(context({ resource: resource.id })), detachedResult);
   assert.deepEqual(await commands.get("watch").handler(context({ file: result.path })).then(({ closed: _closed, close: _close, ...value }) => value), { resource, path: result.path, mode: "two-way", debounceMs: 1000, pollMs: 60000 });
   assert.deepEqual(await commands.get("open").handler(context({ resource: resource.id })), resource);
   assert.deepEqual(await commands.get("sync-all").handler(context({})), [downloadedResult]);
@@ -1896,12 +1897,12 @@ test("every Wire and auth command invokes its structured operation", async () =>
 
 test("workspace commands use the launch directory for upward registry discovery", async () => {
   const paths = [];
-  const wire = Object.freeze({ ...createFakeWire(), sync: async (_value, path) => { paths.push(path); return result; }, download: async (_value, path) => { paths.push(path); return result; }, unlink: async (_value, path) => { paths.push(path); return unlinkedResult; }, syncAll: async (path) => { paths.push(path); return [result]; } });
+  const wire = Object.freeze({ ...createFakeWire(), sync: async (_value, path) => { paths.push(path); return result; }, downloadSource: async (_value, path) => { paths.push(path); return result; }, detach: async (_value, path) => { paths.push(path); return detachedResult; }, syncAll: async (path) => { paths.push(path); return [result]; } });
   const nestedRoot = createRoot(wire, "/workspace/docs/nested", auth);
   const nestedCommands = new Map(nestedRoot.children.map((command) => [command.name, command]));
   await nestedCommands.get("sync").handler(context({ resource: resource.id }));
-  await nestedCommands.get("download").handler(context({ resource: resource.id }));
-  await nestedCommands.get("unlink").handler(context({ resource: resource.id }));
+  await nestedCommands.get("download").handler(context({ url: resource.urls[0] }));
+  await nestedCommands.get("detach").handler(context({ resource: resource.id }));
   await nestedCommands.get("sync-all").handler(context({}));
   assert.deepEqual(paths, ["/workspace/docs/nested", "/workspace/docs/nested", "/workspace/docs/nested", "/workspace/docs/nested"]);
 });
@@ -1911,7 +1912,7 @@ test("MCP exposes only Wire tools", async () => {
   await server.handleMessage("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } });
   const listed = await server.handleMessage("tools/list");
   assert.deepEqual(listed.result.tools.map((tool) => tool.name), [
-    "init", "preview", "sync", "download", "unlink", "open", "sync_all",
+    "attach", "init", "preview", "sync", "download", "detach", "open", "sync_all",
     "asana__status", "asana__login", "asana__logout", "chatgpt__status", "chatgpt__login", "chatgpt__logout", "gmail__status", "gmail__login", "gmail__logout", "google_docs__status", "google_docs__login", "google_docs__logout", "notion__status", "notion__login", "notion__logout", "slack__status", "slack__login", "slack__logout", "zoom__status", "zoom__login", "zoom__logout",
   ]);
   const called = await server.handleMessage("tools/call", { name: "notion__status", arguments: {} });

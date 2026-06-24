@@ -80,6 +80,7 @@ export async function switchWireBackend(path, home) {
     for (const resource of resources)
         await target.put(resource);
     await writeFile(join(wireRoot, "config.json"), `${stableJsonPretty({ ...config, backend: to, path: targetRelativePath })}\n`, "utf8");
+    await rm(fromPath, { recursive: true, force: true });
     return { root: wireRoot, from: config.backend, to, fromPath, toPath, resources: resources.length };
 }
 //# sourceMappingURL=workspace.js.map

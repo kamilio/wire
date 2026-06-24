@@ -153,14 +153,34 @@ function resultMessage(result: { resource: { data: readonly { namespace: string;
   return `${result.summary.action} +${result.summary.added} ~${result.summary.modified} -${result.summary.removed} ${title(result.resource)}`;
 }
 
-async function linkHere(uri: vscode.Uri | undefined): Promise<void> {
+async function attachHere(uri: vscode.Uri | undefined): Promise<void> {
   const directory = selectedDirectory(uri);
   const url = await vscode.window.showInputBox({ prompt: "Source URL" });
   if (url === undefined || url.trim() === "") throw new Error("Source URL required");
-  setWireStatus("linking");
-  const result = await wire().create(url, directory);
+  setWireStatus("attaching");
+  const result = await wire().attach(url, directory);
   await vscode.window.showTextDocument(vscode.Uri.file(result.path));
   showWireStatus(resultMessage(result));
+}
+
+async function downloadHere(uri: vscode.Uri | undefined): Promise<void> {
+  const directory = selectedDirectory(uri);
+  const url = await vscode.window.showInputBox({ prompt: "Source URL" });
+  if (url === undefined || url.trim() === "") throw new Error("Source URL required");
+  setWireStatus("downloading");
+  const result = await wire().downloadSource(url, directory);
+  await vscode.window.showTextDocument(vscode.Uri.file(result.path));
+  showWireStatus(resultMessage(result));
+}
+
+async function previewUrl(): Promise<void> {
+  const url = await vscode.window.showInputBox({ prompt: "Source URL" });
+  if (url === undefined || url.trim() === "") throw new Error("Source URL required");
+  setWireStatus("previewing");
+  const result = await wire().view(url);
+  const document = await vscode.workspace.openTextDocument({ language: "markdown", content: result.markdown });
+  await vscode.window.showTextDocument(document);
+  showWireStatus(`previewed ${result.title}`);
 }
 
 async function syncFile(uri: vscode.Uri | undefined): Promise<void> {
@@ -170,10 +190,10 @@ async function syncFile(uri: vscode.Uri | undefined): Promise<void> {
   showWireStatus(resultMessage(result));
 }
 
-async function downloadFile(uri: vscode.Uri | undefined): Promise<void> {
+async function detachFile(uri: vscode.Uri | undefined): Promise<void> {
   const path = resourceFile(uri);
-  setWireStatus("downloading file");
-  const result = await wire().download(path, dirname(path));
+  setWireStatus("detaching file");
+  const result = await wire().detach(path, dirname(path));
   showWireStatus(resultMessage(result));
 }
 
@@ -240,9 +260,11 @@ export function activate(context: vscode.ExtensionContext): void {
   setWireStatus("ready");
   context.subscriptions.push(
     wireStatus,
-    vscode.commands.registerCommand("wire.linkHere", linkHere),
+    vscode.commands.registerCommand("wire.attachHere", attachHere),
+    vscode.commands.registerCommand("wire.downloadHere", downloadHere),
+    vscode.commands.registerCommand("wire.previewUrl", previewUrl),
     vscode.commands.registerCommand("wire.syncFile", syncFile),
-    vscode.commands.registerCommand("wire.downloadFile", downloadFile),
+    vscode.commands.registerCommand("wire.detachFile", detachFile),
     vscode.commands.registerCommand("wire.openResource", openResource),
     vscode.commands.registerCommand("wire.syncDirectory", syncDirectory),
     vscode.commands.registerCommand("wire.authStatus", authStatus),

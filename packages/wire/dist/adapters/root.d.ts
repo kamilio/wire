@@ -11,11 +11,11 @@ type WireRenderer<T> = Readonly<{
 type WirePresentation = Readonly<{
     init: WireRenderer<InitializedWire>;
     switchBackend: WireRenderer<SwitchedWireBackend>;
-    create: WireRenderer<WireResult>;
+    attach: WireRenderer<WireResult>;
     view: WireRenderer<FetchedDocument>;
     sync: WireRenderer<WireResult>;
     download: WireRenderer<WireResult>;
-    unlink: WireRenderer<WireResult>;
+    detach: WireRenderer<WireResult>;
     watch: WireRenderer<WireWatchSession>;
     open: WireRenderer<Resource>;
     syncAll: WireRenderer<readonly WireResult[]>;

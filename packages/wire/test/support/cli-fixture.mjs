@@ -55,10 +55,13 @@ function wireFixture() {
   const wire = createFakeWire();
   return Object.freeze({
     ...wire,
-    create: process.env.WIRE_FAKE_CREATE_ERROR === undefined ? wire.create : async () => { throw new Error(process.env.WIRE_FAKE_CREATE_ERROR); },
+    attach: process.env.WIRE_FAKE_ATTACH_ERROR === undefined ? wire.attach : async () => { throw new Error(process.env.WIRE_FAKE_ATTACH_ERROR); },
+    create: process.env.WIRE_FAKE_ATTACH_ERROR === undefined ? wire.create : async () => { throw new Error(process.env.WIRE_FAKE_ATTACH_ERROR); },
+    downloadSource: process.env.WIRE_FAKE_DOWNLOAD_ERROR === undefined ? wire.downloadSource : async () => { throw new Error(process.env.WIRE_FAKE_DOWNLOAD_ERROR); },
     sync: syncOperation(wire),
-    download: process.env.WIRE_FAKE_DOWNLOAD_ERROR === undefined ? wire.download : async () => { throw new Error(process.env.WIRE_FAKE_DOWNLOAD_ERROR); },
-    unlink: process.env.WIRE_FAKE_UNLINK_ERROR === undefined ? wire.unlink : async () => { throw new Error(process.env.WIRE_FAKE_UNLINK_ERROR); },
+    download: wire.download,
+    detach: process.env.WIRE_FAKE_DETACH_ERROR === undefined ? wire.detach : async () => { throw new Error(process.env.WIRE_FAKE_DETACH_ERROR); },
+    unlink: process.env.WIRE_FAKE_DETACH_ERROR === undefined ? wire.unlink : async () => { throw new Error(process.env.WIRE_FAKE_DETACH_ERROR); },
     view: process.env.WIRE_FAKE_PREVIEW_ERROR === undefined ? wire.view : async () => { throw new Error(process.env.WIRE_FAKE_PREVIEW_ERROR); },
     watch: process.env.WIRE_FAKE_WATCH_ERROR !== undefined ? async () => { throw new Error(process.env.WIRE_FAKE_WATCH_ERROR); } : process.env.WIRE_FAKE_MESSY_RESOURCE === undefined ? wire.watch : async () => messyWatchSession(await wire.watch()),
     listResources: process.env.WIRE_FAKE_LARGE_LIST === undefined ? wire.listResources : async () => {

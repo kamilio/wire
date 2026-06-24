@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -358,6 +359,7 @@ test("switchWireBackend converts sqlite and files registries while preserving co
     resources: 1,
   });
   assert.deepEqual(await loadWireConfig(join(sqliteProject, ".wire")), { backend: "files", path: "records", watch: { debounceMs: 250, mode: "download", pollMs: 30000 } });
+  assert.equal(existsSync(join(sqliteProject, ".wire", "registry.sqlite3")), false);
   assert.ok((await openWireRegistry(sqliteProject, testRoot)) instanceof FileRegistry);
   assert.deepEqual(await (await openWireRegistry(sqliteProject, testRoot)).listResources(), [normalizeResource(resourceA)]);
 
@@ -377,6 +379,7 @@ test("switchWireBackend converts sqlite and files registries while preserving co
     resources: 2,
   });
   assert.deepEqual(await loadWireConfig(join(filesProject, ".wire")), { backend: "sqlite", path: "registry.sqlite3" });
+  assert.equal(existsSync(join(filesProject, ".wire", "records")), false);
   assert.ok((await openWireRegistry(filesProject, testRoot)) instanceof SqliteRegistry);
   assert.deepEqual(await (await openWireRegistry(filesProject, testRoot)).listResources(), [normalizeResource(resourceB), normalizeResource(resourceA)]);
 });

@@ -21,7 +21,7 @@ export type WireDependencies<FetchInput> = Readonly<{
     now(): Date;
     open(path: string): Promise<void>;
 }>;
-export type WireAction = "created" | "downloaded" | "uploaded" | "synced" | "unlinked" | "failed";
+export type WireAction = "attached" | "downloaded" | "uploaded" | "synced" | "detached" | "failed";
 export type WireResult = Readonly<{
     resource: Resource;
     path: string;
@@ -46,10 +46,13 @@ export type WireWatchSession = Readonly<{
     close(): void;
 }>;
 export type Wire = Readonly<{
+    attach(url: string, path: string): Promise<WireResult>;
     create(url: string, path: string): Promise<WireResult>;
     view(url: string): Promise<FetchedDocument>;
+    downloadSource(url: string, path: string): Promise<WireResult>;
     sync(value: string, path: string): Promise<WireResult>;
     download(value: string, path: string): Promise<WireResult>;
+    detach(value: string, path: string): Promise<WireResult>;
     unlink(value: string, path: string): Promise<WireResult>;
     watch(value: string, path: string): Promise<WireWatchSession>;
     openResource(value: string, path: string): Promise<Resource>;
