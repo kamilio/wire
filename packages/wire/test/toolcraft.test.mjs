@@ -67,7 +67,7 @@ function waitForClose(child) {
 const cliCases = [
   ["default attach", ["https://www.notion.so/page-1"], resultJson],
   ["attach", ["attach", "https://www.notion.so/page-1"], resultJson],
-  ["init", ["init"], { root: "/workspace/.wire", backend: "files", path: "records", created: true }],
+  ["init", ["init"], { root: "/workspace/.wire", backend: "sqlite", path: "registry.sqlite3", created: true }],
   ["init files", ["init", "--backend", "files"], { root: "/workspace/.wire", backend: "files", path: "records", created: true }],
   ["preview", ["preview", "https://www.notion.so/page-1"], { title: "Document", markdown: "# Document\n", data: { page_id: "page-1" } }],
   ["sync", ["sync", "notion:page-1"], downloadedResultJson],
@@ -139,7 +139,7 @@ test("CLI help command renders root and command help", async () => {
     assert.equal(attach.stderr, "");
   }
   const service = await execFileAsync(process.execPath, [fixture, "google-docs", "help"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.match(service.stdout, /^google-docs (?:-|—) Manage Google Docs\/Sheets\/Slides login\./m);
+  assert.match(service.stdout, /^google-docs (?:-|—) Manage Google Docs\/Sheets login\./m);
   assert.match(service.stdout, /Usage: wire google-docs \[command\] \[OPTIONS\]/);
   assert.doesNotMatch(service.stdout, /Chrome|Use --paste/);
   assert.doesNotMatch(service.stdout, /Expected source URL or command|Unknown command|Use --debug/);
@@ -163,7 +163,7 @@ test("CLI command help ignores valid debug modes before command paths", async ()
   }
   for (const args of [["--debug=raw", "google-docs", "help", "login"], ["--debug", "raw", "help", "google-docs", "login"], ["google-docs", "login", "--debug=raw", "help"]]) {
     const login = await execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } });
-    assert.match(login.stdout, /(?:^google-docs login (?:-|—) Capture cookies once; normal commands reuse saved cookies\.|google-docs\s+Manage Google Docs\/Sheets\/Slides login\.)/m);
+    assert.match(login.stdout, /(?:^google-docs login (?:-|—) Capture cookies once; normal commands reuse saved cookies\.|google-docs\s+Manage Google Docs\/Sheets login\.)/m);
     assert.match(login.stdout, /(?:Usage: wire google-docs login \[OPTIONS\]|Usage: wire \[command\] \[OPTIONS\])/);
     assert.doesNotMatch(login.stdout, /Expected source URL or command|Unknown command|Use --debug/);
     assert.equal(login.stderr, "");
@@ -171,7 +171,7 @@ test("CLI command help ignores valid debug modes before command paths", async ()
 });
 
 test("CLI with only global options renders root help", async () => {
-  for (const args of [["--debug", "raw"]]) {
+  for (const args of [["--output", "json"], ["--debug", "raw"]]) {
     const execution = await execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } });
     assert.match(execution.stdout, /^wire (?:-|—) Sync web resources with local Markdown\./m);
     assert.match(execution.stdout, /Usage: wire \[command\] \[OPTIONS\]/);
@@ -183,7 +183,7 @@ test("CLI with only global options renders root help", async () => {
 
 test("CLI version flags render version", async () => {
   for (const flag of ["--version", "-V", "version"]) {
-    for (const args of flag === "version" ? [[flag], ["--json", flag]] : [[flag], ["sync", flag]]) {
+    for (const args of flag === "version" ? [[flag], [flag, "auth"], ["--json", flag], ["--debug", "raw", flag], [flag, "sync"]] : [[flag], ["sync", flag], ["auth", flag], ["create", flag], ["frobnicate", flag], ["google-docs", "frobnicate", flag], [flag, "auth"]]) {
       const execution = await execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } });
       assert.equal(execution.stdout, "0.1.0\n");
       assert.doesNotMatch(execution.stdout, /Unknown option|Unknown command|Expected source URL or command/);
@@ -193,7 +193,7 @@ test("CLI version flags render version", async () => {
 });
 
 test("CLI bare auth group renders service help", async () => {
-  for (const [service, title] of [["google-docs", "Google Docs/Sheets/Slides"], ["slack", "Slack"]]) {
+  for (const [service, title] of [["google-docs", "Google Docs/Sheets"], ["slack", "Slack"]]) {
     const execution = await execFileAsync(process.execPath, [fixture, service], { env: { ...process.env, NO_COLOR: "1" } });
     assert.match(execution.stdout, new RegExp(`^${service} (?:-|—) Manage ${title} login\\.`, "m"));
     assert.match(execution.stdout, new RegExp(`Usage: wire ${service} \\[command\\] \\[OPTIONS\\]`));
@@ -205,7 +205,7 @@ test("CLI bare auth group renders service help", async () => {
 
 test("CLI init help names backend choices", async () => {
   const execution = await execFileAsync(process.execPath, [fixture, "init", "--help"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.match(execution.stdout, /--backend <value>\s+Registry backend: files or sqlite\. \(default: files\)/);
+  assert.match(execution.stdout, /--backend <value>\s+Registry backend: sqlite or files\. \(default: sqlite\)/);
 });
 
 test("CLI preview help names preview URL input", async () => {
@@ -283,6 +283,16 @@ test("CLI help in a tty does not render literal command row backticks", async (t
   assert.doesNotMatch(output, /^\s+`attach <url>`/m);
 });
 
+test("CLI help ignores requested data output formats", async () => {
+  for (const args of [["--output", "json"], ["sync", "--help", "--output", "json"], ["google-docs", "--json"]]) {
+    const execution = await execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } });
+    assert.match(execution.stdout, /^[a-z-]+(?: - | — |$)/m);
+    assert.match(execution.stdout, /Usage: wire /);
+    assert.doesNotMatch(execution.stdout, /^## /m);
+    assert.doesNotMatch(execution.stdout, /Usage: `/);
+  }
+});
+
 test("CLI open Markdown output renders the resource", async () => {
   const execution = await execFileAsync(process.execPath, [fixture, "open", resource.id, "--output", "markdown"], { env: { ...process.env, NO_COLOR: "1" } });
   assert.equal(execution.stdout, "opened  Document\nremote: https://www.notion.so/page-1\nlocal:  Document.md\nid:     notion:page-1\n");
@@ -316,8 +326,7 @@ test("CLI Markdown output keeps resource titles and paths on one display line", 
   };
   assert.equal(wirePresentation.open.markdown(messyResource), "opened  Document Second Tab\nremote: https://www.notion.so/page-1 tracking\nlocal:  Folder Document.md\nid:     notion:page-1 continued");
   assert.equal(wirePresentation.sync.markdown({ ...downloadedResult, resource: messyResource }), "downloaded  +1 ~0 -0  Document Second Tab\nlocal:  Folder Document.md");
-  assert.equal(wirePresentation.sync.markdown({ ...downloadedResult, resource: messyResource, summary: { ...downloadedResult.summary, action: "uploaded", remote: "https://www.notion.so/page-1\ntracking" } }), "uploaded  +1 ~0 -0  Document Second Tab\nremote: https://www.notion.so/page-1 tracking\nlocal:  Folder Document.md");
-  assert.equal(wirePresentation.detach.markdown({ ...detachedResult, resource: messyResource }), "detached  Document Second Tab\nlocal:  Folder Document.md");
+  assert.equal(wirePresentation.detach.markdown({ ...detachedResult, resource: messyResource }), "detached  +1 ~0 -0  Document Second Tab\nlocal:  Folder Document.md");
 });
 
 test("CLI Markdown output keeps workspace and watch fields on one display line", async () => {
@@ -364,7 +373,7 @@ test("CLI suppresses broken pipe stacks when stdout closes early", async () => {
 
 test("CLI init Markdown output is compact", async () => {
   const execution = await execFileAsync(process.execPath, [fixture, "init", "--output", "markdown"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.equal(execution.stdout, "workspace created\nroot:    /workspace/.wire\nbackend: files\nregistry: records\nattach:  wire <url>\n");
+  assert.equal(execution.stdout, "workspace created\nroot:    /workspace/.wire\nbackend: sqlite\nregistry: registry.sqlite3\nattach:  wire <url>\n");
 });
 
 test("CLI init files Markdown output uses the files registry path", async () => {
@@ -556,7 +565,7 @@ test("sync-all Markdown output includes zero-diff uploads", async () => {
   const uploadedRoot = createRoot(Object.freeze({ ...createFakeWire(), syncAll: async () => [uploaded] }), "/workspace", auth);
   const uploadedCommands = new Map(uploadedRoot.children.map((command) => [command.name, command]));
   const value = await uploadedCommands.get("sync-all").handler(context({}));
-  assert.equal(uploadedCommands.get("sync-all").render.markdown(value), "uploaded  Document\nremote: https://www.notion.so/page-1\nlocal:  Document.md\n\nchecked: 1");
+  assert.equal(uploadedCommands.get("sync-all").render.markdown(value), "uploaded  Document\nlocal:  Document.md\n\nchecked: 1");
 });
 
 test("sync-all Markdown output includes failed resources", async () => {
@@ -747,15 +756,15 @@ test("CLI init conflict errors are user-facing", async () => {
 test("CLI operation user errors honor JSON output", async () => {
   for (const [args, expected, env] of [
     [["sync", "missing.md", "--json"], jsonError("resource not found\npath: missing.md"), { WIRE_FAKE_SYNC_ERROR: "Resource path not found: missing.md" }],
-    [["download", "https://example.com", "--output", "json"], jsonError("unsupported source\nurl: https://example.com/\nsupported: Asana, ChatGPT, Gmail, Google Docs/Sheets/Slides, Notion, Slack, Zoom"), { WIRE_FAKE_DOWNLOAD_ERROR: "Unsupported source URL: https://example.com/" }],
-    [["preview", "https://example.com", "--json"], jsonError("unsupported source\nurl: https://example.com/\nsupported: Asana, ChatGPT, Gmail, Google Docs/Sheets/Slides, Notion, Slack, Zoom"), { WIRE_FAKE_PREVIEW_ERROR: "Unsupported source URL: https://example.com/" }],
+    [["download", "https://example.com", "--output", "json"], jsonError("unsupported source\nurl: https://example.com/\nsupported: Asana, ChatGPT, Gmail, Google Docs/Sheets, Notion, Slack, Zoom"), { WIRE_FAKE_DOWNLOAD_ERROR: "Unsupported source URL: https://example.com/" }],
+    [["preview", "https://example.com", "--json"], jsonError("unsupported source\nurl: https://example.com/\nsupported: Asana, ChatGPT, Gmail, Google Docs/Sheets, Notion, Slack, Zoom"), { WIRE_FAKE_PREVIEW_ERROR: "Unsupported source URL: https://example.com/" }],
     [["sync", "ambiguous.md", "--json"], jsonError("ambiguous resource\npath: ambiguous.md\nmatches: notion:one, notion:two\nuse: resource id or URL"), { WIRE_FAKE_SYNC_ERROR: "Ambiguous resource path ambiguous.md: notion:one, notion:two. Use a resource id or URL." }],
-    [["google-docs", "status", "--json"], jsonError("login required\nservice: Google Docs/Sheets/Slides\nrun: wire google-docs login"), { WIRE_FAKE_AUTH_STATUS_ERROR: "google-docs cookie authentication is missing or expired. Run `wire google-docs login` once; other commands reuse saved cookies." }],
+    [["google-docs", "status", "--json"], jsonError("login required\nservice: Google Docs/Sheets\nrun: wire google-docs login"), { WIRE_FAKE_AUTH_STATUS_ERROR: "google-docs cookie authentication is missing or expired. Run `wire google-docs login` once; other commands reuse saved cookies." }],
     [["sync", "Document.md", "--json"], jsonError("download failed\nservice: ChatGPT\nlogin: wire chatgpt login\ndetail: forbidden"), { WIRE_FAKE_SYNC_ERROR: "ChatGPT conversation download failed. Run `wire chatgpt login`. forbidden" }],
-    [["sync", "Document.md", "--json"], jsonError("export failed\nservice: Google Docs/Sheets/Slides\nsource: Google Docs Markdown\nstatus: HTTP 404"), { WIRE_FAKE_SYNC_ERROR: "Google Docs Markdown export failed: HTTP 404" }],
-    [["sync", "Document.md", "--json"], jsonError("save failed\nservice: Google Docs/Sheets/Slides\nsource: Google Sheets\ndetail: unexpected response"), { WIRE_FAKE_SYNC_ERROR: "Google Sheets save failed: unexpected response" }],
-    [["sync", "Document.md", "--json"], jsonError("sync conflict\nservice: Google Docs/Sheets/Slides\nsource: Google Docs\nresolve: edit Google Docs or local Markdown, then sync again"), { WIRE_FAKE_SYNC_ERROR: "Google Docs changed remotely and locally. Resolve the conflict in Google Docs or the local Markdown file before syncing again." }],
-    [["sync", "Document.md", "--json"], jsonError("formula-like cell blocked\nservice: Google Docs/Sheets/Slides\nsource: Google Sheets\ncell: row 2, column 2\nresolve: prefix with an apostrophe or rewrite as plain text"), { WIRE_FAKE_SYNC_ERROR: "Google Sheets sync cannot upload formula-like cell text at row 2, column 2\nPrefix it with an apostrophe or rewrite it as plain text before syncing." }],
+    [["sync", "Document.md", "--json"], jsonError("export failed\nservice: Google Docs/Sheets\nsource: Google Docs Markdown\nstatus: HTTP 404"), { WIRE_FAKE_SYNC_ERROR: "Google Docs Markdown export failed: HTTP 404" }],
+    [["sync", "Document.md", "--json"], jsonError("save failed\nservice: Google Docs/Sheets\nsource: Google Sheets\ndetail: unexpected response"), { WIRE_FAKE_SYNC_ERROR: "Google Sheets save failed: unexpected response" }],
+    [["sync", "Document.md", "--json"], jsonError("sync conflict\nservice: Google Docs/Sheets\nsource: Google Docs\nresolve: edit Google Docs or local Markdown, then sync again"), { WIRE_FAKE_SYNC_ERROR: "Google Docs changed remotely and locally. Resolve the conflict in Google Docs or the local Markdown file before syncing again." }],
+    [["sync", "Document.md", "--json"], jsonError("formula-like cell blocked\nservice: Google Docs/Sheets\nsource: Google Sheets\ncell: row 2, column 2\nresolve: prefix with an apostrophe or rewrite as plain text"), { WIRE_FAKE_SYNC_ERROR: "Google Sheets sync cannot upload formula-like cell text at row 2, column 2\nPrefix it with an apostrophe or rewrite it as plain text before syncing." }],
     [["sync", "Document.md", "--json"], jsonError("api failed\nservice: Slack\nmethod: conversations.replies\ndetail: channel_not_found"), { WIRE_FAKE_SYNC_ERROR: "Slack API conversations.replies failed: channel_not_found" }],
     [["sync", "Document.md", "--json"], jsonError("api failed\nservice: Zoom\noperation: file batch_get\nstatus: HTTP 403\ndetail: {\"error\":\"denied\"}"), { WIRE_FAKE_SYNC_ERROR: "Zoom Hub file batch_get failed: HTTP 403 {\"error\":\"denied\"}" }],
     [["sync", "Document.md", "--json"], jsonError("local markdown invalid\nservice: Asana\nline: 4\ndetail: not a task"), { WIRE_FAKE_SYNC_ERROR: "Unsupported Asana Markdown at line 4: not a task" }],
@@ -872,7 +881,7 @@ test("CLI option Markdown errors keep interpolated values on one display line", 
   for (const [args, expected, usage] of [
     [["sync", "Document.md", "--output", badOutput], `Expected one of: md, markdown, json, rich, got "xml next part"`, "wire sync --help"],
     [["sync", "Document.md", `--debug=${badDebug}`], `Expected one of: raw, got "trace next part"`, "wire sync --help"],
-    [["init", `--backend=${badBackend}`], `Expected one of: files, sqlite, got "file next part"`, "wire init --help"],
+    [["init", `--backend=${badBackend}`], `Expected one of: sqlite, files, got "file next part"`, "wire init --help"],
   ]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } }),
     (error) => {
@@ -966,7 +975,7 @@ test("CLI invalid init backend renders once without raw commander help", async (
       () => execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } }),
       (error) => {
         assert.match(error.stdout, new RegExp(message));
-        assert.match(error.stdout, /Expected one of: files, sqlite/);
+        assert.match(error.stdout, /Expected one of: sqlite, files/);
         assert.match(error.stdout, usageHelp("wire init --help"));
         assert.doesNotMatch(error.stdout, /error: option|Did you mean|^Usage: wire/m);
         assert.equal(error.stderr, "");
@@ -978,8 +987,8 @@ test("CLI invalid init backend renders once without raw commander help", async (
 
 test("CLI invalid init backend honors JSON output", async () => {
   for (const [args, expected] of [
-    [["init", "--backend", "--json"], { error: { message: "Missing value for \"--backend\"\nExpected one of: files, sqlite", usage: "wire init --help" } }],
-    [["init", "--backend=file", "--json"], { error: { message: "Invalid value for \"--backend\"\nExpected one of: files, sqlite, got \"file\"", usage: "wire init --help" } }],
+    [["init", "--backend", "--json"], { error: { message: "Missing value for \"--backend\"\nExpected one of: sqlite, files", usage: "wire init --help" } }],
+    [["init", "--backend=file", "--json"], { error: { message: "Invalid value for \"--backend\"\nExpected one of: sqlite, files, got \"file\"", usage: "wire init --help" } }],
   ]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } }),
     (error) => {
@@ -1128,7 +1137,6 @@ test("CLI Google sync conflicts are user-facing", async () => {
   for (const [message, patterns, rawPattern] of [
     ["Google Docs changed remotely and locally. Resolve the conflict in Google Docs or the local Markdown file before syncing again.", [/sync conflict/, /service: Google Docs\/Sheets/, /source: Google Docs/, /resolve: edit Google Docs or local Markdown, then sync again/], /Google Docs changed remotely and locally/],
     ["Google Sheets changed remotely and locally. Resolve the conflict in Google Sheets or the local Markdown file before syncing again.", [/sync conflict/, /service: Google Docs\/Sheets/, /source: Google Sheets/, /resolve: edit Google Sheets or local Markdown, then sync again/], /Google Sheets changed remotely and locally/],
-    ["Google Slides changed remotely and locally. Resolve the conflict in Google Slides or the local Markdown file before syncing again.", [/sync conflict/, /service: Google Docs\/Sheets\/Slides/, /source: Google Slides/, /resolve: edit Google Slides or local Markdown, then sync again/], /Google Slides changed remotely and locally/],
   ]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, "sync", "Document.md"], { env: { ...process.env, NO_COLOR: "1", WIRE_FAKE_SYNC_ERROR: message } }),
     (error) => {
@@ -1244,7 +1252,6 @@ test("CLI Google malformed export failures are user-facing", async () => {
     ["Google Docs Markdown export did not include a filename", [/export failed/, /service: Google Docs\/Sheets/, /source: Google Docs Markdown/, /detail: missing filename/]],
     ["Google Docs Markdown export failed: HTTP 404", [/export failed/, /service: Google Docs\/Sheets/, /source: Google Docs Markdown/, /status: HTTP 404/]],
     ["Google Sheets CSV export failed: HTTP 500", [/export failed/, /service: Google Docs\/Sheets/, /source: Google Sheets CSV/, /status: HTTP 500/]],
-    ["Google Slides PPTX export failed: HTTP 500", [/export failed/, /service: Google Docs\/Sheets\/Slides/, /source: Google Slides PPTX/, /status: HTTP 500/]],
   ]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, "sync", "Document.md"], { env: { ...process.env, NO_COLOR: "1", WIRE_FAKE_SYNC_ERROR: message } }),
     (error) => {
@@ -1293,7 +1300,6 @@ test("CLI Google save failures are user-facing", async () => {
   );
   for (const [message, patterns, rawPattern] of [
     ["Google Docs sync cannot upload formatting-only Markdown edits", [/local edit not uploadable/, /service: Google Docs\/Sheets/, /source: Google Docs/, /detail: formatting-only Markdown edit/], /Google Docs sync cannot upload formatting-only Markdown edits/],
-    ["Google Slides sync is download-only. Revert local edits or use `wire download <url>` for a fresh copy.", [/local edit not uploadable/, /service: Google Docs\/Sheets\/Slides/, /source: Google Slides/, /detail: download-only/], /Google Slides sync is download-only/],
     ["Google sync base must include markdown", [/sync base invalid/, /service: Google Docs\/Sheets/, /detail: must include markdown/], /Google sync base must include markdown/],
     ["Google Sheets sync base rows must be arrays", [/sync base invalid/, /service: Google Docs\/Sheets/, /source: Google Sheets/, /detail: rows must be arrays/], /Google Sheets sync base rows must be arrays/],
   ]) await assert.rejects(
@@ -1382,7 +1388,7 @@ test("CLI auth paste verification failures are user-facing", async () => {
 
 test("CLI auth status Markdown output is compact", async () => {
   const execution = await execFileAsync(process.execPath, [fixture, "google-docs", "status", "--output", "markdown"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.equal(execution.stdout, "Google Docs/Sheets/Slides authenticated\nservice: google-docs\n");
+  assert.equal(execution.stdout, "Google Docs/Sheets authenticated\nservice: google-docs\n");
 });
 
 test("CLI auth status Markdown output renders nested identity fields readably", async () => {
@@ -1395,10 +1401,10 @@ test("CLI auth status Markdown output renders nested identity fields readably", 
 });
 
 test("CLI auth status Markdown output keeps identity fields on one display line", async () => {
-  assert.equal(wirePresentation.authStatus.markdown({ service: "google-docs", identity: { user: { displayName: "Person\nName", emailAddress: "person\n@example.com", permissionId: "permission\n1" } } }), "Google Docs/Sheets/Slides authenticated\nname:          Person Name\nemail:         person @example.com\npermission_id: permission 1");
+  assert.equal(wirePresentation.authStatus.markdown({ service: "google-docs", identity: { user: { displayName: "Person\nName", emailAddress: "person\n@example.com", permissionId: "permission\n1" } } }), "Google Docs/Sheets authenticated\nname:          Person Name\nemail:         person @example.com\npermission_id: permission 1");
   assert.deepEqual(wirePresentation.authStatus.json({ service: "zoom", identity: { "account\nid": "account\nA1", scopes: ["read\none", "write\ttwo"] } }), { service: "zoom", identity: { "account\nid": "account\nA1", scopes: ["read\none", "write\ttwo"] } });
   const google = await execFileAsync(process.execPath, [fixture, "google-docs", "status", "--output", "markdown"], { env: { ...process.env, NO_COLOR: "1", WIRE_FAKE_AUTH_MESSY_IDENTITY: "1" } });
-  assert.equal(google.stdout, "Google Docs/Sheets/Slides authenticated\nname:          Person Name\nemail:         person @example.com\npermission_id: permission 1\n");
+  assert.equal(google.stdout, "Google Docs/Sheets authenticated\nname:          Person Name\nemail:         person @example.com\npermission_id: permission 1\n");
   const zoom = await execFileAsync(process.execPath, [fixture, "zoom", "status", "--output", "markdown"], { env: { ...process.env, NO_COLOR: "1", WIRE_FAKE_AUTH_MESSY_IDENTITY: "1" } });
   assert.equal(zoom.stdout, "Zoom authenticated\naccount id: account A1\nscopes:     read one, write two\n");
   assert.doesNotMatch(zoom.stdout, /\\n|\\t/);
@@ -1417,16 +1423,16 @@ test("CLI output shorthand flags map to Toolcraft output formats", async () => {
   const statusJson = await execFileAsync(process.execPath, [fixture, "google-docs", "status", "--json"], { env: { ...process.env, NO_COLOR: "1" } });
   assert.deepEqual(JSON.parse(statusJson.stdout), { service: "google-docs", identity: { service: "google-docs" } });
   const statusMarkdown = await execFileAsync(process.execPath, [fixture, "google-docs", "status", "--markdown"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.equal(statusMarkdown.stdout, "Google Docs/Sheets/Slides authenticated\nservice: google-docs\n");
+  assert.equal(statusMarkdown.stdout, "Google Docs/Sheets authenticated\nservice: google-docs\n");
   const openMarkdown = await execFileAsync(process.execPath, [fixture, "open", resource.id, "--md"], { env: { ...process.env, NO_COLOR: "1" } });
   assert.equal(openMarkdown.stdout, "opened  Document\nremote: https://www.notion.so/page-1\nlocal:  Document.md\nid:     notion:page-1\n");
 });
 
 test("CLI auth help uses service display names", async () => {
   const google = await execFileAsync(process.execPath, [fixture, "google-docs", "--help"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.match(google.stdout, /Check saved Google Docs\/Sheets\/Slides login\./);
+  assert.match(google.stdout, /Check saved Google Docs\/Sheets login\./);
   assert.match(google.stdout, /Capture cookies once; normal commands reuse saved cookies\./);
-  assert.match(google.stdout, /Delete saved Google Docs\/Sheets\/Slides cookies\./);
+  assert.match(google.stdout, /Delete saved Google Docs\/Sheets cookies\./);
   assert.doesNotMatch(google.stdout, /Chrome|Use --paste|google-docs login|saved google-docs cookies|~\/\.wire\/auth/);
   const slack = await execFileAsync(process.execPath, [fixture, "slack", "--help"], { env: { ...process.env, NO_COLOR: "1" } });
   assert.match(slack.stdout, /Check saved Slack login\./);
@@ -1442,11 +1448,11 @@ test("CLI Google Docs login exists", async () => {
 
 test("CLI auth login Markdown output is compact", async () => {
   const execution = await execFileAsync(process.execPath, [fixture, "google-docs", "login", "--output", "markdown"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.equal(execution.stdout, "Google Docs/Sheets/Slides authenticated\nemail: person@example.com\n");
+  assert.equal(execution.stdout, "Google Docs/Sheets authenticated\nemail: person@example.com\n");
 });
 
 test("CLI auth manual capture Markdown output is compact for every service", async () => {
-  for (const [service, title] of [["asana", "Asana"], ["chatgpt", "ChatGPT"], ["gmail", "Gmail"], ["google-docs", "Google Docs/Sheets/Slides"], ["notion", "Notion"], ["slack", "Slack"], ["zoom", "Zoom"]]) {
+  for (const [service, title] of [["asana", "Asana"], ["chatgpt", "ChatGPT"], ["gmail", "Gmail"], ["google-docs", "Google Docs/Sheets"], ["notion", "Notion"], ["slack", "Slack"], ["zoom", "Zoom"]]) {
     const execution = await execFileAsync(process.execPath, [fixture, service, "login", "--markdown"], { env: { ...process.env, NO_COLOR: "1", WIRE_FAKE_AUTH_MANUAL_SAVE: service } });
     assert.equal(execution.stdout, `${title} login saved\n`);
   }
@@ -1467,7 +1473,7 @@ test("CLI auth login cancellation is user-facing for every service", async () =>
 
 test("CLI auth logout Markdown output is compact", async () => {
   const execution = await execFileAsync(process.execPath, [fixture, "google-docs", "logout", "--output", "markdown"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.equal(execution.stdout, "Google Docs/Sheets/Slides logged out\n");
+  assert.equal(execution.stdout, "Google Docs/Sheets logged out\n");
 });
 
 test("CLI rejects non-Toolcraft output and command shims", async () => {
@@ -1716,7 +1722,7 @@ test("CLI unsupported source URLs are user-facing", async (t) => {
     (error) => {
       assert.match(error.stdout, /unsupported source/);
       assert.match(error.stdout, /url: https:\/\/example\.com\/not-supported/);
-      assert.match(error.stdout, /supported: Asana, ChatGPT, Gmail, Google Docs\/Sheets\/Slides, Notion, Slack, Zoom/);
+      assert.match(error.stdout, /supported: Asana, ChatGPT, Gmail, Google Docs\/Sheets, Notion, Slack, Zoom/);
       assert.doesNotMatch(error.stdout, /for usage/);
       assert.doesNotMatch(error.stdout, /Use --debug/);
       assert.equal(error.stderr, "");

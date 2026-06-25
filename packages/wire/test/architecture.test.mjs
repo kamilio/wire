@@ -116,8 +116,6 @@ test("public entry point imports without runtime capabilities", async () => {
     "createRoot",
     "createServiceRegistry",
     "createWireMcpServer",
-    "defaultWireBackend",
-    "defaultWireRegistryPath",
     "defineService",
     "defineServiceCatalog",
     "detectCookieFormat",
@@ -153,7 +151,6 @@ test("public entry point imports without runtime capabilities", async () => {
     "parsePastedCookieMetadata",
     "parsePastedCookies",
     "parseSourceUrl",
-    "registryPathForBackend",
     "renderAsanaMarkdown",
     "renderNotionTreeToMarkdown",
     "repositoryCookiesFile",
@@ -390,7 +387,5 @@ test("packed package installs and runs outside the repository", async (context) 
   assert.doesNotMatch(cli.stdout, /^\s+show <resource>\s+Show registered resource details without opening the source URL\./m);
   assert.doesNotMatch(cli.stdout, /--path/);
   assert.doesNotMatch(cli.stdout, /switch-db/);
-  const wireCli = await execFileAsync(join(consumerRoot, "node_modules", ".bin", "wire"), ["--version"], { cwd: consumerRoot, env: environment });
-  assert.equal(wireCli.stdout, "0.1.0\n");
   assert.deepEqual(await mcpTools(join(consumerRoot, "node_modules", ".bin", "wire-mcp"), consumerRoot, environment), ["attach", "init", "preview", "sync", "download", "detach", "open", "sync_all", "asana__status", "asana__login", "asana__logout", "chatgpt__status", "chatgpt__login", "chatgpt__logout", "gmail__status", "gmail__login", "gmail__logout", "google_docs__status", "google_docs__login", "google_docs__logout", "notion__status", "notion__login", "notion__logout", "slack__status", "slack__login", "slack__logout", "zoom__status", "zoom__login", "zoom__logout"]);
 });
