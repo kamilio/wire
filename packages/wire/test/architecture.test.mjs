@@ -7,18 +7,24 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = resolve(import.meta.dirname, "../../../..");
-const workspaceRoot = join(repositoryRoot, "wire_ts");
+const workspaceRoot = resolve(import.meta.dirname, "../../..");
 const packageRoot = resolve(import.meta.dirname, "..");
 const testRoot = join(repositoryRoot, "out", "wire-ts-architecture");
 const distRoot = join(packageRoot, "dist");
 const entryPoint = join(distRoot, "index.js");
 const runtimeDependencies = {
+  ajv: "^8.20.0",
   commander: "^14.0.3",
+  "fast-deep-equal": "^3.1.3",
+  "fast-string-truncated-width": "^3.0.3",
   "fast-string-width": "^3.0.2",
   "fast-wrap-ansi": "^0.2.0",
+  "fast-uri": "^3.0.1",
   ignore: "^5.3.2",
   jose: "^6.1.2",
+  "json-schema-traverse": "^1.0.0",
   "jsonc-parser": "^3.3.1",
+  "pct-encode": "^1.0.3",
   "provider-asana": "0.1.0",
   "provider-chatgpt": "0.1.0",
   "provider-gmail": "0.1.0",
@@ -26,11 +32,14 @@ const runtimeDependencies = {
   "provider-notion": "0.1.0",
   "provider-slack": "0.1.0",
   "provider-zoom": "0.1.0",
+  "require-from-string": "^2.0.2",
   sisteransi: "^1.0.5",
   "smol-toml": "^1.3.0",
   "tiny-stdio-mcp-server": "^0.1.0",
-  toolcraft: "^0.0.56",
-  "toolcraft-schema": "0.0.56",
+  toolcraft: "^0.0.83",
+  "toolcraft-schema": "0.0.83",
+  "uri-template": "^2.0.0",
+  "uri-template-lite": "^23.4.0",
   "wire-core": "0.1.0",
   yaml: "^2.8.2",
 };
@@ -107,6 +116,8 @@ test("public entry point imports without runtime capabilities", async () => {
     "createRoot",
     "createServiceRegistry",
     "createWireMcpServer",
+    "defaultWireBackend",
+    "defaultWireRegistryPath",
     "defineService",
     "defineServiceCatalog",
     "detectCookieFormat",
@@ -142,6 +153,7 @@ test("public entry point imports without runtime capabilities", async () => {
     "parsePastedCookieMetadata",
     "parsePastedCookies",
     "parseSourceUrl",
+    "registryPathForBackend",
     "renderAsanaMarkdown",
     "renderNotionTreeToMarkdown",
     "repositoryCookiesFile",
@@ -228,6 +240,7 @@ test("packed package installs and runs outside the repository", async (context) 
   const npmPackEnvironment = { ...process.env, npm_config_cache: npmPackCache };
   const npmInstallEnvironment = { ...process.env, npm_config_cache: npmInstallCache };
   const packed = JSON.parse((await execFileAsync("npm", ["pack", "--json", "--pack-destination", packRoot], { cwd: packageRoot, env: npmPackEnvironment })).stdout)[0];
+  assert.equal(packed.name, "@kamilio/wire");
   const packedPaths = packed.files.map((file) => file.path).sort();
   for (const path of [
     "bin/wire-mcp.mjs",
@@ -257,7 +270,13 @@ test("packed package installs and runs outside the repository", async (context) 
   const consumerPackage = JSON.parse(await readFile(join(consumerRoot, "package.json"), "utf8"));
   await writeFile(join(consumerRoot, "package.json"), `${JSON.stringify({ ...consumerPackage, type: "module" }, null, 2)}\n`);
   await execFileAsync("npm", ["install", "--offline", tarball], { cwd: consumerRoot, env: npmInstallEnvironment });
-  const installedRoot = join(consumerRoot, "node_modules", "wire");
+  const installedRoot = join(consumerRoot, "node_modules", "@kamilio", "wire");
+  const installedPackage = JSON.parse(await readFile(join(installedRoot, "package.json"), "utf8"));
+  assert.equal(installedPackage.name, "@kamilio/wire");
+  assert.deepEqual(installedPackage.repository, { type: "git", url: "git+https://github.com/kamilio/wire.git", directory: "packages/wire" });
+  assert.deepEqual(installedPackage.publishConfig, { access: "public" });
+  assert.equal(installedPackage.bin.wire, "bin/wire.mjs");
+  assert.equal(installedPackage.bin["wire-mcp"], "bin/wire-mcp.mjs");
   const rootDeclaration = await readFile(join(installedRoot, "dist", "adapters", "root.d.ts"), "utf8");
   assert.doesNotMatch(rootDeclaration, /toolcraft-schema/);
   assert.equal(rootDeclaration.length < 1500, true);
@@ -273,9 +292,9 @@ test("packed package installs and runs outside the repository", async (context) 
     assert.match(document, new RegExp(`sourceMappingURL=${basename(mapPath).replaceAll(".", "\\.")}$`));
   }
   const importScript = `
-    const library = await import("wire");
-    const cli = await import("wire/cli");
-    const mcp = await import("wire/mcp");
+    const library = await import("@kamilio/wire");
+    const cli = await import("@kamilio/wire/cli");
+    const mcp = await import("@kamilio/wire/mcp");
     process.stdout.write(JSON.stringify({
       library: typeof library.composeWire,
       cli: typeof cli.runWireCli,
@@ -285,9 +304,9 @@ test("packed package installs and runs outside the repository", async (context) 
   const imported = await execFileAsync(process.execPath, ["--eval", importScript], { cwd: consumerRoot, env: {} });
   assert.deepEqual(JSON.parse(imported.stdout), { library: "function", cli: "function", mcp: "function" });
   await writeFile(join(consumerRoot, "consumer.ts"), `
-    import { composeWire, createExecutableRoot, createRoot, defineService, defineServiceCatalog, type NodeEnvironment, type Registry, type Resource, type Wire, type WireRoot } from "wire";
-    import { runWireCli } from "wire/cli";
-    import { createWireMcpServer } from "wire/mcp";
+    import { composeWire, createExecutableRoot, createRoot, defineService, defineServiceCatalog, type NodeEnvironment, type Registry, type Resource, type Wire, type WireRoot } from "@kamilio/wire";
+    import { runWireCli } from "@kamilio/wire/cli";
+    import { createWireMcpServer } from "@kamilio/wire/mcp";
 
     const resources = new Map<string, Resource>();
     const registry: Registry = {
@@ -371,5 +390,7 @@ test("packed package installs and runs outside the repository", async (context) 
   assert.doesNotMatch(cli.stdout, /^\s+show <resource>\s+Show registered resource details without opening the source URL\./m);
   assert.doesNotMatch(cli.stdout, /--path/);
   assert.doesNotMatch(cli.stdout, /switch-db/);
+  const wireCli = await execFileAsync(join(consumerRoot, "node_modules", ".bin", "wire"), ["--version"], { cwd: consumerRoot, env: environment });
+  assert.equal(wireCli.stdout, "0.1.0\n");
   assert.deepEqual(await mcpTools(join(consumerRoot, "node_modules", ".bin", "wire-mcp"), consumerRoot, environment), ["attach", "init", "preview", "sync", "download", "detach", "open", "sync_all", "asana__status", "asana__login", "asana__logout", "chatgpt__status", "chatgpt__login", "chatgpt__logout", "gmail__status", "gmail__login", "gmail__logout", "google_docs__status", "google_docs__login", "google_docs__logout", "notion__status", "notion__login", "notion__logout", "slack__status", "slack__login", "slack__logout", "zoom__status", "zoom__login", "zoom__logout"]);
 });
