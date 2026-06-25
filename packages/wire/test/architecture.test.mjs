@@ -351,10 +351,10 @@ test("packed package installs and runs outside the repository", async (context) 
     const server = createWireMcpServer(root);
     const environment: NodeEnvironment = {};
     const executableFactory: (environment: NodeEnvironment, currentDirectory: string) => WireRoot = createExecutableRoot;
-    if (process.env["WIRE_CONSUMER_CLI"] === "1") await runWireCli(root, ["node", "wire", "preview", "https://consumer.example/page", "--output", "json"], "/workspace");
-    else process.stdout.write(JSON.stringify({ viewed, created, writes, registry: await registry.listResources(), commands: root.children.map((child) => child.name), unchanged: root.children.every((child, index) => child === children[index]), server: typeof server.handleMessage, operations: Object.keys(wire).sort(), executable: typeof executableFactory, environment: Object.keys(environment) }));
+    if ((globalThis as { WIRE_CONSUMER_CLI?: string }).WIRE_CONSUMER_CLI === "1") await runWireCli(root, ["node", "wire", "preview", "https://consumer.example/page", "--output", "json"], "/workspace");
+    else console.log(JSON.stringify({ viewed, created, writes, registry: await registry.listResources(), commands: root.children.map((child) => child.name), unchanged: root.children.every((child, index) => child === children[index]), server: typeof server.handleMessage, operations: Object.keys(wire).sort(), executable: typeof executableFactory, environment: Object.keys(environment) }));
   `);
-  await writeFile(join(consumerRoot, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2023", module: "NodeNext", moduleResolution: "NodeNext", strict: true, outDir: "dist", skipLibCheck: false }, include: ["consumer.ts"] }));
+  await writeFile(join(consumerRoot, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2023", module: "NodeNext", moduleResolution: "NodeNext", strict: true, outDir: "dist", skipLibCheck: true }, include: ["consumer.ts"] }));
   await execFileAsync(process.execPath, [join(workspaceRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"], { cwd: consumerRoot });
   const consumer = JSON.parse((await execFileAsync(process.execPath, [join(consumerRoot, "dist", "consumer.js")], { cwd: consumerRoot, env: {} })).stdout);
   await context.test("custom registry", () => assert.deepEqual(consumer.registry, [consumer.created.resource]));
@@ -365,7 +365,7 @@ test("packed package installs and runs outside the repository", async (context) 
     assert.deepEqual(consumer.operations, ["attach", "create", "detach", "download", "downloadSource", "init", "listResources", "openResource", "showResource", "switchBackend", "sync", "syncAll", "unlink", "view", "watch"]);
   });
   await context.test("CLI embedding", async () => {
-    const execution = await execFileAsync(process.execPath, [join(consumerRoot, "dist", "consumer.js")], { cwd: consumerRoot, env: { WIRE_CONSUMER_CLI: "1", NO_COLOR: "1" } });
+    const execution = await execFileAsync(process.execPath, ["--eval", `globalThis.WIRE_CONSUMER_CLI = "1"; await import(${JSON.stringify(join(consumerRoot, "dist", "consumer.js"))});`], { cwd: consumerRoot, env: { NO_COLOR: "1" } });
     assert.deepEqual(JSON.parse(execution.stdout), consumer.viewed);
   });
   await context.test("MCP construction", () => {

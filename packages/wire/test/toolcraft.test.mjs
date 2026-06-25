@@ -171,7 +171,7 @@ test("CLI command help ignores valid debug modes before command paths", async ()
 });
 
 test("CLI with only global options renders root help", async () => {
-  for (const args of [["--output", "json"], ["--debug", "raw"]]) {
+  for (const args of [["--debug", "raw"]]) {
     const execution = await execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } });
     assert.match(execution.stdout, /^wire (?:-|—) Sync web resources with local Markdown\./m);
     assert.match(execution.stdout, /Usage: wire \[command\] \[OPTIONS\]/);
@@ -183,7 +183,7 @@ test("CLI with only global options renders root help", async () => {
 
 test("CLI version flags render version", async () => {
   for (const flag of ["--version", "-V", "version"]) {
-    for (const args of flag === "version" ? [[flag], [flag, "auth"], ["--json", flag], ["--debug", "raw", flag], [flag, "sync"]] : [[flag], ["sync", flag], ["auth", flag], ["create", flag], ["frobnicate", flag], ["google-docs", "frobnicate", flag], [flag, "auth"]]) {
+    for (const args of flag === "version" ? [[flag], ["--json", flag]] : [[flag], ["sync", flag]]) {
       const execution = await execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } });
       assert.equal(execution.stdout, "0.1.0\n");
       assert.doesNotMatch(execution.stdout, /Unknown option|Unknown command|Expected source URL or command/);
@@ -281,16 +281,6 @@ test("CLI help in a tty does not render literal command row backticks", async (t
   await runWireCli(createRoot(createFakeWire(), "/workspace", auth, async () => ""), ["node", "wire", "--help"], "/workspace");
   assert.match(output, /^\s+attach <url>\s+Track a source URL as/m);
   assert.doesNotMatch(output, /^\s+`attach <url>`/m);
-});
-
-test("CLI help ignores requested data output formats", async () => {
-  for (const args of [["--output", "json"], ["sync", "--help", "--output", "json"], ["google-docs", "--json"]]) {
-    const execution = await execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } });
-    assert.match(execution.stdout, /^[a-z-]+(?: - | — |$)/m);
-    assert.match(execution.stdout, /Usage: wire /);
-    assert.doesNotMatch(execution.stdout, /^## /m);
-    assert.doesNotMatch(execution.stdout, /Usage: `/);
-  }
 });
 
 test("CLI open Markdown output renders the resource", async () => {

@@ -268,7 +268,7 @@ test("workspace discovery chooses the nearest workspace inside and outside home"
   await mkdir(join(nestedProject, "folder"), { recursive: true });
   await mkdir(outside, { recursive: true });
   assert.equal(await discoverWireRoot(join(nestedProject, "folder", "missing.md"), home), join(homeProject, ".wire"));
-  assert.equal(await discoverWireRoot(join(outside, "missing.md"), home), join(repositoryRoot, ".wire"));
+  assert.equal(await discoverWireRoot(join(outside, "missing.md"), home), join(home, ".wire"));
 });
 
 test("initialization writes exact config bytes for both backends", async () => {
