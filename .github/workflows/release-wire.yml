@@ -1,0 +1,45 @@
+name: Release wire
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+      - package-lock.json
+      - packages/wire/**
+      - packages/wire-core/**
+      - packages/provider-asana/**
+      - packages/provider-chatgpt/**
+      - packages/provider-gmail/**
+      - packages/provider-google-docs/**
+      - packages/provider-notion/**
+      - packages/provider-slack/**
+      - packages/provider-zoom/**
+      - .github/workflows/release-wire.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+          cache: npm
+      - run: npm install --global npm@^11.5.1
+      - run: npm ci
+      - run: npm run check
+      - run: npm pack --workspace @kamilio/wire --json --pack-destination "$RUNNER_TEMP"
+      - working-directory: packages/wire
+        run: |
+          REMOTE=$(npm view @kamilio/wire version 2>/dev/null || echo "0.0.0")
+          npm version --no-git-tag-version --allow-same-version "$REMOTE"
+          npm version --no-git-tag-version patch
+      - working-directory: packages/wire
+        run: npm publish --provenance --access public

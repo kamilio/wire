@@ -6,10 +6,10 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm --workspace wire-core run build && npm --workspace provider-asana run build && npm --workspace provider-chatgpt run build && npm --workspace provider-gmail run build && npm --workspace provider-google-docs run build && npm --workspace provider-notion run build && npm --workspace provider-slack run build && npm --workspace provider-zoom run build && npm --workspace wire run build && npm --workspace wire-vscode-extension run build",
-    "dev-link": "npm --workspace wire run dev-link",
-    "test": "npm --workspace wire test && npm --workspace wire-vscode-extension test",
-    "typecheck": "npm run build && npm --workspace wire-core run typecheck && npm --workspace provider-asana run typecheck && npm --workspace provider-chatgpt run typecheck && npm --workspace provider-gmail run typecheck && npm --workspace provider-google-docs run typecheck && npm --workspace provider-notion run typecheck && npm --workspace provider-slack run typecheck && npm --workspace provider-zoom run typecheck && npm --workspace wire run typecheck && npm --workspace wire-vscode-extension run typecheck",
+    "build": "npm --workspace @kamilio/wire run build && npm --workspace wire-core run build && npm --workspace provider-asana run build && npm --workspace provider-chatgpt run build && npm --workspace provider-gmail run build && npm --workspace provider-google-docs run build && npm --workspace provider-notion run build && npm --workspace provider-slack run build && npm --workspace provider-zoom run build && npm --workspace wire-vscode-extension run build",
+    "dev-link": "npm --workspace @kamilio/wire run dev-link",
+    "test": "npm --workspace @kamilio/wire test && npm --workspace wire-vscode-extension test",
+    "typecheck": "npm run build && npm --workspace wire-core run typecheck && npm --workspace provider-asana run typecheck && npm --workspace provider-chatgpt run typecheck && npm --workspace provider-gmail run typecheck && npm --workspace provider-google-docs run typecheck && npm --workspace provider-notion run typecheck && npm --workspace provider-slack run typecheck && npm --workspace provider-zoom run typecheck && npm --workspace @kamilio/wire run typecheck && npm --workspace wire-vscode-extension run typecheck",
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
@@ -17,7 +17,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "toolcraft": "^0.0.56",
-    "toolcraft-schema": "^0.0.56"
+    "toolcraft": "^0.0.83",
+    "toolcraft-schema": "^0.0.83"
   }
 }
