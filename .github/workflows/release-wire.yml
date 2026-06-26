@@ -42,4 +42,4 @@ jobs:
           npm version --no-git-tag-version --allow-same-version "$REMOTE"
           npm version --no-git-tag-version patch
       - working-directory: packages/wire
-        run: npm publish --provenance --access public
+        run: npm publish --access public
