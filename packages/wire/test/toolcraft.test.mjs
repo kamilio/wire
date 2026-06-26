@@ -15,6 +15,7 @@ import { createFakeWire, downloadedResult, resource, result, detachedResult } fr
 const execFileAsync = promisify(execFile);
 const fixture = resolve(import.meta.dirname, "support/cli-fixture.mjs");
 const testRoot = resolve(import.meta.dirname, "../../../out/wire-ts-toolcraft");
+const packageJson = JSON.parse(await readFile(resolve(import.meta.dirname, "../package.json"), "utf8"));
 const authResult = { service: "notion", identity: { user_id: "user", space_id: "space" } };
 const resultJson = { resource_id: "notion:page-1", title: "Document", action: "attached", added: 1, modified: 0, removed: 0, remote: "https://www.notion.so/page-1", local: "Document.md", path: "/workspace/Document.md" };
 const downloadedResultJson = { ...resultJson, action: "downloaded" };
@@ -185,7 +186,7 @@ test("CLI version flags render version", async () => {
   for (const flag of ["--version", "-V", "version"]) {
     for (const args of flag === "version" ? [[flag], ["--json", flag]] : [[flag], ["sync", flag]]) {
       const execution = await execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } });
-      assert.equal(execution.stdout, "0.1.0\n");
+      assert.equal(execution.stdout, `${packageJson.version}\n`);
       assert.doesNotMatch(execution.stdout, /Unknown option|Unknown command|Expected source URL or command/);
       assert.equal(execution.stderr, "");
     }

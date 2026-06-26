@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { runCLI } from "toolcraft/cli";
 
 import type { WireRoot } from "./adapters/root.js";
@@ -501,5 +503,6 @@ export async function runWireCli(root: WireRoot | WireRootFactory, argv: readonl
   if (!version && renderExcessPositionals(normalized)) {
     return;
   }
-  await runCLI(typeof root === "function" ? root(currentDirectory) : root, { version: "0.1.0", rootUsageName: "wire", presets: false, approvals: false, controls: { output: true, debug: true }, argv: normalized });
+  const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
+  await runCLI(typeof root === "function" ? root(currentDirectory) : root, { version: packageJson.version, rootUsageName: "wire", presets: false, approvals: false, controls: { output: true, debug: true }, argv: normalized });
 }
