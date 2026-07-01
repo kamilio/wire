@@ -249,6 +249,17 @@ test("create extracts supported relationships and returns JSON-shaped data", asy
   assert.deepEqual(repeated.summary, { action: "synced", added: 0, modified: 0, removed: 0, remote: "https://notion.test/page", local: result.path });
 });
 
+test("attach rejects existing resources with local edits", async () => {
+  const project = join(testRoot, "attach-local-edits");
+  await mkdir(project);
+  await initializeWire(project, "sqlite", "registry.sqlite3");
+  const wire = createWire(project, async () => ({ title: "Document", markdown: "# Remote\n", data: { markdown: "# Remote\n" } }));
+  const created = await wire.attach("https://notion.test/page", project);
+  await writeFile(created.path, "# Local edit\n");
+  await assert.rejects(() => wire.attach("https://notion.test/page", project), /Local edits exist for document\.md\. Run `wire sync document\.md` before attaching this URL again\./);
+  assert.equal(await readFile(created.path, "utf8"), "# Local edit\n");
+});
+
 test("create keeps clean titles and adds stable identity only on filename collision", async () => {
   const project = join(testRoot, "filename-collision");
   await mkdir(project);
@@ -291,6 +302,16 @@ test("sync-all launched from a subdirectory syncs only resources inside that tre
   assert.deepEqual(twoResults.map((result) => result.path), [join(project, "two", "nested", "two.md")]);
 });
 
+test("sync-all rejects directories outside the workspace tree", async () => {
+  const home = join(testRoot, "sync-all-outside-home");
+  const outside = join(testRoot, "sync-all-outside-target");
+  await mkdir(home);
+  await mkdir(outside);
+  await initializeWire(home, "sqlite", "registry.sqlite3");
+  const wire = createWire(home, async () => ({ title: "Document", markdown: "# Document\n", data: {} }));
+  await assert.rejects(() => wire.syncAll(outside), /Sync scope is outside the Wire workspace: root .*sync-all-outside-home, path .*sync-all-outside-target/);
+});
+
 test("sync-all scopes symlinked launch directories to matching workspace resources", async () => {
   const realProject = join(testRoot, "sync-all-realpath");
   const linkedProject = join(testRoot, "sync-all-link");
@@ -321,6 +342,17 @@ test("sync passes stored snapshot and edited Markdown into service synchronizati
   assert.equal(await readFile(created.path, "utf8"), "# Merged\n");
   assert.deepEqual(synced.resource.data.find((item) => item.namespace === "sync" && item.key === "snapshot").value, { revision: 2 });
   assert.deepEqual(synced.summary, { action: "downloaded", added: 0, modified: 1, removed: 0, remote: "https://sync.test/project", local: created.path });
+});
+
+test("sync rejects local edits for download-only providers", async () => {
+  const project = join(testRoot, "download-only-local-edits");
+  await mkdir(project);
+  await initializeWire(project, "sqlite", "registry.sqlite3");
+  const wire = createWire(project, async () => ({ title: "Thread", markdown: "# Remote\n", data: { markdown: "# Remote\n" } }));
+  const created = await wire.attach("https://slack.test/thread", project);
+  await writeFile(created.path, "# Local edit\n");
+  await assert.rejects(() => wire.sync(created.path, project), /slack is download-only and the local file has edits\. Run `wire download thread\.md` to discard them\./);
+  assert.equal(await readFile(created.path, "utf8"), "# Local edit\n");
 });
 
 test("sync summary counts same-line replacements as modified", async () => {
@@ -441,7 +473,7 @@ test("download reports downloaded when local Markdown already matches remote", a
   assert.deepEqual(downloaded.summary, { action: "downloaded", added: 0, modified: 0, removed: 0, remote: "https://notion.test/page", local: created.path });
 });
 
-test("detach removes tracking without downloading latest Markdown", async () => {
+test("detach downloads latest Markdown before removing tracking", async () => {
   const project = join(testRoot, "detach-remove-local-only");
   await mkdir(project);
   await initializeWire(project, "sqlite", "registry.sqlite3");
@@ -454,24 +486,23 @@ test("detach removes tracking without downloading latest Markdown", async () => 
   await writeFile(created.path, "# Local edit\n");
   const detached = await wire.detach(created.path, project);
   const registry = await openWireRegistry(project, project);
-  assert.equal(await readFile(created.path, "utf8"), "# Local edit\n");
+  assert.equal(await readFile(created.path, "utf8"), "# Remote 2\n");
   assert.deepEqual(await registry.listResources(), []);
-  assert.deepEqual(detached.summary, { action: "detached", added: 0, modified: 0, removed: 0, remote: "https://notion.test/page", local: created.path });
+  assert.deepEqual(detached.summary, { action: "detached", added: 0, modified: 1, removed: 0, remote: "https://notion.test/page", local: created.path });
   await assert.rejects(() => wire.sync("notion:page", project), /Resource not found: notion:page/);
   assert.deepEqual(await wire.syncAll(project), []);
 });
 
-test("detach does not fetch or require source authentication", async () => {
-  const project = join(testRoot, "detach-no-fetch");
+test("detach keeps tracking when latest source download fails", async () => {
+  const project = join(testRoot, "detach-fetch-required");
   await mkdir(project);
   await initializeWire(project, "sqlite", "registry.sqlite3");
   const wire = createWire(project, async () => ({ title: "Document", markdown: "# Remote\n", data: {} }));
   const created = await wire.attach("https://notion.test/page", project);
   const offlineWire = createWire(project, async () => { throw new Error("authentication is missing. Run `wire zoom login`"); });
-  const detached = await offlineWire.detach(created.path, project);
+  await assert.rejects(() => offlineWire.detach(created.path, project), /authentication is missing/);
   const registry = await openWireRegistry(project, project);
-  assert.equal(detached.summary.action, "detached");
-  assert.deepEqual(await registry.listResources(), []);
+  assert.deepEqual((await registry.listResources()).map((resource) => resource.id), ["notion:page"]);
 });
 
 test("sync absolute file uses its workspace registry", async () => {
@@ -512,7 +543,7 @@ test("sync relative file resolves from the launch directory", async () => {
   assert.equal(synced.path, created.path);
 });
 
-test("sync recreates deleted registered Markdown files by path", async () => {
+test("sync fails when registered Markdown files are missing", async () => {
   for (const backend of ["sqlite", "files"]) {
     const project = join(testRoot, `deleted-path-${backend}`);
     await mkdir(project);
@@ -524,9 +555,7 @@ test("sync recreates deleted registered Markdown files by path", async () => {
     });
     const created = await wire.attach("https://notion.test/page", project);
     await unlink(created.path);
-    const synced = await wire.sync("document.md", project);
-    assert.equal(synced.path, created.path);
-    assert.equal(await readFile(created.path, "utf8"), "# Revision 2\n");
+    await assert.rejects(() => wire.sync("document.md", project), /Linked file missing: document\.md - restore it or run wire detach/);
   }
 });
 

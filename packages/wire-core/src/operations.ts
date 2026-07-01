@@ -155,6 +155,15 @@ function relativePathContains(parent: string, child: string): boolean {
   return parent === "" || child === parent || child.startsWith(`${parent}/`);
 }
 
+function relativePathEscapes(path: string): boolean {
+  return path === ".." || path.startsWith("../");
+}
+
+function serviceCanSynchronize<FetchInput>(url: string, catalog: ServiceCatalog<FetchInput>): boolean {
+  const parsed = new URL(url);
+  return catalog.find((service) => service.matches(parsed))!.synchronize !== undefined;
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "object" && error !== null && "message" in error && typeof error["message"] === "string") return error["message"];
@@ -177,6 +186,11 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     }
     const relativePath = dependencies.workspace.relativePath(outputPath, root);
     const previous = previousMarkdown === null ? await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "" : previousMarkdown;
+    if (action === "attached" && current !== null) {
+      const snapshot = current.data.find((item) => item.namespace === source.service && item.key === "snapshot")!.value;
+      const baseMarkdown = markdownSnapshot(syncBase(source.service, snapshot, current.data));
+      if (baseMarkdown !== null && previous !== baseMarkdown) throw new Error(`Local edits exist for ${primaryLink(current).path}. Run \`wire sync ${primaryLink(current).path}\` before attaching this URL again.`);
+    }
     await dependencies.filesystem.writeText(outputPath, fetched.markdown);
     const id = resourceId(source);
     const primary = current?.filesystem_links.find((link) => link.path === relativePath && link.role === "primary");
@@ -217,7 +231,14 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
     const source = parseSourceUrl(url, dependencies.catalog);
     const cleanPath = join(resolve(path), markdownFilename(fetched.title));
-    const outputPath = await dependencies.filesystem.exists(cleanPath) ? join(resolve(path), collisionFilename(fetched.title, source.service, source.identifier)) : cleanPath;
+    let outputPath = cleanPath;
+    if (await dependencies.filesystem.exists(cleanPath)) {
+      const root = await dependencies.workspace.configuredRoot(cleanPath, dependencies.home);
+      const current = root === null ? null : await existingResource(await dependencies.workspace.openRegistry(root, dependencies.home), source.service, source.identifier);
+      const currentPrimaryPath = current === null ? null : join(dirname(root!), primaryLink(current).path);
+      const existingMarkdown = await dependencies.filesystem.readText(cleanPath);
+      if (currentPrimaryPath !== cleanPath && existingMarkdown !== fetched.markdown) outputPath = join(resolve(path), collisionFilename(fetched.title, source.service, source.identifier));
+    }
     const previous = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
     await dependencies.filesystem.writeText(outputPath, fetched.markdown);
     const id = resourceId(source);
@@ -273,10 +294,12 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     const outputDirectory = dirname(outputPath);
     const source = parseSourceUrl(resource.urls[0]!, dependencies.catalog);
     const snapshot = resource.data.find((item) => item.namespace === source.service && item.key === "snapshot")!.value;
-    const markdown = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
+    if (!(await dependencies.filesystem.exists(outputPath))) throw new Error(`Linked file missing: ${primaryLink(resource).path} - restore it or run wire detach`);
+    const markdown = await dependencies.filesystem.readText(outputPath);
     const base = syncBase(source.service, snapshot, resource.data);
     const baseMarkdown = markdownSnapshot(base);
     const localChanged = baseMarkdown !== null && markdown !== baseMarkdown;
+    if (localChanged && !serviceCanSynchronize(resource.urls[0]!, dependencies.catalog)) throw new Error(`${source.service} is download-only and the local file has edits. Run \`wire download ${primaryLink(resource).path}\` to discard them.`);
     const fetched = await synchronizeSource(dependencies.fetchInput, resource.urls[0]!, dependencies.catalog, base, markdown, outputPath);
     const action = localChanged ? fetched.markdown === baseMarkdown ? "synced" : "uploaded" : fetched.markdown === markdown ? "synced" : "downloaded";
     return store(resource.urls[0]!, outputDirectory, fetched, markdown, action, undefined, action === "uploaded" && baseMarkdown !== null ? baseMarkdown : undefined, action === "uploaded" ? markdown : fetched.markdown);
@@ -299,9 +322,11 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
     const outputPath = join(dirname(root), primaryLink(resource).path);
-    const markdown = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
+    const previous = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
+    const fetched = await fetchSource(dependencies.fetchInput, resource.urls[0]!, dependencies.catalog);
+    await dependencies.filesystem.writeText(outputPath, fetched.markdown);
     await registry.delete(resource.id);
-    return { resource, path: outputPath, markdown, summary: { action: "detached", added: 0, modified: 0, removed: 0, remote: resource.urls[0]!, local: outputPath } };
+    return { resource, path: outputPath, markdown: fetched.markdown, summary: { action: "detached", ...changeSummary(previous, fetched.markdown), remote: resource.urls[0]!, local: outputPath } };
   };
   const unlink = detach;
 
@@ -363,6 +388,7 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     const root = await existingWireRoot(dependencies, path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const scope = dependencies.workspace.relativePath(path, root);
+    if (relativePathEscapes(scope)) throw new Error(`Sync scope is outside the Wire workspace: root ${dirname(root)}, path ${path}`);
     const results: WireResult[] = [];
     for (const resource of await registry.listResources()) {
       const outputPath = join(dirname(root), primaryLink(resource).path);
