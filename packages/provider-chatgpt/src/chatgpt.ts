@@ -144,6 +144,7 @@ export const chatgptService = defineService<RuntimeCapabilities>({
     if (!sessionText.startsWith("{")) throw chatgptAuthError();
     const session = JSON.parse(sessionText) as JsonObject;
     if ("error" in session) throw chatgptAuthError();
+    if (session["account"] === undefined || session["accessToken"] === undefined) throw chatgptAuthError();
     const account = session["account"] as JsonObject;
     const conversationHeaders = {
       ...sessionHeaders,

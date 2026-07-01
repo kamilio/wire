@@ -644,6 +644,16 @@ test("chatgpt adapter points expired sessions to the login command", async () =>
   );
 });
 
+test("chatgpt adapter treats missing account session as logged out", async () => {
+  await assert.rejects(
+    () => fetchSource(runtime(async (input) => {
+      if (String(input) === "https://chatgpt.com/api/auth/session") return response({});
+      throw new Error(String(input));
+    }), "https://chatgpt.com/c/123e4567-e89b-12d3-a456-426614174000", serviceCatalog),
+    /wire chatgpt login/,
+  );
+});
+
 test("chatgpt adapter points rejected conversation downloads to the login command", async () => {
   await assert.rejects(
     () => fetchSource(runtime(async (input) => {

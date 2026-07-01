@@ -153,6 +153,8 @@ export const chatgptService = defineService({
         const session = JSON.parse(sessionText);
         if ("error" in session)
             throw chatgptAuthError();
+        if (session["account"] === undefined || session["accessToken"] === undefined)
+            throw chatgptAuthError();
         const account = session["account"];
         const conversationHeaders = {
             ...sessionHeaders,
