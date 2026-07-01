@@ -108,3 +108,23 @@ printf "%s" "$WIRE_CUSTOM_VALUE" > config-env.txt
 
   assert.equal(await readFile(join(project, "config-env.txt"), "utf8"), "from-config");
 });
+
+test("downloadSource runs post-resource and post-command hooks", async () => {
+  const project = join(testRoot, "download-source-hooks");
+  await mkdir(project, { recursive: true });
+  await initializeWire(project, "sqlite", "registry.sqlite3");
+  await writeExecutable(join(project, ".wire/hooks/post-resource"), `#!/bin/sh
+set -eu
+printf "%s\\n%s\\n%s" "$WIRE_COMMAND" "$WIRE_ACTION" "$WIRE_PATH" > post-resource.txt
+`);
+  await writeExecutable(join(project, ".wire/hooks/post-command"), `#!/bin/sh
+set -eu
+printf "%s\\n%s" "$WIRE_COMMAND" "$WIRE_RESULT_COUNT" > post-command.txt
+`);
+
+  const result = await createWire(project).downloadSource("https://notion.test/page", project);
+
+  assert.equal(result.summary.action, "downloaded");
+  assert.equal(await readFile(join(project, "post-resource.txt"), "utf8"), `download\ndownloaded\n${join(project, "first.md")}`);
+  assert.equal(await readFile(join(project, "post-command.txt"), "utf8"), "download\n1");
+});

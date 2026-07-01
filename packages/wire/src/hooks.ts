@@ -188,6 +188,7 @@ export function withWireHooks(wire: Wire, options: WireHookOptions): Wire {
     attach: async (url, path) => runSingleResultHooks(options, "attach", await wire.attach(url, path)),
     create: async (url, path) => runSingleResultHooks(options, "attach", await wire.create(url, path)),
     sync: async (value, path) => runSingleResultHooks(options, "sync", await wire.sync(value, path)),
+    downloadSource: async (url, path) => runSingleResultHooks(options, "download", await wire.downloadSource(url, path)),
     download: async (value, path) => runSingleResultHooks(options, "download", await wire.download(value, path)),
     detach: async (value, path) => runSingleResultHooks(options, "detach", await wire.detach(value, path)),
     unlink: async (value, path) => runSingleResultHooks(options, "detach", await wire.unlink(value, path)),
