@@ -18,6 +18,7 @@ export async function chromeLaunchArguments(environment, startUrl) {
         "--remote-debugging-port=0",
         "--no-first-run",
         "--no-default-browser-check",
+        "--restore-last-session",
         startUrl,
     ]);
 }
@@ -26,18 +27,32 @@ class ChromeConnection {
     pending = new Map();
     events = new Map();
     nextId = 1;
+    closed = false;
     constructor(url) {
         this.socket = new WebSocket(url);
+        const rejectPending = () => {
+            this.closed = true;
+            const error = new Error("Chrome window closed before login completed");
+            for (const request of this.pending.values())
+                request.reject(error);
+            this.pending.clear();
+            for (const events of this.events.values())
+                for (const event of events)
+                    event.reject(error);
+            this.events.clear();
+        };
+        this.socket.addEventListener("close", rejectPending, { once: true });
+        this.socket.addEventListener("error", rejectPending, { once: true });
         this.socket.addEventListener("message", (event) => {
             const message = JSON.parse(event.data.toString());
             if (message.id === undefined) {
                 if (message.method !== undefined) {
                     const events = this.events.get(message.method);
                     if (events !== undefined) {
-                        const resolve = events.shift();
+                        const pending = events.shift();
                         if (events.length === 0)
                             this.events.delete(message.method);
-                        resolve(message.params);
+                        pending.resolve(message.params);
                     }
                 }
                 return;
@@ -60,14 +75,22 @@ class ChromeConnection {
         const id = this.nextId;
         this.nextId += 1;
         return new Promise((resolve, reject) => {
+            if (this.closed) {
+                reject(new Error("Chrome window closed before login completed"));
+                return;
+            }
             this.pending.set(id, { resolve, reject });
             this.socket.send(JSON.stringify({ id, method, params }));
         });
     }
     event(method) {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
+            if (this.closed) {
+                reject(new Error("Chrome window closed before login completed"));
+                return;
+            }
             const events = this.events.get(method) ?? [];
-            events.push(resolve);
+            events.push({ resolve, reject });
             this.events.set(method, events);
         });
     }
