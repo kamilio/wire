@@ -603,9 +603,9 @@ function inlineMarkdownSpans(value: string): readonly MarkdownSpan[] {
   return spans;
 }
 
-function editTouchesMarkdownSpan(edit: TextEdit, value: string): boolean {
+function editTouchesMarkdownSpan(edit: TextEdit, value: string, edited: string): boolean {
   const start = edit.before.length;
-  const end = start + edit.base.length;
+  const end = start + edited.length;
   return inlineMarkdownSpans(value).some((span) => start === end ? start > span.start && start < span.end : start < span.end && end > span.start);
 }
 
@@ -678,7 +678,7 @@ function docTextRange(text: string, edit: Readonly<{ base: string; before: strin
 
 async function uploadDocText(runtime: RuntimeCapabilities, documentId: string, key: string | null, tab: string, baseMarkdown: string, localMarkdown: string): Promise<void> {
   const edits = textEdits(baseMarkdown, localMarkdown);
-  if (edits.some((edit) => editTouchesMarkdownSpan(edit, baseMarkdown))) throw new Error("Google Docs sync cannot preserve formatting in edited text");
+  if (edits.some((edit) => editTouchesMarkdownSpan(edit, baseMarkdown, edit.base) || editTouchesMarkdownSpan(edit, localMarkdown, edit.local))) throw new Error("Google Docs sync cannot preserve formatting in edited text");
   const editUrl = docEditUrl(documentId, key, tab);
   const session = docSession(await googleText(runtime, editUrl, "Docs editor"));
   const ranges = edits.map((edit) => ({ edit, range: docTextRange(session.text, edit) })).sort((left, right) => right.range.start - left.range.start);

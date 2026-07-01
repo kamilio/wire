@@ -634,6 +634,22 @@ function textEdits(base, local) {
     }
     return edits;
 }
+function inlineMarkdownSpans(value) {
+    const spans = [];
+    for (const pattern of [/\[[^\]\n]+\]\([^)]+\)/g, /!\[[^\]\n]*\]\([^)]+\)/g, /`[^`\n]+`/g, /~~[^~\n]+~~/g, /\*\*[^*\n]+\*\*/g, /\*[^*\n]+\*/g, /(^|[^\w])__[^_\n]+__(?=[^\w]|$)/g, /(^|[^\w])_[^_\n]+_(?=[^\w]|$)/g, /<((?:https?|mailto):[^>\s]+)>/g, /<\/?(?:u|sup|sub|mark|span)(?:\s+[^>]*)?>/gi]) {
+        let match = pattern.exec(value);
+        while (match !== null) {
+            spans.push(Object.freeze({ start: match.index, end: match.index + match[0].length }));
+            match = pattern.exec(value);
+        }
+    }
+    return spans;
+}
+function editTouchesMarkdownSpan(edit, value, edited) {
+    const start = edit.before.length;
+    const end = start + edited.length;
+    return inlineMarkdownSpans(value).some((span) => start === end ? start > span.start && start < span.end : start < span.end && end > span.start);
+}
 function context(value, side, length) {
     return side === "before" ? value.slice(Math.max(0, value.length - length)) : value.slice(0, length);
 }
@@ -708,6 +724,8 @@ function docTextRange(text, edit) {
 }
 async function uploadDocText(runtime, documentId, key, tab, baseMarkdown, localMarkdown) {
     const edits = textEdits(baseMarkdown, localMarkdown);
+    if (edits.some((edit) => editTouchesMarkdownSpan(edit, baseMarkdown, edit.base) || editTouchesMarkdownSpan(edit, localMarkdown, edit.local)))
+        throw new Error("Google Docs sync cannot preserve formatting in edited text");
     const editUrl = docEditUrl(documentId, key, tab);
     const session = docSession(await googleText(runtime, editUrl, "Docs editor"));
     const ranges = edits.map((edit) => ({ edit, range: docTextRange(session.text, edit) })).sort((left, right) => right.range.start - left.range.start);
