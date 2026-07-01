@@ -4,6 +4,7 @@ import { readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { configuredWireRoot, openWireRegistry, wireRelativePath } from "wire-core";
+import { wireWatchHooks } from "wire-core/internal/operations";
 const execFileAsync = promisify(execFile);
 function primaryFilesystemLink(resource) {
     return resource.filesystem_links.find((link) => link.role === "primary");
@@ -162,6 +163,7 @@ async function runBatchHooks(options, command, results) {
     return updated;
 }
 export function withWireHooks(wire, options) {
+    const watchSyncHook = (command, result) => runSingleResultHooks(options, command, result);
     return Object.freeze({
         ...wire,
         attach: async (url, path) => runSingleResultHooks(options, "attach", await wire.attach(url, path)),
@@ -171,6 +173,7 @@ export function withWireHooks(wire, options) {
         download: async (value, path) => runSingleResultHooks(options, "download", await wire.download(value, path)),
         detach: async (value, path) => runSingleResultHooks(options, "detach", await wire.detach(value, path)),
         unlink: async (value, path) => runSingleResultHooks(options, "detach", await wire.unlink(value, path)),
+        watch: async (value, path) => wire[wireWatchHooks](value, path, [watchSyncHook]),
         syncAll: async (path) => runBatchHooks(options, "sync-all", await wire.syncAll(path)),
     });
 }

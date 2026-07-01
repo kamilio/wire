@@ -4,8 +4,10 @@ import { readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
-import type { Resource, Wire, WireResult, WireWatchSyncHook } from "wire-core";
-import { configuredWireRoot, openWireRegistry, wireRelativePath, wireWatchHooks } from "wire-core";
+import type { Resource, Wire, WireResult } from "wire-core";
+import { configuredWireRoot, openWireRegistry, wireRelativePath } from "wire-core";
+import type { WireWatchSyncHook } from "wire-core/internal/operations";
+import { wireWatchHooks } from "wire-core/internal/operations";
 
 const execFileAsync = promisify(execFile);
 

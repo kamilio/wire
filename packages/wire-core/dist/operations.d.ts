@@ -45,6 +45,9 @@ export type WireWatchSession = Readonly<{
     closed: Promise<void>;
     close(): void;
 }>;
+export type WireWatchSyncCommand = "sync" | "download";
+export type WireWatchSyncHook = (command: WireWatchSyncCommand, result: WireResult) => Promise<WireResult>;
+export declare const wireWatchHooks: unique symbol;
 export type Wire = Readonly<{
     attach(url: string, path: string): Promise<WireResult>;
     create(url: string, path: string): Promise<WireResult>;

@@ -3,6 +3,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { extractRelationships, markdownFilename } from "./core/transform.js";
 import { resourceId } from "./core/resource.js";
 import { fetchSource, parseSourceUrl, synchronizeSource, uploadSource } from "./core/source.js";
+export const wireWatchHooks = Symbol("wireWatchHooks");
 async function wireRoot(dependencies, path) {
     const configured = await dependencies.workspace.configuredRoot(path, dependencies.home);
     if (configured !== null)
@@ -255,21 +256,27 @@ export function composeWire(dependencies) {
         return { resource, path: outputPath, markdown: fetched.markdown, summary: { action: "detached", ...changeSummary(previous, fetched.markdown), remote: resource.urls[0], local: outputPath } };
     };
     const unlink = detach;
-    const watch = async (value, path) => {
+    const runWatchHooks = async (hooks, command, result) => {
+        let current = result;
+        for (const hook of hooks)
+            current = await hook(command, current);
+        return current;
+    };
+    const watchWithHooks = async (value, path, hooks) => {
         const candidatePath = resolve(path, value);
         const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
         const config = watchConfig(await dependencies.workspace.loadConfig(root));
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
         const resource = await resolveResource(registry, value, root, path);
         const outputPath = join(dirname(root), primaryLink(resource).path);
-        const initial = await dependencies.filesystem.exists(outputPath) ? null : await download(value, path);
+        const initial = await dependencies.filesystem.exists(outputPath) ? null : await runWatchHooks(hooks, "download", await download(value, path));
         let lastSyncedMarkdown = initial === null ? await dependencies.filesystem.readText(outputPath) : initial.markdown;
         let debounce;
         let resolveClosed;
         const closed = new Promise((resolveClosedPromise) => { resolveClosed = resolveClosedPromise; });
         const handles = [];
         const synchronize = async () => {
-            const result = config.mode === "download" ? await download(value, path) : await sync(value, path);
+            const result = config.mode === "download" ? await runWatchHooks(hooks, "download", await download(value, path)) : await runWatchHooks(hooks, "sync", await sync(value, path));
             lastSyncedMarkdown = result.markdown;
         };
         const schedule = () => {
@@ -303,6 +310,7 @@ export function composeWire(dependencies) {
             },
         });
     };
+    const watch = (value, path) => watchWithHooks(value, path, []);
     const openResource = async (value, path) => {
         const candidatePath = resolve(path, value);
         const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
@@ -357,6 +365,7 @@ export function composeWire(dependencies) {
         showResource,
         init: dependencies.workspace.initialize,
         switchBackend: (path) => dependencies.workspace.switchBackend(path, dependencies.home),
+        [wireWatchHooks]: watchWithHooks,
     });
 }
 //# sourceMappingURL=operations.js.map

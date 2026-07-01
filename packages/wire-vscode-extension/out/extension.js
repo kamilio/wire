@@ -1119,6 +1119,7 @@ async function initializeWire(path, backend, registryPath) {
 // ../wire-core/src/operations.ts
 var import_node_crypto2 = require("node:crypto");
 var import_node_path3 = require("node:path");
+var wireWatchHooks = Symbol("wireWatchHooks");
 async function wireRoot(dependencies, path) {
   const configured = await dependencies.workspace.configuredRoot(path, dependencies.home);
   if (configured !== null) return configured;
@@ -1350,14 +1351,19 @@ function composeWire(dependencies) {
     return { resource, path: outputPath, markdown: fetched.markdown, summary: { action: "detached", ...changeSummary(previous, fetched.markdown), remote: resource.urls[0], local: outputPath } };
   };
   const unlink2 = detach;
-  const watch = async (value, path) => {
+  const runWatchHooks = async (hooks, command, result) => {
+    let current = result;
+    for (const hook of hooks) current = await hook(command, current);
+    return current;
+  };
+  const watchWithHooks = async (value, path, hooks) => {
     const candidatePath = (0, import_node_path3.resolve)(path, value);
     const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const config = watchConfig(await dependencies.workspace.loadConfig(root));
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
     const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
-    const initial = await dependencies.filesystem.exists(outputPath) ? null : await download(value, path);
+    const initial = await dependencies.filesystem.exists(outputPath) ? null : await runWatchHooks(hooks, "download", await download(value, path));
     let lastSyncedMarkdown = initial === null ? await dependencies.filesystem.readText(outputPath) : initial.markdown;
     let debounce;
     let resolveClosed;
@@ -1366,7 +1372,7 @@ function composeWire(dependencies) {
     });
     const handles = [];
     const synchronize = async () => {
-      const result = config.mode === "download" ? await download(value, path) : await sync(value, path);
+      const result = config.mode === "download" ? await runWatchHooks(hooks, "download", await download(value, path)) : await runWatchHooks(hooks, "sync", await sync(value, path));
       lastSyncedMarkdown = result.markdown;
     };
     const schedule = () => {
@@ -1396,6 +1402,7 @@ function composeWire(dependencies) {
       }
     });
   };
+  const watch = (value, path) => watchWithHooks(value, path, []);
   const openResource2 = async (value, path) => {
     const candidatePath = (0, import_node_path3.resolve)(path, value);
     const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
@@ -1447,7 +1454,8 @@ function composeWire(dependencies) {
     listResources,
     showResource,
     init: dependencies.workspace.initialize,
-    switchBackend: (path) => dependencies.workspace.switchBackend(path, dependencies.home)
+    switchBackend: (path) => dependencies.workspace.switchBackend(path, dependencies.home),
+    [wireWatchHooks]: watchWithHooks
   });
 }
 
@@ -2923,6 +2931,22 @@ function textEdits(base, local) {
   }
   return edits;
 }
+function inlineMarkdownSpans(value) {
+  const spans = [];
+  for (const pattern of [/\[[^\]\n]+\]\([^)]+\)/g, /!\[[^\]\n]*\]\([^)]+\)/g, /`[^`\n]+`/g, /~~[^~\n]+~~/g, /\*\*[^*\n]+\*\*/g, /\*[^*\n]+\*/g, /(^|[^\w])__[^_\n]+__(?=[^\w]|$)/g, /(^|[^\w])_[^_\n]+_(?=[^\w]|$)/g, /<((?:https?|mailto):[^>\s]+)>/g, /<\/?(?:u|sup|sub|mark|span)(?:\s+[^>]*)?>/gi]) {
+    let match = pattern.exec(value);
+    while (match !== null) {
+      spans.push(Object.freeze({ start: match.index, end: match.index + match[0].length }));
+      match = pattern.exec(value);
+    }
+  }
+  return spans;
+}
+function editTouchesMarkdownSpan(edit, value, edited) {
+  const start = edit.before.length;
+  const end = start + edited.length;
+  return inlineMarkdownSpans(value).some((span) => start === end ? start > span.start && start < span.end : start < span.end && end > span.start);
+}
 function context(value, side, length) {
   return side === "before" ? value.slice(Math.max(0, value.length - length)) : value.slice(0, length);
 }
@@ -2989,6 +3013,7 @@ function docTextRange(text2, edit) {
 }
 async function uploadDocText(runtime2, documentId, key2, tab, baseMarkdown, localMarkdown) {
   const edits = textEdits(baseMarkdown, localMarkdown);
+  if (edits.some((edit) => editTouchesMarkdownSpan(edit, baseMarkdown, edit.base) || editTouchesMarkdownSpan(edit, localMarkdown, edit.local))) throw new Error("Google Docs sync cannot preserve formatting in edited text");
   const editUrl = docEditUrl(documentId, key2, tab);
   const session = docSession(await googleText(runtime2, editUrl, "Docs editor"));
   const ranges = edits.map((edit) => ({ edit, range: docTextRange(session.text, edit) })).sort((left, right) => right.range.start - left.range.start);

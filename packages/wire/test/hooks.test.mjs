@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { after, before, test } from "node:test";
 
-import { composeWire, configuredWireRoot, defineService, defineServiceCatalog, initializeWire, openWireRegistry, wireRelativePath } from "../dist/index.js";
+import { composeWire, configuredWireRoot, defineService, defineServiceCatalog, initializeWire, loadWireConfig, openWireRegistry, wireRelativePath } from "../dist/index.js";
 import { withWireHooks } from "../dist/hooks.js";
 
 const execFileAsync = promisify(execFile);
@@ -45,7 +45,7 @@ function createWire(project, environment = process.env) {
       }),
     ]),
     filesystem: filesystem(),
-    workspace: { configuredRoot: configuredWireRoot, initialize: initializeWire, openRegistry: openWireRegistry, relativePath: wireRelativePath },
+    workspace: { configuredRoot: configuredWireRoot, initialize: initializeWire, loadConfig: loadWireConfig, openRegistry: openWireRegistry, relativePath: wireRelativePath },
     initialization: { backend: "sqlite", registryPath: "registry.sqlite3" },
     now: () => new Date("2026-06-23T12:00:00.000Z"),
     open: async () => {},
@@ -53,7 +53,7 @@ function createWire(project, environment = process.env) {
   return withWireHooks(wire, { currentDirectory: project, home: project, environment });
 }
 
-function createWatchedWire(project, watch, fetchDocument, environment = process.env) {
+function createWatchedWire(project, watch, fetchDocument, environment) {
   const wire = composeWire({
     home: project,
     fetchInput: {},
@@ -66,7 +66,7 @@ function createWatchedWire(project, watch, fetchDocument, environment = process.
       }),
     ]),
     filesystem: filesystem(),
-    workspace: { configuredRoot: configuredWireRoot, initialize: initializeWire, openRegistry: openWireRegistry, relativePath: wireRelativePath },
+    workspace: { configuredRoot: configuredWireRoot, initialize: initializeWire, loadConfig: loadWireConfig, openRegistry: openWireRegistry, relativePath: wireRelativePath },
     initialization: { backend: "sqlite", registryPath: "registry.sqlite3" },
     watch,
     now: () => new Date("2026-06-23T12:00:00.000Z"),
@@ -190,7 +190,7 @@ printf "%s\\n%s" "$WIRE_COMMAND" "$WIRE_RESULT_COUNT" > post-command.txt
 `);
   let markdown = "# First\n";
   const harness = watchHarness();
-  const wire = createWatchedWire(project, harness.capability, () => ({ title: "First", markdown }));
+  const wire = createWatchedWire(project, harness.capability, () => ({ title: "First", markdown }), process.env);
   const result = await wire.attach("https://notion.test/page", project);
   markdown = "# Second\n";
   const session = await wire.watch(result.path, project);

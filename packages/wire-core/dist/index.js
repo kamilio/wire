@@ -8,5 +8,5 @@ export { createGoogleTokensCapability, googleTokenExpired, mergeGoogleRefresh, p
 export { composeNodeRuntime, createNodeClock, createNodeConfiguration, createNodeFilesystem, createNodeHttp, createNodeOpenFiles, createNodeProcess, createNodeRuntime, createNodeSecrets, createNodeWatch } from "./runtime/node.js";
 export { FileRegistry, SqliteRegistry } from "./storage/registry.js";
 export { configuredWireRoot, defaultWireBackend, defaultWireRegistryPath, discoverWireRoot, initializeWire, loadWireConfig, openWireRegistry, registryPathForBackend, switchWireBackend, wireRelativePath } from "./storage/workspace.js";
-export * from "./operations.js";
+export { composeWire } from "./operations.js";
 //# sourceMappingURL=index.js.map
