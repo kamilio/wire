@@ -451,6 +451,37 @@ test("notion document synchronization runs in TypeScript without process delegat
   assert.deepEqual(result.data.blocks.map((block) => block.type), ["page", "text"]);
 });
 
+test("notion synchronization uses the fetched page workspace for transactions", async () => {
+  const page = remoteTree("Old body\n", "Old title");
+  const submitted = [];
+  const blockMap = {
+    [page.id]: { value: { value: { ...page.block, id: page.id, content: page.children.map((child) => child.id), space_id: "page-space" } } },
+    ...Object.fromEntries(page.children.map((child) => [child.id, { value: { value: { ...child.block, id: child.id, content: child.children.map((grandchild) => grandchild.id), space_id: "page-space" } } }])),
+  };
+  const seenHeaders = [];
+  const runtime = {
+    http: { request: async (input, init = {}) => {
+      const path = String(input).split("/api/v3/")[1];
+      if (path === undefined) return new Response("{}", { headers: { "content-type": "application/json" } });
+      seenHeaders.push(init.headers);
+      const body = init.body === undefined ? {} : JSON.parse(init.body);
+      if (path === "getSpaces") return Response.json({ user: { space_view: { first: { spaceId: "first-space" }, page: { spaceId: "page-space" } } } });
+      if (path === "loadCachedPageChunkV2") return Response.json({ recordMap: { block: blockMap }, cursors: [] });
+      if (path === "saveTransactionsFanout") {
+        submitted.push(body.transactions[0]);
+        return Response.json({ ok: true });
+      }
+      throw new Error(path);
+    } },
+    clock: { now: () => new Date("2026-06-10T12:00:00.000Z"), timezone: (name) => new Intl.DateTimeFormat("en-US", { timeZone: name }) },
+    cookies: { load: async () => [{ name: "notion_user_id", value: "user" }, { name: "token_v2", value: "token" }], loadSaved: async () => [{ name: "notion_user_id", value: "user" }, { name: "token_v2", value: "token" }], metadata: async () => ({}), delete: async () => {} },
+  };
+  await synchronizeNotionDocument(runtime, "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", { markdown: "# Old title\n\nOld body" }, "# New title\n\nNew body", "/workspace/page.md");
+  assert.equal(seenHeaders.find((headers) => headers["x-notion-space-id"] === "page-space")["x-notion-space-id"], "page-space");
+  assert.equal(submitted[0].spaceId, "page-space");
+  assert.equal(submitted[0].operations.every((operation) => operation.pointer.spaceId === "page-space"), true);
+});
+
 test("notion synchronization preserves remote title when local Markdown omits H1", async () => {
   const page = remoteTree("Old body\n", "Remote title");
   const submitted = [];

@@ -873,9 +873,9 @@ async function fetchTree(runtime, url, source) {
     await runtime.http.request(url, { headers: { cookie } });
     const spaces = await notionPost(runtime, "getSpaces", cookie, {}, {});
     const spaceView = object(object(spaces[userId])["space_view"]);
-    const spaceId = object(spaceView[Object.keys(spaceView)[0]])["spaceId"];
+    const initialSpaceId = object(spaceView[Object.keys(spaceView)[0]])["spaceId"];
     const pageId = formatBlockId(source.identifier);
-    const headers = { "x-notion-active-user-header": userId, "x-notion-space-id": spaceId, referer: url, ...(csrf === undefined ? {} : { "x-csrf-token": csrf }) };
+    let headers = { "x-notion-active-user-header": userId, "x-notion-space-id": initialSpaceId, referer: url, ...(csrf === undefined ? {} : { "x-csrf-token": csrf }) };
     const blocks = new Map();
     let stack = [];
     let chunkNumber = 0;
@@ -887,6 +887,8 @@ async function fetchTree(runtime, url, source) {
         stack = cursors.length === 0 ? [] : cursors[0]["stack"];
         chunkNumber += 1;
     } while (stack.length > 0);
+    const spaceId = blocks.get(pageId)["space_id"];
+    headers = { ...headers, "x-notion-space-id": spaceId };
     while (true) {
         const missing = new Set();
         const pending = [pageId];
@@ -940,6 +942,8 @@ export async function uploadNotionDocument(runtime, markdown, _markdownPath) {
     const csrf = cookies.find((value) => value.name === "csrf")?.value;
     const spaces = await notionPost(runtime, "getSpaces", cookie, {}, {});
     const spaceView = object(object(spaces[userId])["space_view"]);
+    if (Object.keys(spaceView).length !== 1)
+        throw new Error("Notion upload requires an explicit target workspace.");
     const spaceId = object(spaceView[Object.keys(spaceView)[0]])["spaceId"];
     const pageId = randomUUID();
     const compactPageId = pageId.replaceAll("-", "");
