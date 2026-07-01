@@ -123,6 +123,12 @@ function wireError(error: unknown): WireDisplayError | null {
   return null;
 }
 
+async function displayWireError(display: WireDisplayError): Promise<void> {
+  setWireStatus("error");
+  const action = display.command === undefined ? await vscode.window.showErrorMessage(display.message) : await vscode.window.showErrorMessage(display.message, "Copy command");
+  if (action === "Copy command") await vscode.env.clipboard.writeText(display.command!);
+}
+
 function wireCommand<Args extends readonly unknown[]>(command: (...args: Args) => Promise<void>): (...args: Args) => Promise<void> {
   return async (...args) => {
     try {
@@ -130,9 +136,7 @@ function wireCommand<Args extends readonly unknown[]>(command: (...args: Args) =
     } catch (error) {
       const display = wireError(error);
       if (display === null) throw error;
-      setWireStatus("error");
-      const action = display.command === undefined ? await vscode.window.showErrorMessage(display.message) : await vscode.window.showErrorMessage(display.message, "Copy command");
-      if (action === "Copy command") await vscode.env.clipboard.writeText(display.command!);
+      await displayWireError(display);
     }
   };
 }
@@ -165,6 +169,21 @@ function resourceFile(uri: vscode.Uri | undefined): string {
   const path = selectedPath(uri);
   if (!statSync(path).isFile()) throw new Error(`Expected file: ${path}`);
   return path;
+}
+
+function pathInsideDirectory(directory: string, path: string): boolean {
+  const normalizedDirectory = resolve(directory);
+  const normalizedPath = resolve(path);
+  return normalizedPath === normalizedDirectory || normalizedPath.startsWith(`${normalizedDirectory}/`);
+}
+
+async function saveDocument(path: string): Promise<void> {
+  const document = vscode.workspace.textDocuments.find((candidate) => candidate.uri.scheme === "file" && candidate.uri.fsPath === path);
+  if (document !== undefined && document.isDirty && !(await document.save())) throw new Error(`Could not save ${path}`);
+}
+
+async function saveDirtyDocumentsInDirectory(directory: string): Promise<void> {
+  for (const document of vscode.workspace.textDocuments) if (document.uri.scheme === "file" && document.isDirty && pathInsideDirectory(directory, document.uri.fsPath) && !(await document.save())) throw new Error(`Could not save ${document.uri.fsPath}`);
 }
 
 function title(resource: { data: readonly { namespace: string; key: string; value: unknown }[] }): string {
@@ -228,6 +247,7 @@ async function previewUrl(): Promise<void> {
 
 async function syncFile(uri: vscode.Uri | undefined): Promise<void> {
   const path = resourceFile(uri);
+  await saveDocument(path);
   const result = await wireProgress("Syncing", () => wire().sync(path, dirname(path)));
   await showWireResultStatus(result);
 }
@@ -246,8 +266,19 @@ async function openResource(uri: vscode.Uri | undefined): Promise<void> {
 
 async function syncDirectory(uri: vscode.Uri | undefined): Promise<void> {
   const directory = selectedDirectory(uri);
+  await saveDirtyDocumentsInDirectory(directory);
   const results = await wireProgress("Syncing all", () => wire().syncAll(directory));
-  showWireStatus(`Wire - Synced ${results.length} resources`);
+  const failures = results.filter((result) => result.summary.action === "failed");
+  const synced = results.length - failures.length;
+  if (failures.length === 0) {
+    showWireStatus(`Wire - Synced ${synced} resources`);
+    return;
+  }
+  setWireStatus(`Wire - Synced ${synced}, failed ${failures.length}`);
+  const first = failures[0]!;
+  const display = wireError(new Error(first.summary.error!));
+  if (display === null) await vscode.window.showErrorMessage(`Wire - Synced ${synced}, failed ${failures.length}. ${first.summary.error!}`);
+  else await displayWireError({ ...display, message: `Wire - Synced ${synced}, failed ${failures.length}. ${display.message}` });
 }
 
 async function selectedAuthService(): Promise<AuthService> {

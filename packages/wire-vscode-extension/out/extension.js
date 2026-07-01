@@ -27,7 +27,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// src/extension.ts
+// packages/wire-vscode-extension/src/extension.ts
 var extension_exports = {};
 __export(extension_exports, {
   activate: () => activate,
@@ -41,7 +41,7 @@ var import_node_path4 = require("node:path");
 var import_node_util = require("node:util");
 var vscode = __toESM(require("vscode"));
 
-// ../wire-core/src/core/json.ts
+// packages/wire-core/src/core/json.ts
 function compareStrings(left, right) {
   const leftCodePoints = Array.from(left, (character) => character.codePointAt(0));
   const rightCodePoints = Array.from(right, (character) => character.codePointAt(0));
@@ -113,7 +113,7 @@ function stableJsonPretty(value) {
   return serialize(value, 2, 0);
 }
 
-// ../wire-core/src/core/resource.ts
+// packages/wire-core/src/core/resource.ts
 function compareStrings2(left, right) {
   const leftCodePoints = Array.from(left, (character) => character.codePointAt(0));
   const rightCodePoints = Array.from(right, (character) => character.codePointAt(0));
@@ -163,7 +163,7 @@ function normalizeResource(resource) {
   });
 }
 
-// ../wire-core/src/core/source.ts
+// packages/wire-core/src/core/source.ts
 function serviceForUrl(url, catalog) {
   const service = catalog.find((item) => item.matches(url));
   if (service === void 0) throw new Error(`Unsupported source URL: ${url}`);
@@ -207,7 +207,7 @@ function uploadSource(input, catalog, markdown, markdownPath) {
   return service.upload(input, markdown, markdownPath);
 }
 
-// ../wire-core/src/core/transform.ts
+// packages/wire-core/src/core/transform.ts
 function markdownFilename(title2) {
   const visible = title2.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
   return `${visible === "" ? "untitled" : visible}.md`;
@@ -231,7 +231,7 @@ function extractRelationships(markdown, currentId, catalog) {
   return Object.freeze([...relationships.values()]);
 }
 
-// ../wire-core/src/runtime/cookies.ts
+// packages/wire-core/src/runtime/cookies.ts
 function frozenCookie(cookie) {
   return Object.freeze(cookie);
 }
@@ -401,8 +401,10 @@ function createCookiesCapability(filesystem, home, repositoryRoot2, overrideFile
     },
     save: async (service, cookies, metadata) => {
       const candidatePaths = paths(service);
-      const path = await existingCookiesFile(filesystem, candidatePaths) ?? candidatePaths[0];
-      await filesystem.writeText(path, serializeNetscapeCookies(cookies, metadata));
+      const contents = serializeNetscapeCookies(cookies, metadata);
+      const existingPaths = [];
+      for (const path of candidatePaths) if (await filesystem.exists(path)) existingPaths.push(path);
+      for (const path of existingPaths.length === 0 ? [candidatePaths[0]] : existingPaths) await filesystem.writeText(path, contents);
     },
     delete: async (service) => {
       for (const path of paths(service)) if (await filesystem.exists(path)) await filesystem.delete(path);
@@ -410,7 +412,7 @@ function createCookiesCapability(filesystem, home, repositoryRoot2, overrideFile
   });
 }
 
-// ../wire-core/src/runtime/chrome.ts
+// packages/wire-core/src/runtime/chrome.ts
 var import_node_child_process = require("node:child_process");
 var import_node_process = require("node:process");
 var import_promises = require("node:readline/promises");
@@ -430,6 +432,7 @@ async function chromeLaunchArguments(environment2, startUrl) {
     "--remote-debugging-port=0",
     "--no-first-run",
     "--no-default-browser-check",
+    "--restore-last-session",
     startUrl
   ]);
 }
@@ -438,17 +441,28 @@ var ChromeConnection = class {
   pending = /* @__PURE__ */ new Map();
   events = /* @__PURE__ */ new Map();
   nextId = 1;
+  closed = false;
   constructor(url) {
     this.socket = new WebSocket(url);
+    const rejectPending = () => {
+      this.closed = true;
+      const error = new Error("Chrome window closed before login completed");
+      for (const request2 of this.pending.values()) request2.reject(error);
+      this.pending.clear();
+      for (const events of this.events.values()) for (const event of events) event.reject(error);
+      this.events.clear();
+    };
+    this.socket.addEventListener("close", rejectPending, { once: true });
+    this.socket.addEventListener("error", rejectPending, { once: true });
     this.socket.addEventListener("message", (event) => {
       const message = JSON.parse(event.data.toString());
       if (message.id === void 0) {
         if (message.method !== void 0) {
           const events = this.events.get(message.method);
           if (events !== void 0) {
-            const resolve4 = events.shift();
+            const pending2 = events.shift();
             if (events.length === 0) this.events.delete(message.method);
-            resolve4(message.params);
+            pending2.resolve(message.params);
           }
         }
         return;
@@ -469,14 +483,22 @@ var ChromeConnection = class {
     const id = this.nextId;
     this.nextId += 1;
     return new Promise((resolve4, reject) => {
+      if (this.closed) {
+        reject(new Error("Chrome window closed before login completed"));
+        return;
+      }
       this.pending.set(id, { resolve: resolve4, reject });
       this.socket.send(JSON.stringify({ id, method, params }));
     });
   }
   event(method) {
-    return new Promise((resolve4) => {
+    return new Promise((resolve4, reject) => {
+      if (this.closed) {
+        reject(new Error("Chrome window closed before login completed"));
+        return;
+      }
       const events = this.events.get(method) ?? [];
-      events.push(resolve4);
+      events.push({ resolve: resolve4, reject });
       this.events.set(method, events);
     });
   }
@@ -685,7 +707,7 @@ async function extractChromeCookies(environment2, extraction) {
   }
 }
 
-// ../wire-core/src/runtime/google.ts
+// packages/wire-core/src/runtime/google.ts
 function parseGoogleCredentials(contents) {
   const document = JSON.parse(contents);
   return Object.freeze(document.installed);
@@ -742,7 +764,7 @@ function createGoogleTokensCapability(filesystem, http, clock, credentialsPath, 
   });
 }
 
-// ../wire-core/src/storage/registry.ts
+// packages/wire-core/src/storage/registry.ts
 var import_node_crypto = require("node:crypto");
 var import_node_fs = require("node:fs");
 var import_promises3 = require("node:fs/promises");
@@ -1033,7 +1055,7 @@ function realpathSyncDirectory(path) {
   return (0, import_node_fs.realpathSync)(path);
 }
 
-// ../wire-core/src/storage/workspace.ts
+// packages/wire-core/src/storage/workspace.ts
 var import_node_fs2 = require("node:fs");
 var import_promises4 = require("node:fs/promises");
 var import_node_path2 = require("node:path");
@@ -1094,7 +1116,7 @@ async function initializeWire(path, backend, registryPath) {
   return { root: wireRoot2, backend, path: fullRegistryPath, created: true };
 }
 
-// ../wire-core/src/operations.ts
+// packages/wire-core/src/operations.ts
 var import_node_crypto2 = require("node:crypto");
 var import_node_path3 = require("node:path");
 async function wireRoot(dependencies, path) {
@@ -1166,6 +1188,13 @@ function pathLikeResourceValue(value) {
 function relativePathContains(parent, child) {
   return parent === "" || child === parent || child.startsWith(`${parent}/`);
 }
+function relativePathEscapes(path) {
+  return path === ".." || path.startsWith("../");
+}
+function serviceCanSynchronize(url, catalog) {
+  const parsed = new URL(url);
+  return catalog.find((service) => service.matches(parsed)).synchronize !== void 0;
+}
 function errorMessage(error) {
   if (error instanceof Error) return error.message;
   if (typeof error === "object" && error !== null && "message" in error && typeof error["message"] === "string") return error["message"];
@@ -1187,6 +1216,11 @@ function composeWire(dependencies) {
     }
     const relativePath = dependencies.workspace.relativePath(outputPath, root);
     const previous = previousMarkdown === null ? await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "" : previousMarkdown;
+    if (action === "attached" && current !== null) {
+      const snapshot = current.data.find((item) => item.namespace === source.service && item.key === "snapshot").value;
+      const baseMarkdown = markdownSnapshot(syncBase(source.service, snapshot, current.data));
+      if (baseMarkdown !== null && previous !== baseMarkdown) throw new Error(`Local edits exist for ${primaryLink(current).path}. Run \`wire sync ${primaryLink(current).path}\` before attaching this URL again.`);
+    }
     await dependencies.filesystem.writeText(outputPath, fetched.markdown);
     const id = resourceId(source);
     const primary = current?.filesystem_links.find((link) => link.path === relativePath && link.role === "primary");
@@ -1222,7 +1256,14 @@ function composeWire(dependencies) {
     const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
     const source = parseSourceUrl(url, dependencies.catalog);
     const cleanPath = (0, import_node_path3.join)((0, import_node_path3.resolve)(path), markdownFilename(fetched.title));
-    const outputPath = await dependencies.filesystem.exists(cleanPath) ? (0, import_node_path3.join)((0, import_node_path3.resolve)(path), collisionFilename(fetched.title, source.service, source.identifier)) : cleanPath;
+    let outputPath = cleanPath;
+    if (await dependencies.filesystem.exists(cleanPath)) {
+      const root = await dependencies.workspace.configuredRoot(cleanPath, dependencies.home);
+      const current = root === null ? null : await existingResource(await dependencies.workspace.openRegistry(root, dependencies.home), source.service, source.identifier);
+      const currentPrimaryPath = current === null ? null : (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(current).path);
+      const existingMarkdown = await dependencies.filesystem.readText(cleanPath);
+      if (currentPrimaryPath !== cleanPath && existingMarkdown !== fetched.markdown) outputPath = (0, import_node_path3.join)((0, import_node_path3.resolve)(path), collisionFilename(fetched.title, source.service, source.identifier));
+    }
     const previous = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
     await dependencies.filesystem.writeText(outputPath, fetched.markdown);
     const id = resourceId(source);
@@ -1276,10 +1317,12 @@ function composeWire(dependencies) {
     const outputDirectory = (0, import_node_path3.dirname)(outputPath);
     const source = parseSourceUrl(resource.urls[0], dependencies.catalog);
     const snapshot = resource.data.find((item) => item.namespace === source.service && item.key === "snapshot").value;
-    const markdown = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
+    if (!await dependencies.filesystem.exists(outputPath)) throw new Error(`Linked file missing: ${primaryLink(resource).path} - restore it or run wire detach`);
+    const markdown = await dependencies.filesystem.readText(outputPath);
     const base = syncBase(source.service, snapshot, resource.data);
     const baseMarkdown = markdownSnapshot(base);
     const localChanged = baseMarkdown !== null && markdown !== baseMarkdown;
+    if (localChanged && !serviceCanSynchronize(resource.urls[0], dependencies.catalog)) throw new Error(`${source.service} is download-only and the local file has edits. Run \`wire download ${primaryLink(resource).path}\` to discard them.`);
     const fetched = await synchronizeSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog, base, markdown, outputPath);
     const action = localChanged ? fetched.markdown === baseMarkdown ? "synced" : "uploaded" : fetched.markdown === markdown ? "synced" : "downloaded";
     return store(resource.urls[0], outputDirectory, fetched, markdown, action, void 0, action === "uploaded" && baseMarkdown !== null ? baseMarkdown : void 0, action === "uploaded" ? markdown : fetched.markdown);
@@ -1300,9 +1343,11 @@ function composeWire(dependencies) {
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
     const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
-    const markdown = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
+    const previous = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
+    const fetched = await fetchSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog);
+    await dependencies.filesystem.writeText(outputPath, fetched.markdown);
     await registry.delete(resource.id);
-    return { resource, path: outputPath, markdown, summary: { action: "detached", added: 0, modified: 0, removed: 0, remote: resource.urls[0], local: outputPath } };
+    return { resource, path: outputPath, markdown: fetched.markdown, summary: { action: "detached", ...changeSummary(previous, fetched.markdown), remote: resource.urls[0], local: outputPath } };
   };
   const unlink2 = detach;
   const watch = async (value, path) => {
@@ -1363,6 +1408,7 @@ function composeWire(dependencies) {
     const root = await existingWireRoot(dependencies, path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const scope = dependencies.workspace.relativePath(path, root);
+    if (relativePathEscapes(scope)) throw new Error(`Sync scope is outside the Wire workspace: root ${(0, import_node_path3.dirname)(root)}, path ${path}`);
     const results = [];
     for (const resource of await registry.listResources()) {
       const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
@@ -1405,7 +1451,7 @@ function composeWire(dependencies) {
   });
 }
 
-// ../wire/src/auth.ts
+// packages/wire/src/auth.ts
 function cookieHeader(cookies) {
   return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
 }
@@ -1439,21 +1485,15 @@ async function verifySlack(runtime2, cookies, metadata) {
 }
 async function verifyZoom(runtime2, cookies) {
   const cookie = cookieHeader(cookies);
-  const csrfResponse = await runtime2.http.request("https://zoom.us/csrf_js", { method: "POST", headers: { cookie, "user-agent": "Mozilla/5.0", "fetch-csrf-token": "1", referer: "https://hub.zoom.us/" }, body: "" });
-  if (!csrfResponse.ok) return null;
-  const csrfText = await csrfResponse.text();
-  const csrfIndex = csrfText.indexOf(":");
-  if (csrfIndex === -1) return null;
-  const csrf = csrfText.slice(csrfIndex + 1).trim();
-  if (csrf === "") return null;
-  const jwtResponse = await runtime2.http.request("https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { cookie, "user-agent": "Mozilla/5.0", "zoom-csrftoken": csrf, "x-requested-with": "XMLHttpRequest", referer: "https://hub.zoom.us/" } });
+  const jwtResponse = await runtime2.http.request("https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { cookie, "user-agent": zoomUserAgent, "x-requested-with": "XMLHttpRequest", referer: "https://hub.zoom.us/" } });
   const jwt = (await jwtResponse.text()).trim();
   const accountId = cookies.find((value) => value.name === "zm_aid")?.value;
-  if (jwt.split(".").length !== 3 || accountId === void 0) return null;
+  if (!jwtResponse.ok || jwt.split(".").length !== 3 || accountId === void 0) return null;
   return Object.freeze({ service: "zoom", identity: Object.freeze({ account_id: accountId }) });
 }
+var zoomUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 function zoomCookieKey(cookie) {
-  return `${cookie.domain}	${cookie.path}	${cookie.name}`;
+  return `${cookie.domain.startsWith(".") ? cookie.domain.slice(1) : cookie.domain}	${cookie.path}	${cookie.name}`;
 }
 function zoomCookieJar(cookies) {
   return new Map(cookies.map((cookie) => [zoomCookieKey(cookie), cookie]));
@@ -1550,15 +1590,7 @@ async function zoomAuthRequest(runtime2, jar, url, init) {
 async function verifyZoomCookieState(runtime2, cookies, metadata) {
   const jar = zoomCookieJar(cookies);
   let changed = zoomPruneExpiredCookies(jar, runtime2.clock.now());
-  const csrf = await zoomAuthRequest(runtime2, jar, "https://zoom.us/csrf_js", { method: "POST", headers: { "user-agent": "Mozilla/5.0", "fetch-csrf-token": "1", referer: "https://hub.zoom.us/" }, body: "" });
-  changed = csrf.changed || changed;
-  if (!csrf.response.ok) return Object.freeze({ result: null, cookies: Object.freeze([...jar.values()]), metadata, changed });
-  const csrfText = await csrf.response.text();
-  const csrfIndex = csrfText.indexOf(":");
-  if (csrfIndex === -1) return Object.freeze({ result: null, cookies: Object.freeze([...jar.values()]), metadata, changed });
-  const token = csrfText.slice(csrfIndex + 1).trim();
-  if (token === "") return Object.freeze({ result: null, cookies: Object.freeze([...jar.values()]), metadata, changed });
-  const jwt = await zoomAuthRequest(runtime2, jar, "https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { "user-agent": "Mozilla/5.0", "zoom-csrftoken": token, "x-requested-with": "XMLHttpRequest", referer: "https://hub.zoom.us/" } });
+  const jwt = await zoomAuthRequest(runtime2, jar, "https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { "user-agent": zoomUserAgent, "x-requested-with": "XMLHttpRequest", referer: "https://hub.zoom.us/" } });
   changed = jwt.changed || changed;
   const jwtText = (await jwt.response.text()).trim();
   const accountId = [...jar.values()].find((value) => value.name === "zm_aid")?.value;
@@ -1621,7 +1653,7 @@ function composeAuth(runtime2, environment2, extractCookies) {
   const status = async (service) => {
     const cookies = await runtime2.cookies.loadSaved(service);
     if (cookies === null) throw cookieAuthError(service);
-    const state = await verifyCookieState(service, cookies, service === "slack" ? await runtime2.cookies.metadata(service) : Object.freeze({}));
+    const state = await verifyCookieState(service, cookies, await runtime2.cookies.metadata(service));
     if (state.changed) await saveCookies(service, state.cookies, state.metadata);
     if (state.result !== null) return state.result;
     throw cookieAuthError(service);
@@ -1673,7 +1705,7 @@ function composeAuth(runtime2, environment2, extractCookies) {
   return auth2;
 }
 
-// ../provider-asana/src/asana-sync.ts
+// packages/provider-asana/src/asana-sync.ts
 function gidFromUrl(value) {
   const parts = new URL(value).pathname.split("/").filter(Boolean);
   const task = parts.indexOf("task");
@@ -1850,7 +1882,7 @@ function asanaSnapshot(document) {
   return document;
 }
 
-// ../provider-asana/src/asana-project.ts
+// packages/provider-asana/src/asana-project.ts
 var projectViews = /* @__PURE__ */ new Set(["board", "calendar", "files", "forms", "gantt", "list", "overview", "timeline", "workflow"]);
 function object(value) {
   return value;
@@ -1987,6 +2019,8 @@ async function deleteEntity(runtime2, entity) {
   else if (entity.kind !== "project") await request(runtime2, "DELETE", `/tasks/${entity.gid}`);
 }
 async function push(runtime2, document, changes) {
+  const destructiveDeletes = changes.filter((change) => change.operation === "delete" && change.value.kind !== "section" && change.value.kind !== "project").map((change) => change.value);
+  if (destructiveDeletes.length > 0) throw new Error(`Asana task removal is not supported from project Markdown: ${destructiveDeletes.map((entity) => entity.name).join(", ")}`);
   const entities2 = entityMap(document);
   const created = /* @__PURE__ */ new Map();
   for (const kind of ["section", "milestone", "task", "subtask"]) for (const change of changes) if (change.operation === "create" && change.value.kind === kind) await createEntity(runtime2, document, change.value, entities2, created);
@@ -2028,7 +2062,7 @@ var asanaProjectService = defineService({
   }
 });
 
-// ../provider-asana/src/asana-task.ts
+// packages/provider-asana/src/asana-task.ts
 function object2(value) {
   return value;
 }
@@ -2112,12 +2146,12 @@ var asanaTaskService = defineService({
   }
 });
 
-// ../provider-asana/src/index.ts
+// packages/provider-asana/src/index.ts
 var asanaProvider = Object.freeze({
   services: [asanaProjectService, asanaTaskService]
 });
 
-// ../provider-chatgpt/src/chatgpt.ts
+// packages/provider-chatgpt/src/chatgpt.ts
 function chatgptAuthError() {
   return new Error("ChatGPT authentication is missing or expired. Run `wire chatgpt login` once; other commands reuse saved cookies.");
 }
@@ -2264,12 +2298,12 @@ var chatgptService = defineService({
   }
 });
 
-// ../provider-chatgpt/src/index.ts
+// packages/provider-chatgpt/src/index.ts
 var chatgptProvider = Object.freeze({
   services: [chatgptService]
 });
 
-// ../provider-gmail/src/gmail.ts
+// packages/provider-gmail/src/gmail.ts
 function decode(data) {
   return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
 }
@@ -2344,12 +2378,12 @@ var gmailService = defineService({
   }
 });
 
-// ../provider-gmail/src/index.ts
+// packages/provider-gmail/src/index.ts
 var gmailProvider = Object.freeze({
   services: [gmailService]
 });
 
-// ../provider-google-docs/src/google-docs.ts
+// packages/provider-google-docs/src/google-docs.ts
 var import_node_zlib = require("node:zlib");
 async function cookieHeader3(runtime2) {
   const cookies = await runtime2.cookies.loadSaved("google-docs");
@@ -3051,12 +3085,175 @@ var googleDocsService = defineService({
   synchronize: (runtime2, url, source, base, markdown) => synchronizeGoogleDocument(runtime2, url, source, base, markdown)
 });
 
-// ../provider-google-docs/src/index.ts
-var googleDocsProvider = Object.freeze({
-  services: [googleDocsService]
+// packages/provider-google-docs/src/google-forms.ts
+function formId(url) {
+  return /^\/forms(?:\/u\/\d+)?\/d\/([^/]+)(?:\/.*)?$/.exec(url.pathname)[1];
+}
+function formUrl(id) {
+  return `https://docs.google.com/forms/d/${encodeURIComponent(id)}/edit`;
+}
+function formsAuthError() {
+  return new Error("Google Forms API authentication is missing or expired. Set GOOGLE_FORMS_TOKEN_FILE to an OAuth token with Forms scopes, then retry.");
+}
+function apiDisabledError(body2) {
+  const error = body2["error"];
+  if (error === void 0) return null;
+  const details = Array.isArray(error["details"]) ? error["details"] : [];
+  const serviceDisabled = details.find((detail) => {
+    const metadata2 = detail["metadata"];
+    return metadata2 !== void 0 && metadata2["service"] === "forms.googleapis.com";
+  });
+  if (serviceDisabled === void 0) return null;
+  const metadata = serviceDisabled["metadata"];
+  const activationUrl = typeof metadata["activationUrl"] === "string" ? metadata["activationUrl"] : typeof metadata["containerInfo"] === "string" ? `https://console.developers.google.com/apis/api/forms.googleapis.com/overview?project=${metadata["containerInfo"]}` : "https://console.developers.google.com/apis/api/forms.googleapis.com/overview";
+  return new Error(`Google Forms API is disabled. Enable it at ${activationUrl} then retry.`);
+}
+async function formsJson(runtime2, url, label) {
+  const token = await runtime2.googleFormsTokens.load();
+  const response = await runtime2.http.request(url, { headers: { authorization: `Bearer ${token.token}` } });
+  const text2 = await response.text();
+  const body2 = text2 === "" ? {} : JSON.parse(text2);
+  if (response.status === 401) throw formsAuthError();
+  if (!response.ok) {
+    const disabled = apiDisabledError(body2);
+    if (disabled !== null) throw disabled;
+    const error = body2["error"];
+    const message = typeof error?.["message"] === "string" ? error["message"] : text2;
+    if (response.status === 403 && /insufficient authentication scopes/i.test(message)) throw new Error("Google Forms API token is missing required scopes. Regenerate GOOGLE_FORMS_TOKEN_FILE with forms.body and forms.responses.readonly scopes.");
+    throw new Error(`Google Forms API ${label} failed: HTTP ${response.status}${message === "" ? "" : ` ${message}`}`);
+  }
+  return body2;
+}
+function optionalString(value) {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+function jsonObject2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function optionsMarkdown(options) {
+  if (!Array.isArray(options)) return null;
+  return options.map((option) => {
+    const object4 = option;
+    return object4["value"];
+  }).join(", ");
+}
+function questionMarkdown(item) {
+  const lines = [`- ${item["title"]}`];
+  const questionItem = item["questionItem"];
+  if (questionItem === void 0) return lines;
+  const question = questionItem["question"];
+  lines.push(`  - itemId: ${item["itemId"]}`);
+  lines.push(`  - questionId: ${question["questionId"]}`);
+  if (question["required"] !== void 0) lines.push(`  - required: ${String(question["required"])}`);
+  const textQuestion = question["textQuestion"];
+  if (textQuestion !== void 0) lines.push(`  - type: ${textQuestion["paragraph"] === true ? "paragraph" : "short_text"}`);
+  const choiceQuestion = question["choiceQuestion"];
+  if (choiceQuestion !== void 0) {
+    lines.push(`  - type: ${choiceQuestion["type"]}`);
+    const options = optionsMarkdown(choiceQuestion["options"]);
+    if (options !== null) lines.push(`  - options: ${options}`);
+  }
+  const scaleQuestion = question["scaleQuestion"];
+  if (scaleQuestion !== void 0) {
+    lines.push("  - type: scale");
+    lines.push(`  - range: ${String(scaleQuestion["low"])} to ${String(scaleQuestion["high"])}`);
+    const lowLabel = optionalString(scaleQuestion["lowLabel"]);
+    const highLabel = optionalString(scaleQuestion["highLabel"]);
+    if (lowLabel !== null) lines.push(`  - lowLabel: ${lowLabel}`);
+    if (highLabel !== null) lines.push(`  - highLabel: ${highLabel}`);
+  }
+  if (question["dateQuestion"] !== void 0) lines.push("  - type: date");
+  if (question["timeQuestion"] !== void 0) lines.push("  - type: time");
+  const ratingQuestion = question["ratingQuestion"];
+  if (ratingQuestion !== void 0) {
+    lines.push("  - type: rating");
+    lines.push(`  - level: ${String(ratingQuestion["ratingScaleLevel"])}`);
+    lines.push(`  - icon: ${String(ratingQuestion["iconType"])}`);
+  }
+  if (question["fileUploadQuestion"] !== void 0) lines.push("  - type: file_upload");
+  if (question["rowQuestion"] !== void 0) lines.push("  - type: row");
+  return lines;
+}
+function answerTexts(answer) {
+  const textAnswers = answer["textAnswers"];
+  if (textAnswers !== void 0 && Array.isArray(textAnswers["answers"])) return textAnswers["answers"].map((value) => value["value"]);
+  return [JSON.stringify(answer)];
+}
+function formAnswers(response) {
+  const answers = response["answers"];
+  if (answers === void 0) return [];
+  return Object.entries(answers).flatMap(([questionId, answer]) => answerTexts(answer).map((text2) => ({ questionId, text: text2 })));
+}
+function formMarkdown(form, responses) {
+  const info = form["info"];
+  const title2 = info["title"];
+  const id = form["formId"];
+  const lines = [`# ${title2}`, "", `- Form ID: ${id}`, `- Edit: ${formUrl(id)}`];
+  const responder = optionalString(form["responderUri"]);
+  if (responder !== null) lines.push(`- Responder: ${responder}`);
+  const publish = form["publishSettings"]?.["publishState"];
+  if (publish !== void 0) {
+    lines.push(`- Published: ${String(publish["isPublished"])}`);
+    lines.push(`- Accepting responses: ${String(publish["isAcceptingResponses"])}`);
+  }
+  lines.push("", "## Items");
+  const items = form["items"];
+  if (items === void 0 || items.length === 0) lines.push("No items.");
+  else for (const item of items) lines.push(...questionMarkdown(item));
+  lines.push("", "## Responses", "", `Response count: ${responses.length}`);
+  for (const response of responses) {
+    lines.push("", `### ${response["responseId"]}`);
+    const createTime = optionalString(response["createTime"]);
+    const submitted = optionalString(response["lastSubmittedTime"]);
+    if (createTime !== null) lines.push(`- Created: ${createTime}`);
+    if (submitted !== null) lines.push(`- Submitted: ${submitted}`);
+    for (const answer of formAnswers(response)) lines.push(`- ${answer.questionId}: ${answer.text}`);
+  }
+  return `${lines.join("\n")}
+`;
+}
+async function allResponses(runtime2, id) {
+  const responses = [];
+  let pageToken;
+  for (; ; ) {
+    const url = new URL(`https://forms.googleapis.com/v1/forms/${encodeURIComponent(id)}/responses`);
+    if (pageToken !== void 0) url.searchParams.set("pageToken", pageToken);
+    const body2 = await formsJson(runtime2, url.toString(), "responses.list");
+    if (Array.isArray(body2["responses"])) responses.push(...body2["responses"]);
+    if (typeof body2["nextPageToken"] !== "string") break;
+    pageToken = body2["nextPageToken"];
+  }
+  return responses;
+}
+async function fetchGoogleForm(runtime2, source) {
+  const form = await formsJson(runtime2, `https://forms.googleapis.com/v1/forms/${encodeURIComponent(source.identifier)}`, "forms.get");
+  const responses = await allResponses(runtime2, source.identifier);
+  const info = form["info"];
+  const markdown = formMarkdown(form, responses);
+  return Object.freeze({
+    title: info["title"],
+    markdown,
+    data: { form, responses, markdown }
+  });
+}
+var googleFormsService = defineService({
+  name: "google-forms",
+  matches: (url) => url.hostname === "docs.google.com" && /^\/forms(?:\/u\/\d+)?\/d\/[^/]+(?:\/.*)?$/.test(url.pathname),
+  parse: (url) => Object.freeze({ service: "google-forms", identifier: formId(url), type: "form" }),
+  fetch: (runtime2, _url, source) => fetchGoogleForm(runtime2, source),
+  synchronize: async (runtime2, _url, source, base, markdown) => {
+    const baseMarkdown = jsonObject2(base) && typeof base["markdown"] === "string" ? base["markdown"] : null;
+    if (baseMarkdown !== null && markdown !== baseMarkdown) throw new Error("Google Forms sync is download-only. Revert local edits or use `wire download <url>` for a fresh copy.");
+    return fetchGoogleForm(runtime2, source);
+  }
 });
 
-// ../provider-notion/src/notion-sync.ts
+// packages/provider-google-docs/src/index.ts
+var googleDocsProvider = Object.freeze({
+  services: [googleFormsService, googleDocsService]
+});
+
+// packages/provider-notion/src/notion-sync.ts
 var import_node_crypto3 = require("node:crypto");
 function object3(value) {
   return value;
@@ -3106,7 +3303,7 @@ function inlineCode(value) {
   return `${ticks}${value}${ticks}`;
 }
 function escapeInlineMarkdown(value) {
-  return value.replace(/\\/g, "\\\\").replace(/\*/g, "\\*").replace(/~/g, "\\~").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
+  return value.replace(/\\/g, "\\\\").replace(/\*/g, "\\*").replace(/~/g, "\\~").replace(/`/g, "\\`").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
 }
 function unescapeInlineMarkdown(value) {
   return value.replace(/\\([\\*~[\]()])/g, "$1");
@@ -3332,6 +3529,9 @@ function isTableSeparator(row) {
 function markdownBlockStart(stripped) {
   return /^(#{1,6})\s+|^[-*]\s+|^\d+\.\s+|^-\s+\[[ xX]\]\s+|^```|^---$|^!\[|^>|^\||^:::/.test(stripped);
 }
+function escapeBlockMarkdownLine(line) {
+  return markdownBlockStart(line) ? `\\${line}` : line;
+}
 function colonFenceBody(lines, index) {
   const body2 = [];
   let depth = 0;
@@ -3424,8 +3624,13 @@ function parseLines(lines, baseIndent = 0) {
       continue;
     }
     if (stripped.startsWith("> ")) {
-      blocks.push({ type: "quote", content: stripped.slice(2), properties: {}, rich_text: parseInline(stripped.slice(2)), indent });
+      const content2 = [stripped.slice(2)];
       index += 1;
+      while (index < lines.length && lines[index].trim() !== "" && baseIndent + lineIndent(lines[index]) === indent && stripIndent(lines[index]).startsWith("> ")) {
+        content2.push(stripIndent(lines[index]).slice(2));
+        index += 1;
+      }
+      blocks.push({ type: "quote", content: content2.join("\n"), properties: {}, rich_text: parseInline(content2.join("\n")), indent });
       continue;
     }
     if (stripped.startsWith("|")) {
@@ -3538,7 +3743,13 @@ function parseLines(lines, baseIndent = 0) {
 function parseNotionMarkdown(markdown) {
   return parseLines(markdown.replace(/^\ufeff/, "").split("\n"));
 }
-function parserBlockToNotionBlock(block, id, parentId, parentTable, spaceId, userId, currentTime) {
+function tableRowCells(block, columnOrder) {
+  const cells = object3(block.properties["cells"]);
+  if (columnOrder === void 0) return cells;
+  const localColumns = Object.keys(cells);
+  return Object.fromEntries(columnOrder.map((column, index) => [column, cells[localColumns[index]]]));
+}
+function parserBlockToNotionBlock(block, id, parentId, parentTable, spaceId, userId, currentTime, columnOrder) {
   const base = { id, type: block.type, space_id: spaceId, parent_id: parentId, parent_table: parentTable, alive: true, created_time: currentTime, created_by_table: "notion_user", created_by_id: userId, last_edited_time: currentTime, last_edited_by_table: "notion_user", last_edited_by_id: userId };
   if (block.properties["notion_opaque"] !== void 0) return { ...object3(block.properties["notion_opaque"]), ...base };
   if (block.type === "divider") return base;
@@ -3547,19 +3758,20 @@ function parserBlockToNotionBlock(block, id, parentId, parentTable, spaceId, use
   if (block.type === "to_do") return { ...base, properties: { title: block.rich_text, checked: [[block.properties["checked"] === true ? "Yes" : "No"]] } };
   if (block.type === "image") return { ...base, properties: { source: [[block.properties["source"]]], alt_text: [[block.properties["alt_text"]]], ...block.properties["caption"] === void 0 ? {} : { caption: block.properties["caption"] } } };
   if (block.type === "table") return { ...base, properties: {}, format: { table_block_column_order: block.properties["column_ids"], table_block_column_header: block.properties["has_header"], table_block_row_header: block.properties["has_row_header"] } };
-  if (block.type === "table_row") return { ...base, properties: block.properties["cells"] };
+  if (block.type === "table_row") return { ...base, properties: tableRowCells(block, columnOrder) };
   if (block.type === "column_list" || block.type === "transclusion_container") return { ...base, properties: {} };
   if (block.type === "column") return { ...base, properties: {}, ...block.properties["format"] === void 0 ? {} : { format: block.properties["format"] } };
   if (block.type === "callout") return { ...base, properties: { title: block.rich_text }, ...block.properties["format"] === void 0 ? {} : { format: block.properties["format"] } };
   if (["header", "sub_header", "sub_sub_header"].includes(block.type)) return { ...base, properties: { title: block.rich_text }, ...block.properties["format"] === void 0 ? {} : { format: block.properties["format"] } };
   return { ...base, properties: { title: block.rich_text } };
 }
-function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTime, createId = () => (0, import_node_crypto3.randomUUID)()) {
+function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTime, createId = () => (0, import_node_crypto3.randomUUID)(), initialTableColumnOrder) {
   const operations = [];
   const topLevelIds = [];
   const lastAtIndent = /* @__PURE__ */ new Map();
   const lastChildByParent = /* @__PURE__ */ new Map();
   let lastTableId = null;
+  let tableColumnOrder = initialTableColumnOrder;
   for (const block of blocks) {
     const blockId = formatBlockId(createId().replaceAll("-", ""));
     let parentId = pageId;
@@ -3571,12 +3783,15 @@ function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTim
     }
     if (block.type !== "table_row" && block.indent === 0) topLevelIds.push(blockId);
     const parentTable = "block";
-    operations.push({ pointer: pointer(blockId, spaceId), path: [], command: "set", args: parserBlockToNotionBlock(block, blockId, parentId, parentTable, spaceId, userId, currentTime) });
+    operations.push({ pointer: pointer(blockId, spaceId), path: [], command: "set", args: parserBlockToNotionBlock(block, blockId, parentId, parentTable, spaceId, userId, currentTime, block.type === "table_row" ? tableColumnOrder : void 0) });
     const after = lastChildByParent.get(parentId);
     operations.push({ pointer: pointer(parentId, spaceId), path: ["content"], command: after === void 0 ? "listBefore" : "listAfter", args: after === void 0 ? { id: blockId } : { id: blockId, after } });
     lastChildByParent.set(parentId, blockId);
     if (["bulleted_list", "numbered_list", "to_do", "quote", "callout", "toggle", "header", "sub_header", "sub_sub_header", "table", "page", "column_list", "column", "transclusion_container"].includes(block.type)) lastAtIndent.set(block.indent, blockId);
-    if (block.type === "table") lastTableId = blockId;
+    if (block.type === "table") {
+      lastTableId = blockId;
+      tableColumnOrder = block.properties["column_ids"];
+    }
   }
   if (operations.length > 0) operations.push({ pointer: pointer(pageId, spaceId), path: ["last_edited_time"], command: "set", args: currentTime });
   return { operations, topLevelIds };
@@ -3601,7 +3816,10 @@ function canonicalParserBlock(block, columnOrder) {
   if (block.type === "code") return { type: "code", title: normalizeRichText([[block.content]]), language: [[block.properties["language"]]] };
   if (block.type === "to_do") return { type: "to_do", title: normalizeRichText(block.rich_text), checked: [[block.properties["checked"] === true ? "Yes" : "No"]] };
   if (block.type === "table") return { type: "table", column_count: block.properties["column_ids"].length };
-  if (block.type === "table_row") return { type: "table_row", cells: columnOrder.map((column) => normalizeRichText(object3(block.properties["cells"])[column])) };
+  if (block.type === "table_row") {
+    const cells = tableRowCells(block, columnOrder);
+    return { type: "table_row", cells: columnOrder.map((column) => normalizeRichText(cells[column])) };
+  }
   if (block.type === "image") return { type: "image", source: [[block.properties["source"]]], alt_text: [[block.properties["alt_text"]]], caption: block.properties["caption"] ?? null };
   if (block.type === "column") return { type: "column", column_ratio: object3(block.properties["format"] ?? {})["column_ratio"] ?? null };
   if (block.type === "column_list" || block.type === "transclusion_container") return { type: block.type };
@@ -3632,17 +3850,19 @@ function localTree(blocks) {
   }
   return roots;
 }
-function outputNode(node, remoteNode, parentId, remote, currentTime) {
+function outputNode(node, remoteNode, parentId, remote, currentTime, columnOrder) {
   const id = remoteNode?.id ?? formatBlockId((0, import_node_crypto3.randomUUID)().replaceAll("-", ""));
-  return { id, block: parserBlockToNotionBlock(node.block, id, parentId, "block", remote.spaceId, remote.userId, currentTime), children: node.children.map((child, index) => outputNode(child, remoteNode?.children[index], id, remote, currentTime)) };
+  const block = parserBlockToNotionBlock(node.block, id, parentId, "block", remote.spaceId, remote.userId, currentTime, node.block.type === "table_row" ? columnOrder : void 0);
+  const nextColumnOrder = block["type"] === "table" ? object3(block["format"])["table_block_column_order"] : columnOrder;
+  return { id, block, children: node.children.map((child, index) => outputNode(child, remoteNode?.children[index], id, remote, currentTime, nextColumnOrder)) };
 }
-function emitUpdates(remote, local, blockId, spaceId) {
+function emitUpdates(remote, local, blockId, spaceId, columnOrder) {
   const operations = [];
   const remoteType = remote["type"] === "text" && object3(remote["format"] ?? {})["toggleable"] === true ? "toggle" : remote["type"];
   const localType = local.type === "toggle" ? "text" : local.type;
   const typeChanged = remoteType !== local.type;
   if (typeChanged) operations.push({ pointer: pointer(blockId, spaceId), path: ["type"], command: "set", args: localType });
-  const args = parserBlockToNotionBlock(local, blockId, remote["parent_id"] ?? "", "block", spaceId, "", 0);
+  const args = parserBlockToNotionBlock(local, blockId, remote["parent_id"] ?? "", "block", spaceId, "", 0, local.type === "table_row" ? columnOrder : void 0);
   const remoteProperties = object3(remote["properties"] ?? {});
   const nextProperties = object3(args["properties"] ?? {});
   if (typeChanged) {
@@ -3663,8 +3883,8 @@ function flattenLocalSubtree(node) {
   walk(node, 0);
   return blocks;
 }
-function buildNotionCreateSubtreeOperations(node, parentId, ambient) {
-  return buildNotionCreateOperations(flattenLocalSubtree(node), parentId, ambient.spaceId, ambient.userId, ambient.currentTime);
+function buildNotionCreateSubtreeOperations(node, parentId, ambient, columnOrder) {
+  return buildNotionCreateOperations(flattenLocalSubtree(node), parentId, ambient.spaceId, ambient.userId, ambient.currentTime, void 0, columnOrder);
 }
 function positionRootCreateOperations(operations, parentId, spaceId, previousId) {
   return operations.map((operation) => {
@@ -3715,7 +3935,7 @@ function diffNotionChildLists(remoteParent, localChildren, ambient, summary, col
       continue;
     }
     if (localIndex + 1 < localChildren.length && remoteHash(remoteIndex) === localHash(localIndex + 1)) {
-      const built = buildNotionCreateSubtreeOperations(localNode, remoteParent.id, ambient);
+      const built = buildNotionCreateSubtreeOperations(localNode, remoteParent.id, ambient, nextColumnOrder);
       operations.push(...positionRootCreateOperations(built.operations, remoteParent.id, ambient.spaceId, previousId));
       summary.inserted += localSubtreeSize(localNode);
       previousId = built.topLevelIds[0];
@@ -3729,7 +3949,7 @@ function diffNotionChildLists(remoteParent, localChildren, ambient, summary, col
       continue;
     }
     const before = operations.length;
-    operations.push(...emitUpdates(remoteNode.block, localNode.block, remoteNode.id, ambient.spaceId));
+    operations.push(...emitUpdates(remoteNode.block, localNode.block, remoteNode.id, ambient.spaceId, nextColumnOrder));
     operations.push(...diffNotionChildLists(remoteNode, localNode.children, ambient, summary, nextColumnOrder));
     if (operations.length > before) summary.updated += 1;
     previousId = remoteNode.id;
@@ -3738,7 +3958,7 @@ function diffNotionChildLists(remoteParent, localChildren, ambient, summary, col
   }
   while (localIndex < localChildren.length) {
     const localNode = localChildren[localIndex];
-    const built = buildNotionCreateSubtreeOperations(localNode, remoteParent.id, ambient);
+    const built = buildNotionCreateSubtreeOperations(localNode, remoteParent.id, ambient, nextColumnOrder);
     operations.push(...positionRootCreateOperations(built.operations, remoteParent.id, ambient.spaceId, previousId ?? remoteChildren[remoteChildren.length - 1]?.id));
     summary.inserted += localSubtreeSize(localNode);
     previousId = built.topLevelIds[0];
@@ -3771,19 +3991,19 @@ function renderNode(tree, indent, parentType = "") {
   }
   if (type === "bulleted_list") {
     const lines = title2.split("\n");
-    return [`${prefix}- ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${line}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
+    return [`${prefix}- ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${escapeBlockMarkdownLine(line)}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
   }
   if (type === "numbered_list") {
     const lines = title2.split("\n");
-    return [`${prefix}1. ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}   ${line}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
+    return [`${prefix}1. ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}   ${escapeBlockMarkdownLine(line)}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
   }
   if (type === "to_do") {
     const checked = richTextText(properties["checked"] ?? [["No"]]) === "Yes";
     if (title2 === "") return [`${prefix}:::to-do`, `${prefix}:::checked ${JSON.stringify(checked)}`, prefix, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type)), `${prefix}:::`];
     const lines = title2.split("\n");
-    return [`${prefix}- [${checked ? "x" : " "}] ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${line}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
+    return [`${prefix}- [${checked ? "x" : " "}] ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${escapeBlockMarkdownLine(line)}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
   }
-  if (type === "quote") return [`${prefix}> ${title2}`, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
+  if (type === "quote") return [...title2.split("\n").map((line) => `${prefix}> ${escapeBlockMarkdownLine(line)}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
   if (type === "divider") return [`${prefix}---`];
   if (type === "code") {
     const code = richTextText(properties["title"]);
@@ -3811,7 +4031,7 @@ function renderNode(tree, indent, parentType = "") {
   }
   if (title2 === "") return [`${prefix}:::text`, `${prefix}:::`];
   if (["bulleted_list", "numbered_list", "to_do"].includes(parentType)) return [`${prefix}:::text`, ...title2.split("\n").map((line) => `${prefix}${line}`), `${prefix}:::`];
-  return [`${prefix}${title2}`];
+  return title2.split("\n").map((line) => `${prefix}${escapeBlockMarkdownLine(line)}`);
 }
 function renderNotionTreeToMarkdown(tree, mentions) {
   const title2 = renderRichText(object3(tree.block["properties"])["title"]);
@@ -3837,9 +4057,9 @@ async function fetchTree(runtime2, url, source) {
   await runtime2.http.request(url, { headers: { cookie } });
   const spaces = await notionPost(runtime2, "getSpaces", cookie, {}, {});
   const spaceView = object3(object3(spaces[userId])["space_view"]);
-  const spaceId = object3(spaceView[Object.keys(spaceView)[0]])["spaceId"];
+  const initialSpaceId = object3(spaceView[Object.keys(spaceView)[0]])["spaceId"];
   const pageId = formatBlockId(source.identifier);
-  const headers2 = { "x-notion-active-user-header": userId, "x-notion-space-id": spaceId, referer: url, ...csrf === void 0 ? {} : { "x-csrf-token": csrf } };
+  let headers2 = { "x-notion-active-user-header": userId, "x-notion-space-id": initialSpaceId, referer: url, ...csrf === void 0 ? {} : { "x-csrf-token": csrf } };
   const blocks = /* @__PURE__ */ new Map();
   let stack = [];
   let chunkNumber = 0;
@@ -3850,6 +4070,8 @@ async function fetchTree(runtime2, url, source) {
     stack = cursors.length === 0 ? [] : cursors[0]["stack"];
     chunkNumber += 1;
   } while (stack.length > 0);
+  const spaceId = blocks.get(pageId)["space_id"];
+  headers2 = { ...headers2, "x-notion-space-id": spaceId };
   while (true) {
     const missing = /* @__PURE__ */ new Set();
     const pending = [pageId];
@@ -3896,6 +4118,7 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
   const csrf = cookies.find((value) => value.name === "csrf")?.value;
   const spaces = await notionPost(runtime2, "getSpaces", cookie, {}, {});
   const spaceView = object3(object3(spaces[userId])["space_view"]);
+  if (Object.keys(spaceView).length !== 1) throw new Error("Notion upload requires an explicit target workspace.");
   const spaceId = object3(spaceView[Object.keys(spaceView)[0]])["spaceId"];
   const pageId = (0, import_node_crypto3.randomUUID)();
   const compactPageId = pageId.replaceAll("-", "");
@@ -3956,8 +4179,6 @@ async function synchronizeNotionDocument(runtime2, url, base, markdown, _markdow
     const remoteTitleChanged = baseSplit.title !== currentSplit.title;
     const localBodyChanged = baseSplit.body !== split.body;
     const remoteBodyChanged = baseSplit.body !== currentSplit.body;
-    if (localTitleChanged && remoteTitleChanged && split.title !== currentSplit.title) throw new Error("Markdown and Notion changed since last sync");
-    if (localBodyChanged && remoteBodyChanged && split.body !== currentSplit.body) throw new Error("Markdown and Notion changed since last sync");
     if ((localTitleChanged || localBodyChanged) && (remoteTitleChanged || remoteBodyChanged)) {
       split = { title: localTitleChanged ? split.title : currentSplit.title, body: localBodyChanged ? split.body : currentSplit.body };
       fieldMerged = true;
@@ -4000,7 +4221,7 @@ ${split.body}`;
   return { title: output.split("\n")[0].replace(/^# */, ""), markdown: output, data: notionData(remote.tree.id, output, outputTree, mentions) };
 }
 
-// ../provider-notion/src/notion.ts
+// packages/provider-notion/src/notion.ts
 var notionPageId = /[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i;
 var notionService = defineService({
   name: "notion",
@@ -4011,12 +4232,12 @@ var notionService = defineService({
   upload: uploadNotionDocument
 });
 
-// ../provider-notion/src/index.ts
+// packages/provider-notion/src/index.ts
 var notionProvider = Object.freeze({
   services: [notionService]
 });
 
-// ../provider-slack/src/slack.ts
+// packages/provider-slack/src/slack.ts
 function slackAuthError() {
   return new Error("slack cookie authentication is missing or expired. Run `wire slack login` once; other commands reuse saved cookies.");
 }
@@ -4115,12 +4336,12 @@ var slackService = defineService({
   }
 });
 
-// ../provider-slack/src/index.ts
+// packages/provider-slack/src/index.ts
 var slackProvider = Object.freeze({
   services: [slackService]
 });
 
-// ../provider-zoom/src/zoom-hub.ts
+// packages/provider-zoom/src/zoom-hub.ts
 var userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 function zoomAuthError() {
   return new Error("Zoom authentication is missing or expired. Run `wire zoom login` once; other commands reuse saved cookies.");
@@ -4152,20 +4373,13 @@ async function zoomJson(response, label) {
   if (!response.ok) throw new Error(`Zoom Hub ${label} failed: HTTP ${response.status} ${JSON.stringify(body2)}`);
   return body2;
 }
-function zoomCsrf(text2) {
-  const index = text2.indexOf(":");
-  if (index === -1) throw zoomAuthError();
-  const token = text2.slice(index + 1).trim();
-  if (token === "") throw zoomAuthError();
-  return token;
-}
 function zoomJwt(text2) {
   const token = text2.trim();
   if (token.split(".").length !== 3) throw zoomAuthError();
   return token;
 }
 function cookieKey(cookie) {
-  return `${cookie.domain}	${cookie.path}	${cookie.name}`;
+  return `${cookie.domain.startsWith(".") ? cookie.domain.slice(1) : cookie.domain}	${cookie.path}	${cookie.name}`;
 }
 function cookieJar(cookies) {
   return new Map(cookies.map((cookie) => [cookieKey(cookie), cookie]));
@@ -4254,15 +4468,6 @@ function pruneExpiredCookies(jar, now) {
   }
   return changed;
 }
-async function saveZoomCookies(runtime2, jar, metadata) {
-  await runtime2.cookies.save("zoom", Object.freeze([...jar.values()]), metadata);
-}
-async function zoomRequest(runtime2, jar, metadata, url, init) {
-  const parsed = new URL(url);
-  const response = await runtime2.http.request(url, { ...init, headers: { ...init.headers, cookie: requestCookies(jar, parsed, runtime2.clock.now()) } });
-  if (applyResponseCookies(jar, parsed, response, runtime2.clock.now())) await saveZoomCookies(runtime2, jar, metadata);
-  return response;
-}
 var zoomHubService = defineService({
   name: "zoom-hub",
   matches: (url) => url.hostname === "hub.zoom.us" && /^\/doc\/[^/]+\/?$/.test(url.pathname),
@@ -4270,36 +4475,55 @@ var zoomHubService = defineService({
   fetch: async (runtime2, _url, source) => {
     const cookies = await runtime2.cookies.loadSaved("zoom");
     if (cookies === null) throw zoomAuthError();
-    const metadata = await runtime2.cookies.metadata("zoom");
     const jar = cookieJar(cookies);
-    if (pruneExpiredCookies(jar, runtime2.clock.now())) await saveZoomCookies(runtime2, jar, metadata);
+    const state = { metadata: await runtime2.cookies.metadata("zoom") };
+    const save = () => runtime2.cookies.save("zoom", Object.freeze([...jar.values()]), state.metadata);
+    if (pruneExpiredCookies(jar, runtime2.clock.now())) await save();
     const accountCookie = [...jar.values()].find((value) => value.name === "zm_aid");
     if (accountCookie === void 0) throw zoomAuthError();
     const accountId = accountCookie.value;
-    const csrfResponse = await zoomRequest(runtime2, jar, metadata, "https://zoom.us/csrf_js", { method: "POST", headers: { "user-agent": userAgent, "fetch-csrf-token": "1", referer: "https://hub.zoom.us/" }, body: "" });
-    const csrf = zoomCsrf(await zoomText(csrfResponse, "CSRF"));
-    const jwtResponse = await zoomRequest(runtime2, jar, metadata, "https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { "user-agent": userAgent, "zoom-csrftoken": csrf, "x-requested-with": "XMLHttpRequest", accept: "application/json, text/plain, */*", referer: "https://hub.zoom.us/" } });
-    const jwt = zoomJwt(await zoomText(jwtResponse, "JWT"));
-    const fileResponse = await zoomRequest(runtime2, jar, metadata, "https://us01docs.zoom.us/api/file/files/action/batch_get", { method: "POST", headers: hubHeaders(jwt, "application/json"), body: JSON.stringify({ ids: [source.identifier], accountId }) });
+    const zoomRequest = async (url, init) => {
+      const parsed = new URL(url);
+      const response = await runtime2.http.request(url, { ...init, headers: { ...init.headers, cookie: requestCookies(jar, parsed, runtime2.clock.now()) } });
+      if (applyResponseCookies(jar, parsed, response, runtime2.clock.now())) await save();
+      return response;
+    };
+    const refreshJwt = async () => {
+      const jwtResponse = await zoomRequest("https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { "user-agent": userAgent, "x-requested-with": "XMLHttpRequest", accept: "application/json, text/plain, */*", referer: "https://hub.zoom.us/" } });
+      const jwt2 = zoomJwt(await zoomText(jwtResponse, "JWT"));
+      state.metadata = Object.freeze({ ...state.metadata, hub_jwt: jwt2, hub_jwt_expires: String(runtime2.clock.now().getTime() + 18e5) });
+      await save();
+      return jwt2;
+    };
+    const cachedJwt = state.metadata["hub_jwt"];
+    const cachedExpires = state.metadata["hub_jwt_expires"];
+    let cached = cachedJwt !== void 0 && cachedExpires !== void 0 && runtime2.clock.now().getTime() < Number(cachedExpires);
+    let jwt = cached ? cachedJwt : await refreshJwt();
+    const docsRequest = async (url, init) => {
+      const response = await zoomRequest(url, init(jwt));
+      if (response.status !== 401 || !cached) return response;
+      cached = false;
+      jwt = await refreshJwt();
+      return zoomRequest(url, init(jwt));
+    };
+    const fileResponse = await docsRequest("https://us01docs.zoom.us/api/file/files/action/batch_get", (token) => ({ method: "POST", headers: hubHeaders(token, "application/json"), body: JSON.stringify({ ids: [source.identifier], accountId }) }));
     const files = (await zoomJson(fileResponse, "file batch_get"))["successItems"];
     if (files.length === 0) throw new Error(`Zoom Hub file ${source.identifier} was not returned by batch_get`);
     const document = files[0];
     const notes = document["meetingNotes"];
     const meetingId = notes["meetingId"];
-    const base = { recording_id: source.identifier, title: document["title"], source_url: document["fileLink"], meeting_id: meetingId, main_meeting_id: notes["mainMeetingId"], owner: document["owner"]["ownerName"], created_at: document["createdInfo"]["time"], updated_at: document["updatedInfo"]["time"] };
-    if (meetingId === "") {
-      const result2 = { ...base, transcript: "", state: "missing" };
-      const markdown = [`# ${result2.title}`, "", `- Transcript state: ${result2.state}`, `- Recording ID: ${result2.recording_id}`, `- Meeting ID: ${result2.meeting_id}`, `- Main meeting ID: ${result2.main_meeting_id}`, `- Owner: ${result2.owner}`, `- Zoom document: ${result2.source_url}`].join("\n");
-      return Object.freeze({ title: result2.title, markdown, data: result2 });
+    const mainMeetingId = notes["mainMeetingId"];
+    const base = { recording_id: source.identifier, title: document["title"], source_url: document["fileLink"], meeting_id: meetingId, main_meeting_id: mainMeetingId, owner: document["owner"]["ownerName"], created_at: document["createdInfo"]["time"], updated_at: document["updatedInfo"]["time"] };
+    if (meetingId !== "") {
+      const statusResponse = await docsRequest(`https://us01docs.zoom.us/api/meeting/transcript_status?meetingId=${encodeURIComponent(meetingId)}`, (token) => ({ headers: hubHeaders(token) }));
+      const status = (await zoomJson(statusResponse, "transcript status"))["aicTranscript"];
+      if (!status["exist"] || !status["canAccess"]) {
+        const result2 = { ...base, transcript: "", state: status["exist"] ? "denied" : "missing" };
+        const markdown = [`# ${result2.title}`, "", `- Transcript state: ${result2.state}`, `- Recording ID: ${result2.recording_id}`, `- Meeting ID: ${result2.meeting_id}`, `- Main meeting ID: ${result2.main_meeting_id}`, `- Owner: ${result2.owner}`, `- Zoom document: ${result2.source_url}`].join("\n");
+        return Object.freeze({ title: result2.title, markdown, data: result2 });
+      }
     }
-    const statusResponse = await zoomRequest(runtime2, jar, metadata, `https://us01docs.zoom.us/api/meeting/transcript_status?meetingId=${encodeURIComponent(meetingId)}`, { headers: hubHeaders(jwt) });
-    const status = (await zoomJson(statusResponse, "transcript status"))["aicTranscript"];
-    if (!status["exist"] || !status["canAccess"]) {
-      const result2 = { ...base, transcript: "", state: status["exist"] ? "denied" : "missing" };
-      const markdown = [`# ${result2.title}`, "", `- Transcript state: ${result2.state}`, `- Recording ID: ${result2.recording_id}`, `- Meeting ID: ${result2.meeting_id}`, `- Main meeting ID: ${result2.main_meeting_id}`, `- Owner: ${result2.owner}`, `- Zoom document: ${result2.source_url}`].join("\n");
-      return Object.freeze({ title: result2.title, markdown, data: result2 });
-    }
-    const transcriptResponse = await zoomRequest(runtime2, jar, metadata, `https://us01docs.zoom.us/api/bridge/meeting/transcripts/v2?meetingId=${encodeURIComponent(meetingId)}&fileId=${encodeURIComponent(source.identifier)}`, { headers: hubHeaders(jwt) });
+    const transcriptResponse = await docsRequest(`https://us01docs.zoom.us/api/bridge/meeting/transcripts/v2?meetingId=${encodeURIComponent(meetingId)}&fileId=${encodeURIComponent(source.identifier)}`, (token) => ({ headers: hubHeaders(token) }));
     const raw = await zoomJson(transcriptResponse, "transcript");
     const speakers = raw["speakers"];
     const speakerMap = new Map(speakers.map((speaker) => [speaker["userId"], speaker["username"]]));
@@ -4313,15 +4537,15 @@ var zoomHubService = defineService({
   }
 });
 
-// ../provider-zoom/src/index.ts
+// packages/provider-zoom/src/index.ts
 var zoomProvider = Object.freeze({
   services: [zoomHubService]
 });
 
-// src/service-catalog.ts
+// packages/wire-vscode-extension/src/service-catalog.ts
 var serviceCatalog = createServiceRegistry().use(zoomProvider).use(notionProvider).use(slackProvider).use(chatgptProvider).use(googleDocsProvider).use(gmailProvider).use(asanaProvider).catalog();
 
-// src/extension.ts
+// packages/wire-vscode-extension/src/extension.ts
 var execFileAsync = (0, import_node_util.promisify)(import_node_child_process2.execFile);
 var authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"];
 var wireStatus;
@@ -4367,6 +4591,10 @@ function runtime() {
     gmailTokens: {
       load: () => createGoogleTokensCapability(filesystem, { request: (input, init) => fetch(input, init) }, clock, environment("GOOGLE_CREDENTIALS_FILE"), environment("GOOGLE_TOKEN_FILE")).load(),
       refresh: () => createGoogleTokensCapability(filesystem, { request: (input, init) => fetch(input, init) }, clock, environment("GOOGLE_CREDENTIALS_FILE"), environment("GOOGLE_TOKEN_FILE")).refresh()
+    },
+    googleFormsTokens: {
+      load: () => createGoogleTokensCapability(filesystem, { request: (input, init) => fetch(input, init) }, clock, environment("GOOGLE_CREDENTIALS_FILE"), environment("GOOGLE_FORMS_TOKEN_FILE")).load(),
+      refresh: () => createGoogleTokensCapability(filesystem, { request: (input, init) => fetch(input, init) }, clock, environment("GOOGLE_CREDENTIALS_FILE"), environment("GOOGLE_FORMS_TOKEN_FILE")).refresh()
     }
   };
 }
@@ -4414,7 +4642,7 @@ function wireError(error) {
   if (!(error instanceof Error)) return null;
   const login = /Run `([^`]+)`/.exec(error.message);
   if (login !== null) return { message: `Wire - Login required. Run in terminal: ${login[1]}`, command: login[1] };
-  const missingGoogle = /^Missing environment variable: (GOOGLE_CREDENTIALS_FILE|GOOGLE_TOKEN_FILE)$/.exec(error.message);
+  const missingGoogle = /^Missing environment variable: (GOOGLE_CREDENTIALS_FILE|GOOGLE_TOKEN_FILE|GOOGLE_FORMS_TOKEN_FILE)$/.exec(error.message);
   if (missingGoogle !== null) return { message: "Wire - Google login required. Run in terminal: wire google-docs login", command: "wire google-docs login" };
   const unregisteredPath = /^Resource path is not registered: ([\s\S]+)$/.exec(error.message);
   if (unregisteredPath !== null) return { message: `Wire - Not attached: ${unregisteredPath[1]}. Use Wire - Attach to track a source URL, or Wire - Download for a one-time copy.` };
@@ -4423,8 +4651,13 @@ function wireError(error) {
   const missingWorkspace = /^Wire workspace not initialized\. Run `wire init` or `wire <url>` first\.$/.exec(error.message);
   if (missingWorkspace !== null) return { message: "Wire - Workspace is not initialized. Use Wire - Attach to start tracking a source URL." };
   const unsupportedSource = /^Unsupported source URL: ([\s\S]+)$/.exec(error.message);
-  if (unsupportedSource !== null) return { message: `Wire - Unsupported source URL: ${unsupportedSource[1]}. Supported sources: Asana, ChatGPT, Gmail, Google Docs/Sheets/Slides, Notion, Slack, Zoom.` };
+  if (unsupportedSource !== null) return { message: `Wire - Unsupported source URL: ${unsupportedSource[1]}. Supported sources: Asana, ChatGPT, Gmail, Google Docs/Sheets/Slides/Forms, Notion, Slack, Zoom.` };
   return null;
+}
+async function displayWireError(display) {
+  setWireStatus("error");
+  const action = display.command === void 0 ? await vscode.window.showErrorMessage(display.message) : await vscode.window.showErrorMessage(display.message, "Copy command");
+  if (action === "Copy command") await vscode.env.clipboard.writeText(display.command);
 }
 function wireCommand(command) {
   return async (...args) => {
@@ -4433,9 +4666,7 @@ function wireCommand(command) {
     } catch (error) {
       const display = wireError(error);
       if (display === null) throw error;
-      setWireStatus("error");
-      const action = display.command === void 0 ? await vscode.window.showErrorMessage(display.message) : await vscode.window.showErrorMessage(display.message, "Copy command");
-      if (action === "Copy command") await vscode.env.clipboard.writeText(display.command);
+      await displayWireError(display);
     }
   };
 }
@@ -4463,6 +4694,18 @@ function resourceFile(uri) {
   const path = selectedPath(uri);
   if (!(0, import_node_fs3.statSync)(path).isFile()) throw new Error(`Expected file: ${path}`);
   return path;
+}
+function pathInsideDirectory(directory, path) {
+  const normalizedDirectory = (0, import_node_path4.resolve)(directory);
+  const normalizedPath = (0, import_node_path4.resolve)(path);
+  return normalizedPath === normalizedDirectory || normalizedPath.startsWith(`${normalizedDirectory}/`);
+}
+async function saveDocument(path) {
+  const document = vscode.workspace.textDocuments.find((candidate) => candidate.uri.scheme === "file" && candidate.uri.fsPath === path);
+  if (document !== void 0 && document.isDirty && !await document.save()) throw new Error(`Could not save ${path}`);
+}
+async function saveDirtyDocumentsInDirectory(directory) {
+  for (const document of vscode.workspace.textDocuments) if (document.uri.scheme === "file" && document.isDirty && pathInsideDirectory(directory, document.uri.fsPath) && !await document.save()) throw new Error(`Could not save ${document.uri.fsPath}`);
 }
 function title(resource) {
   return resource.data.find((item) => item.namespace === "wire" && item.key === "title").value;
@@ -4518,6 +4761,7 @@ async function previewUrl() {
 }
 async function syncFile(uri) {
   const path = resourceFile(uri);
+  await saveDocument(path);
   const result = await wireProgress("Syncing", () => wire().sync(path, (0, import_node_path4.dirname)(path)));
   await showWireResultStatus(result);
 }
@@ -4533,8 +4777,19 @@ async function openResource(uri) {
 }
 async function syncDirectory(uri) {
   const directory = selectedDirectory(uri);
+  await saveDirtyDocumentsInDirectory(directory);
   const results = await wireProgress("Syncing all", () => wire().syncAll(directory));
-  showWireStatus(`Wire - Synced ${results.length} resources`);
+  const failures = results.filter((result) => result.summary.action === "failed");
+  const synced = results.length - failures.length;
+  if (failures.length === 0) {
+    showWireStatus(`Wire - Synced ${synced} resources`);
+    return;
+  }
+  setWireStatus(`Wire - Synced ${synced}, failed ${failures.length}`);
+  const first = failures[0];
+  const display = wireError(new Error(first.summary.error));
+  if (display === null) await vscode.window.showErrorMessage(`Wire - Synced ${synced}, failed ${failures.length}. ${first.summary.error}`);
+  else await displayWireError({ ...display, message: `Wire - Synced ${synced}, failed ${failures.length}. ${display.message}` });
 }
 async function selectedAuthService() {
   const service = await vscode.window.showQuickPick([...authServices], { placeHolder: "Service" });
