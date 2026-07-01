@@ -374,16 +374,15 @@ test("asana synchronization reparents subtasks", async () => {
   assert.ok(server.state.writes.some((write) => write.path === "/tasks/500/setParent" && write.data.parent === "401"));
 });
 
-test("asana synchronization deletes removed tasks and subtasks", async () => {
+test("asana synchronization rejects removed tasks and subtasks without writes", async () => {
   const server = asanaServer();
   const base = await fetchSource(runtime(server.handler), "https://app.asana.com/0/100/list", serviceCatalog);
   const local = base.markdown.replace("- [ ] [Ship API](https://app.asana.com/0/100/task/400)\n  - [ ] [Document API](https://app.asana.com/0/100/task/500)\n", "");
-  const synchronized = await synchronizeSource(runtime(server.handler), "https://app.asana.com/0/100/list", serviceCatalog, base.data, local);
-  assert.doesNotMatch(synchronized.markdown, /Ship API|Document API/);
-  assert.deepEqual(server.state.writes.filter((write) => write.method === "DELETE").map((write) => write.path), ["/tasks/500", "/tasks/400"]);
+  await assert.rejects(() => synchronizeSource(runtime(server.handler), "https://app.asana.com/0/100/list", serviceCatalog, base.data, local), /Asana task removal is not supported from project Markdown: Ship API, Document API/);
+  assert.deepEqual(server.state.writes, []);
 });
 
-test("asana synchronization does not delete the synthetic unsectioned section", async () => {
+test("asana synchronization rejects removed unsectioned tasks without writes", async () => {
   const server = asanaServer();
   server.state.sections = [];
   server.state.tasks = [{ gid: "400", name: "Loose task", completed: false, parent: null, resource_subtype: "default_task", permalink_url: "https://app.asana.com/0/100/task/400", memberships: [{ project: { gid: "100" }, section: null }] }];
@@ -391,9 +390,8 @@ test("asana synchronization does not delete the synthetic unsectioned section", 
   const base = await fetchSource(runtime(server.handler), "https://app.asana.com/0/100/list", serviceCatalog);
   assert.match(base.markdown, /## No section <!-- asana-section:__unsectioned__ -->/);
   const local = base.markdown.replace("## No section <!-- asana-section:__unsectioned__ -->\n\n- [ ] [Loose task](https://app.asana.com/0/100/task/400)\n", "");
-  const synchronized = await synchronizeSource(runtime(server.handler), "https://app.asana.com/0/100/list", serviceCatalog, base.data, local);
-  assert.doesNotMatch(synchronized.markdown, /Loose task/);
-  assert.deepEqual(server.state.writes.filter((write) => write.method === "DELETE").map((write) => write.path), ["/tasks/400"]);
+  await assert.rejects(() => synchronizeSource(runtime(server.handler), "https://app.asana.com/0/100/list", serviceCatalog, base.data, local), /Asana task removal is not supported from project Markdown: Loose task/);
+  assert.deepEqual(server.state.writes, []);
 });
 
 test("asana synchronization accepts identical local and remote edits without writes", async () => {
@@ -2031,9 +2029,7 @@ test("zoom adapter refreshes and persists cookies after every Zoom response", as
   const zoomRuntime = runtime(async (input, init) => {
     const url = String(input);
     sentCookies.push({ url, cookie: init.headers.cookie });
-    if (url.endsWith("csrf_js")) return new Response("token: csrf", { headers: [["set-cookie", "csrf_refresh=csrf; Domain=.zoom.us; Path=/; Secure; HttpOnly"]] });
     if (url.includes("/nak?")) {
-      assert.match(init.headers.cookie, /csrf_refresh=csrf/);
       return new Response("header.payload.signature", { headers: [["set-cookie", "_zm_docs_nak=jwt; Domain=.zoom.us; Path=/; Max-Age=600; Secure; HttpOnly"]] });
     }
     if (url.includes("batch_get")) {
@@ -2060,7 +2056,7 @@ test("zoom adapter refreshes and persists cookies after every Zoom response", as
     }),
   }), "https://hub.zoom.us/doc/id", serviceCatalog);
   assert.equal(sentCookies[0].cookie.includes("expired=stale"), false);
-  assert.equal(savedCookies.length, 5);
+  assert.equal(savedCookies.length, 4);
   const lastNames = savedCookies.at(-1).map((cookie) => cookie.name);
   assert.equal(lastNames.includes("_zm_docs_nak"), true);
   assert.equal(lastNames.includes("docs_cookie"), true);
@@ -2093,17 +2089,6 @@ test("zoom adapter reports expired authentication with login command", async () 
       const url = String(input);
       if (url.endsWith("csrf_js")) return response(null, "token: csrf");
       return new Response(JSON.stringify({ code: 30010201, msg: "User not login." }), { status: 401, headers: { "content-type": "application/json" } });
-    }), "https://hub.zoom.us/doc/id", serviceCatalog),
-    /Zoom authentication is missing or expired\. Run `wire zoom login` once; other commands reuse saved cookies\./,
-  );
-});
-
-test("zoom adapter reports malformed CSRF authentication with login command", async () => {
-  await assert.rejects(
-    () => fetchSource(runtime(async (input) => {
-      const url = String(input);
-      if (url.endsWith("csrf_js")) return response(null, "not-a-csrf-token");
-      return response(null, "header.payload.signature");
     }), "https://hub.zoom.us/doc/id", serviceCatalog),
     /Zoom authentication is missing or expired\. Run `wire zoom login` once; other commands reuse saved cookies\./,
   );

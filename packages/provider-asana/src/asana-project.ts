@@ -159,6 +159,8 @@ async function deleteEntity(runtime: RuntimeCapabilities, entity: AsanaEntity): 
 }
 
 async function push(runtime: RuntimeCapabilities, document: AsanaDocument, changes: readonly AsanaChange[]): Promise<void> {
+  const destructiveDeletes = changes.filter((change) => change.operation === "delete" && (change.value as AsanaEntity).kind !== "section" && (change.value as AsanaEntity).kind !== "project").map((change) => change.value as AsanaEntity);
+  if (destructiveDeletes.length > 0) throw new Error(`Asana task removal is not supported from project Markdown: ${destructiveDeletes.map((entity) => entity.name).join(", ")}`);
   const entities = entityMap(document);
   const created = new Map<string, string>();
   for (const kind of ["section", "milestone", "task", "subtask"] as const) for (const change of changes) if (change.operation === "create" && (change.value as AsanaEntity).kind === kind) await createEntity(runtime, document, change.value as AsanaEntity, entities, created);
