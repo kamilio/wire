@@ -60,7 +60,13 @@ export const slackService = defineService({
         const metadata = await runtime.cookies.metadata("slack");
         const origin = new URL(url).hostname === "app.slack.com" ? metadata["origin"] : new URL(url).origin;
         const token = metadata["token"];
-        const response = await api(runtime, origin, token, cookie, "conversations.replies", { channel: source["channel_id"], ts: source["thread_timestamp"], limit: "999" });
+        const replies = [];
+        let cursor;
+        do {
+            const response = await api(runtime, origin, token, cookie, "conversations.replies", { channel: source["channel_id"], ts: source["thread_timestamp"], limit: "999", ...(cursor === undefined ? {} : { cursor }) });
+            replies.push(...response["messages"]);
+            cursor = response["response_metadata"]?.["next_cursor"];
+        } while (cursor !== undefined && cursor !== "");
         const userCache = new Map();
         const botCache = new Map();
         const resolveUser = async (id) => {
@@ -75,7 +81,7 @@ export const slackService = defineService({
             return userCache.get(id);
         };
         const messages = [];
-        for (const raw of response["messages"]) {
+        for (const raw of replies) {
             const userId = raw["user"];
             let userName;
             if (userId !== undefined)
@@ -92,17 +98,18 @@ export const slackService = defineService({
             }
             else
                 userName = "unknown";
-            let text = raw["text"];
+            const text = raw["text"];
             const files = raw["files"] === undefined ? [] : raw["files"].map((file) => Object.freeze({ name: file["name"], url: file["url_private"] }));
-            if (text.trim() === "" && files.length > 0)
-                text = files.map((file) => `- [${markdownLinkLabel(file.name)}](${file.url})`).join("\n");
             messages.push({ ts: raw["ts"], user_id: userId ?? "unknown", user_name: userName, text, files });
         }
         const mentioned = new Set(messages.flatMap((message) => [...message.text.matchAll(/<@([A-Z0-9]+)(?:\|[^>]+)?>/g)].map((match) => match[1])));
         for (const id of mentioned)
             await resolveUser(id);
-        for (const message of messages)
-            message.text = cleanText(message.text.replace(/<@([A-Z0-9]+)(?:\|[^>]+)?>/g, (_match, id) => `@${userCache.get(id)}`)).replace(/```([^\n])/g, "```\n$1").replace(/([^\n])```/g, "$1\n```");
+        for (const message of messages) {
+            const cleaned = cleanText(message.text.replace(/<@([A-Z0-9]+)(?:\|[^>]+)?>/g, (_match, id) => `@${userCache.get(id)}`)).replace(/```([^\n])/g, "```\n$1").replace(/([^\n])```/g, "$1\n```");
+            const fileLines = message.files.map((file) => `- [${markdownLinkLabel(file.name)}](${file.url})`).join("\n");
+            message.text = cleaned.trim() === "" ? fileLines : fileLines === "" ? cleaned : `${cleaned}\n\n${fileLines}`;
+        }
         const timezone = runtime.clock.localTimezone();
         const date = formatTimestamp(messages[0].ts, timezone).slice(0, 10);
         const titleText = messages[0].text.replace(/https?:\/\/\S+/g, "").slice(0, 30).replace(/[^\p{L}\p{N}_\s-]/gu, "").replace(/[\s-]+/g, "_").replace(/^_+|_+$/g, "");

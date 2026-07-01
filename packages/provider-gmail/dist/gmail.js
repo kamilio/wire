@@ -11,6 +11,10 @@ function stripTags(html) {
 function htmlText(html) {
     return entities(html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<a\b[^>]*\bhref=(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi, (_match, _quote, href, label) => `[${entities(stripTags(label)).trim()}](${entities(href)})`).replace(/<(?:br|\/p|\/div|\/li|\/tr|\/h[1-6])\b[^>]*>/gi, "\n").replace(/<[^>]+>/g, "")).split("\n").map((line) => line.trim()).filter((line) => line !== "").join("\n");
 }
+function attachmentLine(payload) {
+    const body = payload["body"];
+    return `- Attachment: ${payload["filename"]} (${payload["mimeType"]}, ${body["size"]} bytes)`;
+}
 function body(payload) {
     const mimeType = payload["mimeType"];
     if (mimeType === "text/plain")
@@ -18,7 +22,7 @@ function body(payload) {
     if (mimeType === "text/html")
         return htmlText(decode(payload["body"]["data"]));
     if (payload["parts"] === undefined)
-        return "";
+        return attachmentLine(payload);
     const parts = payload["parts"];
     if (mimeType === "multipart/alternative") {
         const plain = parts.find((part) => part["mimeType"] === "text/plain");
@@ -30,7 +34,7 @@ function body(payload) {
         if (plain !== undefined)
             return body(plain);
     }
-    return parts.filter((part) => part["mimeType"] !== "application/octet-stream").map(body).join("\n");
+    return parts.map(body).filter((value) => value !== "").join("\n");
 }
 function threadIdentifier(url) {
     const fragmentPath = url.hash.slice(1).split("?")[0];

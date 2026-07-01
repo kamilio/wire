@@ -18,11 +18,16 @@ function htmlText(html: string): string {
   return entities(html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<a\b[^>]*\bhref=(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi, (_match, _quote: string, href: string, label: string) => `[${entities(stripTags(label)).trim()}](${entities(href)})`).replace(/<(?:br|\/p|\/div|\/li|\/tr|\/h[1-6])\b[^>]*>/gi, "\n").replace(/<[^>]+>/g, "")).split("\n").map((line) => line.trim()).filter((line) => line !== "").join("\n");
 }
 
+function attachmentLine(payload: JsonObject): string {
+  const body = payload["body"] as JsonObject;
+  return `- Attachment: ${payload["filename"] as string} (${payload["mimeType"] as string}, ${body["size"] as number} bytes)`;
+}
+
 function body(payload: JsonObject): string {
   const mimeType = payload["mimeType"] as string;
   if (mimeType === "text/plain") return decode((payload["body"] as JsonObject)["data"] as string);
   if (mimeType === "text/html") return htmlText(decode((payload["body"] as JsonObject)["data"] as string));
-  if (payload["parts"] === undefined) return "";
+  if (payload["parts"] === undefined) return attachmentLine(payload);
   const parts = payload["parts"] as readonly JsonObject[];
   if (mimeType === "multipart/alternative") {
     const plain = parts.find((part) => part["mimeType"] === "text/plain");
@@ -31,7 +36,7 @@ function body(payload: JsonObject): string {
     if (html !== undefined) return body(html);
     if (plain !== undefined) return body(plain);
   }
-  return parts.filter((part) => part["mimeType"] !== "application/octet-stream").map(body).join("\n");
+  return parts.map(body).filter((value) => value !== "").join("\n");
 }
 
 function threadIdentifier(url: URL): string | undefined {

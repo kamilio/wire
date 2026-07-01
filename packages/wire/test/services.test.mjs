@@ -430,12 +430,12 @@ test("gmail adapter falls back from empty plain alternatives to linked HTML", as
   assert.equal(document.markdown, "# Subject\n\n- Source: https://mail.google.com/mail/u/0/#inbox/thread\n- Thread ID: thread\n\n## A — Today\n\nOpen [reset password](https://example.com/reset)\n");
 });
 
-test("gmail adapter skips inline image MIME leaves", async () => {
+test("gmail adapter renders non-text MIME leaves as attachments", async () => {
   const html = Buffer.from("<p>Hello</p>").toString("base64url");
   const document = await fetchSource(runtime(async () => response({ messages: [
-    { id: "1", payload: { headers: [{ name: "From", value: "A" }, { name: "To", value: "B" }, { name: "Date", value: "Today" }, { name: "Subject", value: "Subject" }], mimeType: "multipart/mixed", parts: [{ mimeType: "text/html", body: { data: html } }, { mimeType: "image/png", body: { attachmentId: "inline" } }] } },
+    { id: "1", payload: { headers: [{ name: "From", value: "A" }, { name: "To", value: "B" }, { name: "Date", value: "Today" }, { name: "Subject", value: "Subject" }], mimeType: "multipart/mixed", parts: [{ mimeType: "text/html", body: { data: html } }, { filename: "image.png", mimeType: "image/png", body: { attachmentId: "inline", size: 1234 } }] } },
   ] })), "https://mail.google.com/mail/u/0/#inbox/thread", serviceCatalog);
-  assert.equal(document.markdown, "# Subject\n\n- Source: https://mail.google.com/mail/u/0/#inbox/thread\n- Thread ID: thread\n\n## A — Today\n\n**To:** B\n\nHello\n");
+  assert.equal(document.markdown, "# Subject\n\n- Source: https://mail.google.com/mail/u/0/#inbox/thread\n- Thread ID: thread\n\n## A — Today\n\n**To:** B\n\nHello\n- Attachment: image.png (image/png, 1234 bytes)\n");
 });
 
 test("gmail adapter reports API errors before reading thread messages", async () => {
@@ -494,6 +494,34 @@ test("slack adapter renders file-only messages with file metadata", async () => 
   }), "https://quora.slack.com/archives/C1/p1781107577334469", serviceCatalog);
   assert.equal(document.markdown, "## Kamil — 2026-06-10 16:06\n\n- [spec.pdf](https://files.slack.com/spec.pdf)\n");
   assert.deepEqual(document.data.messages[0].files, [{ name: "spec.pdf", url: "https://files.slack.com/spec.pdf" }]);
+});
+
+test("slack adapter renders file links after message text", async () => {
+  const document = await fetchSource(runtime(async (input, init) => {
+    const method = String(input).split("/api/")[1];
+    if (method === "conversations.replies") return response({ messages: [{ ts: "1781107577.334469", user: "U1", text: "Here is the deck", files: [{ name: "deck.pdf", url_private: "https://files.slack.com/deck.pdf" }] }] });
+    if (method === "users.info") return response({ user: { name: "kamil", profile: { real_name: "Kamil" } } });
+    throw new Error(method);
+  }), "https://quora.slack.com/archives/C1/p1781107577334469", serviceCatalog);
+  assert.equal(document.markdown, "## Kamil — 2026-06-10 16:06\n\nHere is the deck\n\n- [deck.pdf](https://files.slack.com/deck.pdf)\n");
+});
+
+test("slack adapter follows reply pagination", async () => {
+  const seenCursors = [];
+  const document = await fetchSource(runtime(async (input, init) => {
+    const body = new URLSearchParams(String(init.body));
+    const method = String(input).split("/api/")[1];
+    if (method === "conversations.replies") {
+      seenCursors.push(body.get("cursor"));
+      if (body.get("cursor") === null) return response({ messages: [{ ts: "1781107577.334469", user: "U1", text: "First" }], response_metadata: { next_cursor: "next-page" } });
+      return response({ messages: [{ ts: "1781107580.000000", user: "U1", text: "Second" }], response_metadata: { next_cursor: "" } });
+    }
+    if (method === "users.info") return response({ user: { name: "kamil", profile: { real_name: "Kamil" } } });
+    throw new Error(method);
+  }), "https://quora.slack.com/archives/C1/p1781107577334469", serviceCatalog);
+  assert.deepEqual(seenCursors, [null, "next-page"]);
+  assert.match(document.markdown, /First/);
+  assert.match(document.markdown, /Second/);
 });
 
 test("slack adapter escapes link labels with brackets", async () => {
