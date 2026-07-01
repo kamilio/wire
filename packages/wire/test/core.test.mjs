@@ -32,6 +32,8 @@ const sourceCases = [
   ["https://docs.google.com/spreadsheets/d/sheet-id/edit?resourcekey=&gid=9#gid=9", { service: "google-docs", identifier: "sheet-id#gid=9", type: "spreadsheet", document_id: "sheet-id", sheet_gid: "9" }],
   ["https://docs.google.com/spreadsheets/d/sheet-id/edit?resourcekey=sheet-key&gid=9", { service: "google-docs", identifier: "sheet-id#gid=9", type: "spreadsheet", document_id: "sheet-id", sheet_gid: "9", resource_key: "sheet-key" }],
   ["https://docs.google.com/spreadsheets/d/sheet-id/edit#gid=9&resourcekey=sheet-key", { service: "google-docs", identifier: "sheet-id#gid=9", type: "spreadsheet", document_id: "sheet-id", sheet_gid: "9", resource_key: "sheet-key" }],
+  ["https://docs.google.com/forms/d/form-id/edit", { service: "google-forms", identifier: "form-id", type: "form" }],
+  ["https://docs.google.com/forms/u/0/d/form-id/edit", { service: "google-forms", identifier: "form-id", type: "form" }],
   ["https://mail.google.com/mail/u/0/#inbox/thread-id", { service: "gmail", identifier: "thread-id", type: "email-thread" }],
   ["https://mail.google.com/mail/u/0/#all/thread-id", { service: "gmail", identifier: "thread-id", type: "email-thread" }],
   ["https://mail.google.com/mail/u/0/#search/query/thread-id?projector=1", { service: "gmail", identifier: "thread-id", type: "email-thread" }],

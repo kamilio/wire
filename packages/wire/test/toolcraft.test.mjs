@@ -747,8 +747,8 @@ test("CLI init conflict errors are user-facing", async () => {
 test("CLI operation user errors honor JSON output", async () => {
   for (const [args, expected, env] of [
     [["sync", "missing.md", "--json"], jsonError("resource not found\npath: missing.md"), { WIRE_FAKE_SYNC_ERROR: "Resource path not found: missing.md" }],
-    [["download", "https://example.com", "--output", "json"], jsonError("unsupported source\nurl: https://example.com/\nsupported: Asana, ChatGPT, Gmail, Google Docs/Sheets, Notion, Slack, Zoom"), { WIRE_FAKE_DOWNLOAD_ERROR: "Unsupported source URL: https://example.com/" }],
-    [["preview", "https://example.com", "--json"], jsonError("unsupported source\nurl: https://example.com/\nsupported: Asana, ChatGPT, Gmail, Google Docs/Sheets, Notion, Slack, Zoom"), { WIRE_FAKE_PREVIEW_ERROR: "Unsupported source URL: https://example.com/" }],
+    [["download", "https://example.com", "--output", "json"], jsonError("unsupported source\nurl: https://example.com/\nsupported: Asana, ChatGPT, Gmail, Google Docs/Sheets/Slides/Forms, Notion, Slack, Zoom"), { WIRE_FAKE_DOWNLOAD_ERROR: "Unsupported source URL: https://example.com/" }],
+    [["preview", "https://example.com", "--json"], jsonError("unsupported source\nurl: https://example.com/\nsupported: Asana, ChatGPT, Gmail, Google Docs/Sheets/Slides/Forms, Notion, Slack, Zoom"), { WIRE_FAKE_PREVIEW_ERROR: "Unsupported source URL: https://example.com/" }],
     [["sync", "ambiguous.md", "--json"], jsonError("ambiguous resource\npath: ambiguous.md\nmatches: notion:one, notion:two\nuse: resource id or URL"), { WIRE_FAKE_SYNC_ERROR: "Ambiguous resource path ambiguous.md: notion:one, notion:two. Use a resource id or URL." }],
     [["google-docs", "status", "--json"], jsonError("login required\nservice: Google Docs/Sheets\nrun: wire google-docs login"), { WIRE_FAKE_AUTH_STATUS_ERROR: "google-docs cookie authentication is missing or expired. Run `wire google-docs login` once; other commands reuse saved cookies." }],
     [["sync", "Document.md", "--json"], jsonError("download failed\nservice: ChatGPT\nlogin: wire chatgpt login\ndetail: forbidden"), { WIRE_FAKE_SYNC_ERROR: "ChatGPT conversation download failed. Run `wire chatgpt login`. forbidden" }],
@@ -756,6 +756,8 @@ test("CLI operation user errors honor JSON output", async () => {
     [["sync", "Document.md", "--json"], jsonError("save failed\nservice: Google Docs/Sheets\nsource: Google Sheets\ndetail: unexpected response"), { WIRE_FAKE_SYNC_ERROR: "Google Sheets save failed: unexpected response" }],
     [["sync", "Document.md", "--json"], jsonError("sync conflict\nservice: Google Docs/Sheets\nsource: Google Docs\nresolve: edit Google Docs or local Markdown, then sync again"), { WIRE_FAKE_SYNC_ERROR: "Google Docs changed remotely and locally. Resolve the conflict in Google Docs or the local Markdown file before syncing again." }],
     [["sync", "Document.md", "--json"], jsonError("formula-like cell blocked\nservice: Google Docs/Sheets\nsource: Google Sheets\ncell: row 2, column 2\nresolve: prefix with an apostrophe or rewrite as plain text"), { WIRE_FAKE_SYNC_ERROR: "Google Sheets sync cannot upload formula-like cell text at row 2, column 2\nPrefix it with an apostrophe or rewrite it as plain text before syncing." }],
+    [["sync", "Document.md", "--json"], jsonError("api disabled\nservice: Google Forms\nenable: https://console.developers.google.com/apis/api/forms.googleapis.com/overview?project=917071888555\nretry: wire <form-url>"), { WIRE_FAKE_SYNC_ERROR: "Google Forms API is disabled. Enable it at https://console.developers.google.com/apis/api/forms.googleapis.com/overview?project=917071888555 then retry." }],
+    [["sync", "Document.md", "--json"], jsonError("login invalid\nservice: Google Forms\ntoken: GOOGLE_FORMS_TOKEN_FILE\nscopes: forms.body, forms.responses.readonly"), { WIRE_FAKE_SYNC_ERROR: "Google Forms API token is missing required scopes. Regenerate GOOGLE_FORMS_TOKEN_FILE with forms.body and forms.responses.readonly scopes." }],
     [["sync", "Document.md", "--json"], jsonError("api failed\nservice: Slack\nmethod: conversations.replies\ndetail: channel_not_found"), { WIRE_FAKE_SYNC_ERROR: "Slack API conversations.replies failed: channel_not_found" }],
     [["sync", "Document.md", "--json"], jsonError("api failed\nservice: Zoom\noperation: file batch_get\nstatus: HTTP 403\ndetail: {\"error\":\"denied\"}"), { WIRE_FAKE_SYNC_ERROR: "Zoom Hub file batch_get failed: HTTP 403 {\"error\":\"denied\"}" }],
     [["sync", "Document.md", "--json"], jsonError("local markdown invalid\nservice: Asana\nline: 4\ndetail: not a task"), { WIRE_FAKE_SYNC_ERROR: "Unsupported Asana Markdown at line 4: not a task" }],
@@ -764,6 +766,20 @@ test("CLI operation user errors honor JSON output", async () => {
     [["init", "--backend", "files", "--json"], jsonError("workspace already initialized\nbackend: sqlite\nregistry: registry.sqlite3\nkept: existing registry"), { WIRE_FAKE_INIT_ERROR: "Wire workspace already initialized with sqlite registry at registry.sqlite3. Existing registries are not overwritten." }],
   ]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1", ...env } }),
+    (error) => {
+      assert.deepEqual(JSON.parse(error.stdout), expected);
+      assert.equal(error.stderr, "");
+      return true;
+    },
+  );
+});
+
+test("CLI Google Forms API errors honor JSON output", async () => {
+  for (const [expected, env] of [
+    [jsonError("api disabled\nservice: Google Forms\nenable: https://console.developers.google.com/apis/api/forms.googleapis.com/overview?project=917071888555\nretry: wire <form-url>"), { WIRE_FAKE_SYNC_ERROR: "Google Forms API is disabled. Enable it at https://console.developers.google.com/apis/api/forms.googleapis.com/overview?project=917071888555 then retry." }],
+    [jsonError("login invalid\nservice: Google Forms\ntoken: GOOGLE_FORMS_TOKEN_FILE\nscopes: forms.body, forms.responses.readonly"), { WIRE_FAKE_SYNC_ERROR: "Google Forms API token is missing required scopes. Regenerate GOOGLE_FORMS_TOKEN_FILE with forms.body and forms.responses.readonly scopes." }],
+  ]) await assert.rejects(
+    () => execFileAsync(process.execPath, [fixture, "sync", "Document.md", "--json"], { env: { ...process.env, NO_COLOR: "1", ...env } }),
     (error) => {
       assert.deepEqual(JSON.parse(error.stdout), expected);
       assert.equal(error.stderr, "");
@@ -1713,7 +1729,7 @@ test("CLI unsupported source URLs are user-facing", async (t) => {
     (error) => {
       assert.match(error.stdout, /unsupported source/);
       assert.match(error.stdout, /url: https:\/\/example\.com\/not-supported/);
-      assert.match(error.stdout, /supported: Asana, ChatGPT, Gmail, Google Docs\/Sheets, Notion, Slack, Zoom/);
+      assert.match(error.stdout, /supported: Asana, ChatGPT, Gmail, Google Docs\/Sheets\/Slides\/Forms, Notion, Slack, Zoom/);
       assert.doesNotMatch(error.stdout, /for usage/);
       assert.doesNotMatch(error.stdout, /Use --debug/);
       assert.equal(error.stderr, "");

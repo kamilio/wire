@@ -391,10 +391,11 @@ test("composeNodeRuntime wires cookies from HOME and Gmail token paths from exac
   const files = {
     "/home/.wire/auth/slack_cookies.txt": ".slack.com\tTRUE\t/\tTRUE\t0\td\tv\n",
     "/gmail-token.json": JSON.stringify({ token: "gmail-access", refresh_token: "refresh", token_uri: "uri", expiry: "2026-06-10T13:00:00.000Z" }),
+    "/forms-token.json": JSON.stringify({ token: "forms-access", refresh_token: "refresh", token_uri: "uri", expiry: "2026-06-10T13:00:00.000Z" }),
   };
   const reads = [];
   const runtime = composeNodeRuntime({
-    environment: { HOME: "/home", GOOGLE_CREDENTIALS_FILE: "/credentials.json", GOOGLE_TOKEN_FILE: "/gmail-token.json" },
+    environment: { HOME: "/home", GOOGLE_CREDENTIALS_FILE: "/credentials.json", GOOGLE_TOKEN_FILE: "/gmail-token.json", GOOGLE_FORMS_TOKEN_FILE: "/forms-token.json" },
     http: { request: async () => new Response() },
     filesystem: { exists: async (path) => path in files, readText: async (path) => { reads.push(path); return files[path]; }, writeText: async () => {}, delete: async () => {} },
     process: { execute: async () => ({ stdout: "secret", stderr: "" }) },
@@ -402,7 +403,8 @@ test("composeNodeRuntime wires cookies from HOME and Gmail token paths from exac
   });
   assert.equal((await runtime.cookies.load("slack"))[0].name, "d");
   assert.equal((await runtime.gmailTokens.load()).token, "gmail-access");
-  assert.deepEqual(reads, ["/home/.wire/auth/slack_cookies.txt", "/gmail-token.json"]);
+  assert.equal((await runtime.googleFormsTokens.load()).token, "forms-access");
+  assert.deepEqual(reads, ["/home/.wire/auth/slack_cookies.txt", "/gmail-token.json", "/forms-token.json"]);
   assert.ok(Object.isFrozen(runtime));
 });
 
@@ -418,6 +420,7 @@ test("composeNodeRuntime defers Google configuration until token load", async ()
   await assert.rejects(async () => { await runtime.gmailTokens.load(); }, /Missing required environment variable: GOOGLE_CREDENTIALS_FILE/);
   const missingToken = composeNodeRuntime({ ...dependencies, environment: { GOOGLE_CREDENTIALS_FILE: "/credentials.json" } });
   await assert.rejects(async () => { await missingToken.gmailTokens.load(); }, /Missing required environment variable: GOOGLE_TOKEN_FILE/);
+  await assert.rejects(async () => { await missingToken.googleFormsTokens.load(); }, /Missing required environment variable: GOOGLE_FORMS_TOKEN_FILE/);
 });
 
 test("live repository Google token parses without exposing values", async (context) => {

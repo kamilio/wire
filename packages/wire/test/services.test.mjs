@@ -3,8 +3,8 @@ import test from "node:test";
 import { createCookiesCapability, fetchSource, markdownFilename, parseSourceUrl, synchronizeSource } from "../dist/index.js";
 import { serviceCatalog } from "../dist/index.js";
 
-function response(value, text) {
-  return new Response(text ?? JSON.stringify(value), { headers: { "content-type": "application/json" } });
+function response(value, text, init = {}) {
+  return new Response(text ?? JSON.stringify(value), { ...init, headers: { "content-type": "application/json", ...init.headers } });
 }
 
 function exportResponse(title, extension, text) {
@@ -102,6 +102,7 @@ function runtime(handler) {
     })[reference] }),
     cookies: Object.freeze({ load: async (service) => service === "asana" ? [{ name: "ticket", value: "session" }] : service === "zoom" ? [testCookie("zm_aid", "account", ".zoom.us"), testCookie("_zm_ssid", "session", ".zoom.us")] : service === "chatgpt" ? [{ name: "oai-did", value: "device" }, { name: "__Secure-next-auth.session-token", value: "session" }] : service === "google-docs" ? [{ name: "SID", value: "google-session" }] : [{ name: "notion_user_id", value: "user" }], loadSaved: async (service) => service === "asana" ? [{ name: "ticket", value: "session" }] : service === "zoom" ? [testCookie("zm_aid", "account", ".zoom.us"), testCookie("_zm_ssid", "session", ".zoom.us")] : service === "chatgpt" ? [{ name: "oai-did", value: "device" }, { name: "__Secure-next-auth.session-token", value: "session" }] : service === "google-docs" ? [{ name: "SID", value: "google-session" }] : [{ name: "notion_user_id", value: "user" }], metadata: async () => Object.freeze({ token: "xoxc-token" }), save: async () => {}, delete: async () => {} }),
     gmailTokens: Object.freeze({ load: async () => ({ token: "google-token", refresh_token: "refresh", token_uri: "token-uri" }), refresh: async () => ({ token: "google-token", refresh_token: "refresh", token_uri: "token-uri" }) }),
+    googleFormsTokens: Object.freeze({ load: async () => ({ token: "forms-token", refresh_token: "refresh", token_uri: "token-uri" }), refresh: async () => ({ token: "forms-token", refresh_token: "refresh", token_uri: "token-uri" }) }),
   });
 }
 
@@ -659,6 +660,56 @@ test("google docs adapter points login HTML exports to login", async () => {
   await assert.rejects(
     () => fetchSource(runtime(async () => new Response("<html>Sign in</html>", { headers: { "content-type": "text/html" } })), "https://docs.google.com/document/d/doc/edit", serviceCatalog),
     /google-docs cookie authentication is missing or expired\. Run `wire google-docs login` once; other commands reuse saved cookies\./,
+  );
+});
+
+test("google forms adapter reads form questions and responses", async () => {
+  const requests = [];
+  const headers = [];
+  const document = await fetchSource(runtime(async (input, init) => {
+    requests.push(String(input));
+    headers.push(init.headers);
+    const url = new URL(String(input));
+    if (url.pathname === "/v1/forms/form-id") return response({
+      formId: "form-id",
+      info: { title: "Feedback Form" },
+      responderUri: "https://docs.google.com/forms/d/e/public/viewform",
+      publishSettings: { publishState: { isPublished: true, isAcceptingResponses: true } },
+      items: [
+        { itemId: "item-1", title: "What went well?", questionItem: { question: { questionId: "q1", textQuestion: { paragraph: true } } } },
+        { itemId: "item-2", title: "Score", questionItem: { question: { questionId: "q2", scaleQuestion: { low: 1, high: 10, lowLabel: "Low", highLabel: "High" } } } },
+      ],
+    });
+    if (url.pathname === "/v1/forms/form-id/responses") return response({
+      responses: [{ responseId: "r1", createTime: "2026-07-01T12:00:00Z", lastSubmittedTime: "2026-07-01T12:01:00Z", answers: { q1: { textAnswers: { answers: [{ value: "Strong execution" }] } }, q2: { textAnswers: { answers: [{ value: "9" }] } } } }],
+    });
+    throw new Error(String(input));
+  }), "https://docs.google.com/forms/d/form-id/edit", serviceCatalog);
+  assert.equal(document.title, "Feedback Form");
+  assert.equal(document.markdown, "# Feedback Form\n\n- Form ID: form-id\n- Edit: https://docs.google.com/forms/d/form-id/edit\n- Responder: https://docs.google.com/forms/d/e/public/viewform\n- Published: true\n- Accepting responses: true\n\n## Items\n- What went well?\n  - itemId: item-1\n  - questionId: q1\n  - type: paragraph\n- Score\n  - itemId: item-2\n  - questionId: q2\n  - type: scale\n  - range: 1 to 10\n  - lowLabel: Low\n  - highLabel: High\n\n## Responses\n\nResponse count: 1\n\n### r1\n- Created: 2026-07-01T12:00:00Z\n- Submitted: 2026-07-01T12:01:00Z\n- q1: Strong execution\n- q2: 9\n");
+  assert.deepEqual(requests, ["https://forms.googleapis.com/v1/forms/form-id", "https://forms.googleapis.com/v1/forms/form-id/responses"]);
+  assert.equal(headers[0].authorization, "Bearer forms-token");
+  assert.equal(document.data.responses.length, 1);
+});
+
+test("google forms adapter reports disabled API with enable URL", async () => {
+  await assert.rejects(
+    () => fetchSource(runtime(async () => response({ error: { code: 403, message: "Google Forms API has not been used", status: "PERMISSION_DENIED", details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "SERVICE_DISABLED", domain: "googleapis.com", metadata: { service: "forms.googleapis.com", containerInfo: "917071888555", activationUrl: "https://console.developers.google.com/apis/api/forms.googleapis.com/overview?project=917071888555" } }] } }, undefined, { status: 403 })), "https://docs.google.com/forms/d/form-id/edit", serviceCatalog),
+    /Google Forms API is disabled\. Enable it at https:\/\/console\.developers\.google\.com\/apis\/api\/forms\.googleapis\.com\/overview\?project=917071888555 then retry\./,
+  );
+});
+
+test("google forms adapter reports missing token scopes", async () => {
+  await assert.rejects(
+    () => fetchSource(runtime(async () => response({ error: { code: 403, message: "Request had insufficient authentication scopes.", status: "PERMISSION_DENIED" } }, undefined, { status: 403 })), "https://docs.google.com/forms/d/form-id/edit", serviceCatalog),
+    /Google Forms API token is missing required scopes/,
+  );
+});
+
+test("google forms adapter is download-only", async () => {
+  await assert.rejects(
+    () => synchronizeSource(runtime(async () => response({ formId: "form-id", info: { title: "Feedback Form" } })), "https://docs.google.com/forms/d/form-id/edit", serviceCatalog, { markdown: "# Feedback Form\n" }, "# Local\n", "/workspace/form.md"),
+    /Google Forms sync is download-only/,
   );
 });
 
@@ -2138,5 +2189,6 @@ test("notion fetch renders canonical advanced Markdown", async () => {
 test("catalog source values remain registry-compatible", () => {
   assert.deepEqual(parseSourceUrl("https://docs.google.com/spreadsheets/d/id/edit#gid=1", serviceCatalog), { service: "google-docs", identifier: "id#gid=1", type: "spreadsheet", document_id: "id", sheet_gid: "1" });
   assert.deepEqual(parseSourceUrl("https://docs.google.com/presentation/d/id/edit", serviceCatalog), { service: "google-docs", identifier: "id", type: "presentation" });
+  assert.deepEqual(parseSourceUrl("https://docs.google.com/forms/d/id/edit", serviceCatalog), { service: "google-forms", identifier: "id", type: "form" });
   for (const service of serviceCatalog) assert.equal(Object.isFrozen(service), true);
 });

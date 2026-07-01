@@ -100,6 +100,10 @@ export function composeNodeRuntime(dependencies: NodeRuntimeDependencies): Runti
       load: () => createGoogleTokensCapability(dependencies.filesystem, dependencies.http, dependencies.clock, configuration.get("GOOGLE_CREDENTIALS_FILE"), configuration.get("GOOGLE_TOKEN_FILE")).load(),
       refresh: () => createGoogleTokensCapability(dependencies.filesystem, dependencies.http, dependencies.clock, configuration.get("GOOGLE_CREDENTIALS_FILE"), configuration.get("GOOGLE_TOKEN_FILE")).refresh(),
     }),
+    googleFormsTokens: Object.freeze({
+      load: () => createGoogleTokensCapability(dependencies.filesystem, dependencies.http, dependencies.clock, configuration.get("GOOGLE_CREDENTIALS_FILE"), configuration.get("GOOGLE_FORMS_TOKEN_FILE")).load(),
+      refresh: () => createGoogleTokensCapability(dependencies.filesystem, dependencies.http, dependencies.clock, configuration.get("GOOGLE_CREDENTIALS_FILE"), configuration.get("GOOGLE_FORMS_TOKEN_FILE")).refresh(),
+    }),
   });
 }
 

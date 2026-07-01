@@ -134,4 +134,5 @@ export interface RuntimeCapabilities {
   readonly secrets: SecretsCapability;
   readonly cookies: CookiesCapability;
   readonly gmailTokens: GoogleTokensCapability;
+  readonly googleFormsTokens: GoogleTokensCapability;
 }

@@ -39,7 +39,7 @@ wire detach <resource>   # download once, then stop tracking it
 
 ## Services
 
-Wire supports Notion, Google Docs/Sheets/Slides, Slack, Gmail, Asana, ChatGPT, and Zoom.
+Wire supports Notion, Google Docs/Sheets/Slides/Forms, Slack, Gmail, Asana, ChatGPT, and Zoom.
 
 ```sh
 wire notion login

@@ -11,6 +11,7 @@ const configured = {
   slack: environment.WIRE_LIVE_SLACK_URL,
   "google-docs-document": environment.WIRE_LIVE_GOOGLE_DOCS_URL,
   "google-docs-sheet": environment.WIRE_LIVE_GOOGLE_SHEETS_URL,
+  "google-forms": environment.WIRE_LIVE_GOOGLE_FORMS_URL,
   gmail: environment.WIRE_LIVE_GMAIL_URL,
   "asana-task": environment.WIRE_LIVE_ASANA_TASK_URL,
   "asana-project": environment.WIRE_LIVE_ASANA_PROJECT_URL,

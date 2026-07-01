@@ -71,6 +71,7 @@ export function createExecutableRoot(environment: NodeEnvironment, currentDirect
     configuration,
     secrets: createNodeSecrets(filesystem, resolvedEnvironment),
     gmailTokens: Object.freeze({ load: () => createGoogleTokensCapability(filesystem, http, clock, configuration.get("GOOGLE_CREDENTIALS_FILE"), configuration.get("GOOGLE_TOKEN_FILE")).load(), refresh: () => createGoogleTokensCapability(filesystem, http, clock, configuration.get("GOOGLE_CREDENTIALS_FILE"), configuration.get("GOOGLE_TOKEN_FILE")).refresh() }),
+    googleFormsTokens: Object.freeze({ load: () => createGoogleTokensCapability(filesystem, http, clock, configuration.get("GOOGLE_CREDENTIALS_FILE"), configuration.get("GOOGLE_FORMS_TOKEN_FILE")).load(), refresh: () => createGoogleTokensCapability(filesystem, http, clock, configuration.get("GOOGLE_CREDENTIALS_FILE"), configuration.get("GOOGLE_FORMS_TOKEN_FILE")).refresh() }),
   };
   let auth: ReturnType<typeof composeAuth>;
   const runtime = Object.freeze({ ...runtimeBase, cookies: createCookiesCapability(filesystem, () => home, () => resolvedEnvironment["WIRE_REPOSITORY_ROOT"]) });
