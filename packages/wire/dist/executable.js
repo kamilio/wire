@@ -50,7 +50,7 @@ function loadConfiguredEnvironment(environment, currentDirectory) {
     const config = JSON.parse(readFileSync(join(wireRoot, "config.json"), "utf8"));
     return config.env === undefined ? environment : Object.freeze({ ...environment, ...config.env });
 }
-export function createExecutableRoot(environment, currentDirectory) {
+export function createExecutableRoot(environment, currentDirectory, options = { allowPaste: true }) {
     const repositoryRoot = environment["WIRE_REPOSITORY_ROOT"] ?? discoverRepositoryRoot(currentDirectory);
     const baseEnvironment = repositoryRoot === undefined ? environment : Object.freeze({ ...environment, WIRE_REPOSITORY_ROOT: repositoryRoot });
     const resolvedEnvironment = loadConfiguredEnvironment(baseEnvironment, currentDirectory);
@@ -97,6 +97,6 @@ export function createExecutableRoot(environment, currentDirectory) {
         now: runtime.clock.now,
         open: runtime.openFiles.open,
     }), { currentDirectory, home, environment: resolvedEnvironment });
-    return createRoot(wire, currentDirectory, auth, readStandardInput);
+    return createRoot(wire, currentDirectory, auth, readStandardInput, options);
 }
 //# sourceMappingURL=executable.js.map

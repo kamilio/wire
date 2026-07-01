@@ -5,6 +5,7 @@ import type { Auth, AuthResult, AuthService } from "../auth.js";
 
 export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
+export type WireRootOptions = Readonly<{ allowPaste: boolean }>;
 
 const authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
 const removedCliCommandNames = Object.freeze({
@@ -363,17 +364,20 @@ export const wirePresentation: WirePresentation = Object.freeze({
   authLogout: render<{ readonly service: AuthService; readonly deleted: true }>((value) => `${serviceTitle(value.service)} logged out`),
 });
 
-function authGroup(service: AuthService, description: string, loginDescription: string, auth: Auth, readInput?: TextInputReader): Group {
-  const login = async (paste: boolean | undefined) => paste === true ? auth.pasteCookies(service, await readInput!()) : service === "asana" ? auth.extractAsana() : service === "chatgpt" ? auth.extractChatgpt() : service === "gmail" ? auth.extractGmail() : service === "google-docs" ? auth.extractGoogleDocs() : service === "notion" ? auth.extractNotion() : service === "slack" ? auth.extractSlack() : auth.extractZoom();
+function authGroup(service: AuthService, description: string, loginDescription: string, auth: Auth, readInput: TextInputReader | undefined, options: WireRootOptions): Group {
+  const login = async (paste: boolean | undefined) => {
+    if (paste === true && !options.allowPaste) throw new UserError("Cookie paste is CLI-only.");
+    return paste === true ? auth.pasteCookies(service, await readInput!()) : service === "asana" ? auth.extractAsana() : service === "chatgpt" ? auth.extractChatgpt() : service === "gmail" ? auth.extractGmail() : service === "google-docs" ? auth.extractGoogleDocs() : service === "notion" ? auth.extractNotion() : service === "slack" ? auth.extractSlack() : auth.extractZoom();
+  };
   const title = serviceTitle(service);
   return defineGroup({ name: service, description, children: [
     defineCommand({ name: "status", description: `Check saved ${title} login.`, params: S.Object({}), handler: () => userFacing(() => auth.status(service)), render: wirePresentation.authStatus }),
-    defineCommand({ name: "login", description: loginDescription, params: S.Object({ paste: S.Optional(S.Boolean({ description: "Read cookie text from stdin." })) }), handler: ({ params }) => userFacing(() => login(params.paste)), render: wirePresentation.authStatus }),
+    defineCommand({ name: "login", description: loginDescription, params: S.Object({ paste: S.Optional(S.Boolean({ description: "Read cookie text from stdin.", scope: ["cli", "sdk"] })) }), handler: ({ params }) => userFacing(() => login(params.paste)), render: wirePresentation.authStatus }),
     defineCommand({ name: "logout", description: `Delete saved ${title} cookies.`, params: S.Object({}), handler: () => auth.logout(service), render: wirePresentation.authLogout }),
   ] });
 }
 
-export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, readInput?: TextInputReader): WireRoot {
+export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, readInput?: TextInputReader, options: WireRootOptions = { allowPaste: true }): WireRoot {
   const attachFromCliUrl = (url: string) => {
     const removedCommand = removedCliCommandNames[url as keyof typeof removedCliCommandNames];
     if (removedCommand !== undefined) throw new UserError(`Unknown command: ${url}. ${removedCommand}`);
@@ -390,7 +394,7 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
   });
   const authCommand = (service: (typeof authServices)[number]) => {
     const title = serviceTitle(service);
-    return authGroup(service, `Manage ${title} login.`, "Capture cookies once; normal commands reuse saved cookies.", auth!, readInput);
+    return authGroup(service, `Manage ${title} login.`, "Capture cookies once; normal commands reuse saved cookies.", auth!, readInput, options);
   };
   return defineGroup({
     name: "",

@@ -2,5 +2,5 @@
 const { createExecutableRoot } = await import("../dist/executable.js");
 const { runWireMcp } = await import("../dist/mcp.js");
 
-const root = createExecutableRoot(process.env, process.cwd());
+const root = createExecutableRoot(process.env, process.cwd(), { allowPaste: false });
 await runWireMcp(root);

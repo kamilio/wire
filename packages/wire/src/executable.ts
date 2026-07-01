@@ -52,7 +52,7 @@ function loadConfiguredEnvironment(environment: NodeEnvironment, currentDirector
   return config.env === undefined ? environment : Object.freeze({ ...environment, ...config.env });
 }
 
-export function createExecutableRoot(environment: NodeEnvironment, currentDirectory: string) {
+export function createExecutableRoot(environment: NodeEnvironment, currentDirectory: string, options = { allowPaste: true }) {
   const repositoryRoot = environment["WIRE_REPOSITORY_ROOT"] ?? discoverRepositoryRoot(currentDirectory);
   const baseEnvironment = repositoryRoot === undefined ? environment : Object.freeze({ ...environment, WIRE_REPOSITORY_ROOT: repositoryRoot });
   const resolvedEnvironment = loadConfiguredEnvironment(baseEnvironment, currentDirectory);
@@ -99,5 +99,5 @@ export function createExecutableRoot(environment: NodeEnvironment, currentDirect
     now: runtime.clock.now,
     open: runtime.openFiles.open,
   }), { currentDirectory, home, environment: resolvedEnvironment });
-  return createRoot(wire, currentDirectory, auth, readStandardInput);
+  return createRoot(wire, currentDirectory, auth, readStandardInput, options);
 }

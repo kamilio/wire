@@ -3,6 +3,9 @@ import { type FetchedDocument, type InitializedWire, type Resource, type Switche
 import type { Auth, AuthResult, AuthService } from "../auth.js";
 export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
+export type WireRootOptions = Readonly<{
+    allowPaste: boolean;
+}>;
 type WireRenderer<T> = Readonly<{
     json(value: T): unknown;
     markdown(value: T): string;
@@ -26,6 +29,6 @@ type WirePresentation = Readonly<{
     }>;
 }>;
 export declare const wirePresentation: WirePresentation;
-export declare function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, readInput?: TextInputReader): WireRoot;
+export declare function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, readInput?: TextInputReader, options?: WireRootOptions): WireRoot;
 export {};
 //# sourceMappingURL=root.d.ts.map
