@@ -1,6 +1,9 @@
 import type { Registry } from "../core/model.js";
 import type { InitializedWire, SwitchedWireBackend, WireBackend, WireConfig } from "../ports.js";
 export type { InitializedWire, WireBackend, WireConfig } from "../ports.js";
+export declare const defaultWireBackend = "files";
+export declare const defaultWireRegistryPath = "records";
+export declare function registryPathForBackend(backend: WireBackend): string;
 export declare function discoverWireRoot(path: string, home: string): Promise<string>;
 export declare function configuredWireRoot(path: string, home: string): Promise<string | null>;
 export declare function wireRelativePath(path: string, wireRoot: string): string;

@@ -1,4 +1,5 @@
 import { defineService } from "wire-core";
+import { inflateRawSync } from "node:zlib";
 import type { FetchedDocument, JsonObject, JsonValue, RuntimeCapabilities, Source } from "wire-core";
 
 async function cookieHeader(runtime: RuntimeCapabilities): Promise<string> {
@@ -17,7 +18,7 @@ function filenameTitle(value: string, label: string): string {
   const bare = /filename=([^;]+)/i.exec(value);
   if (encoded === null && quoted === null && bare === null) throw new Error(`Google ${label} did not include a filename`);
   const filename = encoded !== null ? decodeURIComponent(encoded[1]!) : quoted !== null ? quoted[1]! : bare![1]!.trim();
-  return filename.replace(/\.(csv|html|md|txt|xlsx)$/i, "");
+  return filename.replace(/\.(csv|html|md|pptx|txt|xlsx)$/i, "");
 }
 
 async function googleExport(runtime: RuntimeCapabilities, url: string, label: string): Promise<Readonly<{ title: string; text: string }>> {
@@ -27,6 +28,15 @@ async function googleExport(runtime: RuntimeCapabilities, url: string, label: st
   const disposition = response.headers.get("content-disposition");
   if (disposition === null) throw cookieAuthenticationError();
   return Object.freeze({ title: filenameTitle(disposition, label), text: await response.text() });
+}
+
+async function googleExportBytes(runtime: RuntimeCapabilities, url: string, label: string): Promise<Readonly<{ title: string; bytes: Uint8Array }>> {
+  const response = await runtime.http.request(url, { headers: { Cookie: await cookieHeader(runtime) } });
+  if (response.status === 401 || response.status === 403) throw cookieAuthenticationError();
+  if (!response.ok) throw new Error(`Google ${label} failed: HTTP ${response.status}`);
+  const disposition = response.headers.get("content-disposition");
+  if (disposition === null) throw cookieAuthenticationError();
+  return Object.freeze({ title: filenameTitle(disposition, label), bytes: new Uint8Array(await response.arrayBuffer()) });
 }
 
 async function googleText(runtime: RuntimeCapabilities, url: string, label: string): Promise<string> {
@@ -172,6 +182,268 @@ function docEditUrl(documentId: string, key: string | null, tab: string): string
 function documentTab(source: Source): string | null {
   const tab = source["document_tab"];
   return typeof tab === "string" && tab !== "" ? tab : null;
+}
+
+type XmlChild = XmlNode | string;
+type XmlNode = Readonly<{ name: string; attributes: ReadonlyMap<string, string>; children: readonly XmlChild[] }>;
+
+function decodeXml(value: string): string {
+  return value.replace(/&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|apos);/g, (_match, entity: string) => {
+    if (entity.startsWith("#x")) return String.fromCodePoint(Number.parseInt(entity.slice(2), 16));
+    if (entity.startsWith("#")) return String.fromCodePoint(Number.parseInt(entity.slice(1), 10));
+    if (entity === "amp") return "&";
+    if (entity === "lt") return "<";
+    if (entity === "gt") return ">";
+    if (entity === "quot") return "\"";
+    if (entity === "apos") return "'";
+    throw new Error(`PPTX XML unknown entity: ${entity}`);
+  });
+}
+
+function xmlTagEnd(xml: string, start: number): number {
+  let quote: string | null = null;
+  for (let index = start + 1; index < xml.length; index += 1) {
+    const char = xml[index]!;
+    if (quote === null && char === ">") return index;
+    if (quote === null && (char === "\"" || char === "'")) quote = char;
+    else if (quote === char) quote = null;
+  }
+  throw new Error("PPTX XML tag is unterminated");
+}
+
+function parseAttributes(value: string): ReadonlyMap<string, string> {
+  const attributes = new Map<string, string>();
+  let index = 0;
+  while (index < value.length) {
+    while (index < value.length && /\s/.test(value[index]!)) index += 1;
+    if (index >= value.length) break;
+    const nameStart = index;
+    while (index < value.length && !/[\s=]/.test(value[index]!)) index += 1;
+    const name = value.slice(nameStart, index);
+    while (index < value.length && /\s/.test(value[index]!)) index += 1;
+    if (value[index] !== "=") throw new Error(`PPTX XML attribute ${name} is invalid`);
+    index += 1;
+    while (index < value.length && /\s/.test(value[index]!)) index += 1;
+    const quote = value[index]!;
+    if (quote !== "\"" && quote !== "'") throw new Error(`PPTX XML attribute ${name} is unquoted`);
+    index += 1;
+    const textStart = index;
+    while (index < value.length && value[index] !== quote) index += 1;
+    attributes.set(name, decodeXml(value.slice(textStart, index)));
+    index += 1;
+  }
+  return attributes;
+}
+
+function parseXml(xml: string): XmlNode {
+  const root: { name: string; attributes: ReadonlyMap<string, string>; children: XmlChild[] } = { name: "#document", attributes: new Map(), children: [] };
+  const stack: { name: string; attributes: ReadonlyMap<string, string>; children: XmlChild[] }[] = [root];
+  let index = 0;
+  while (index < xml.length) {
+    if (xml.startsWith("<?", index)) {
+      index = xml.indexOf("?>", index) + 2;
+    } else if (xml.startsWith("<!--", index)) {
+      index = xml.indexOf("-->", index) + 3;
+    } else if (xml.startsWith("<![CDATA[", index)) {
+      const end = xml.indexOf("]]>", index);
+      stack[stack.length - 1]!.children.push(xml.slice(index + 9, end));
+      index = end + 3;
+    } else if (xml.startsWith("</", index)) {
+      const end = xmlTagEnd(xml, index);
+      const name = xml.slice(index + 2, end).trim();
+      const node = stack.pop()!;
+      if (node.name !== name) throw new Error(`PPTX XML closing tag mismatch: ${name}`);
+      stack[stack.length - 1]!.children.push(Object.freeze({ name: node.name, attributes: node.attributes, children: Object.freeze(node.children) }));
+      index = end + 1;
+    } else if (xml[index] === "<") {
+      const end = xmlTagEnd(xml, index);
+      const raw = xml.slice(index + 1, end).trim();
+      const selfClosing = raw.endsWith("/");
+      const tag = selfClosing ? raw.slice(0, -1).trimEnd() : raw;
+      const nameEnd = tag.search(/\s/);
+      const name = nameEnd === -1 ? tag : tag.slice(0, nameEnd);
+      const attributes = parseAttributes(nameEnd === -1 ? "" : tag.slice(nameEnd + 1));
+      if (selfClosing) stack[stack.length - 1]!.children.push(Object.freeze({ name, attributes, children: Object.freeze([]) }));
+      else stack.push({ name, attributes, children: [] });
+      index = end + 1;
+    } else {
+      const end = xml.indexOf("<", index);
+      const text = decodeXml(xml.slice(index, end === -1 ? xml.length : end));
+      if (text !== "") stack[stack.length - 1]!.children.push(text);
+      index = end === -1 ? xml.length : end;
+    }
+  }
+  if (stack.length !== 1) throw new Error("PPTX XML document is unclosed");
+  return Object.freeze({ name: root.name, attributes: root.attributes, children: Object.freeze(root.children) });
+}
+
+function isXmlNode(value: XmlChild): value is XmlNode {
+  return typeof value !== "string";
+}
+
+function xmlChildren(node: XmlNode, name: string): readonly XmlNode[] {
+  return node.children.filter(isXmlNode).filter((child) => child.name === name);
+}
+
+function xmlDescendants(node: XmlNode, name: string): readonly XmlNode[] {
+  return node.children.filter(isXmlNode).flatMap((child) => child.name === name ? [child, ...xmlDescendants(child, name)] : xmlDescendants(child, name));
+}
+
+function xmlText(node: XmlNode): string {
+  return node.children.map((child) => typeof child === "string" ? child : xmlText(child)).join("");
+}
+
+function xmlAttribute(node: XmlNode, name: string): string {
+  const value = node.attributes.get(name);
+  if (value === undefined) throw new Error(`PPTX XML missing ${name}`);
+  return value;
+}
+
+function zipEndOfCentralDirectory(bytes: Uint8Array): number {
+  for (let index = bytes.length - 22; index >= Math.max(0, bytes.length - 65557); index -= 1) {
+    if (bytes[index] === 0x50 && bytes[index + 1] === 0x4b && bytes[index + 2] === 0x05 && bytes[index + 3] === 0x06) return index;
+  }
+  throw new Error("PPTX ZIP missing central directory");
+}
+
+function unzipFiles(bytes: Uint8Array): ReadonlyMap<string, Uint8Array> {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const end = zipEndOfCentralDirectory(bytes);
+  const totalEntries = view.getUint16(end + 10, true);
+  let centralOffset = view.getUint32(end + 16, true);
+  const files = new Map<string, Uint8Array>();
+  const decoder = new TextDecoder();
+  for (let entryIndex = 0; entryIndex < totalEntries; entryIndex += 1) {
+    if (view.getUint32(centralOffset, true) !== 0x02014b50) throw new Error("PPTX ZIP central directory entry is invalid");
+    const method = view.getUint16(centralOffset + 10, true);
+    const compressedSize = view.getUint32(centralOffset + 20, true);
+    const nameLength = view.getUint16(centralOffset + 28, true);
+    const extraLength = view.getUint16(centralOffset + 30, true);
+    const commentLength = view.getUint16(centralOffset + 32, true);
+    const localOffset = view.getUint32(centralOffset + 42, true);
+    const name = decoder.decode(bytes.subarray(centralOffset + 46, centralOffset + 46 + nameLength));
+    if (view.getUint32(localOffset, true) !== 0x04034b50) throw new Error("PPTX ZIP local file entry is invalid");
+    const localNameLength = view.getUint16(localOffset + 26, true);
+    const localExtraLength = view.getUint16(localOffset + 28, true);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = bytes.subarray(dataStart, dataStart + compressedSize);
+    if (method === 0) files.set(name, compressed);
+    else if (method === 8) files.set(name, inflateRawSync(compressed));
+    else throw new Error(`PPTX ZIP compression method is unsupported: ${method}`);
+    centralOffset += 46 + nameLength + extraLength + commentLength;
+  }
+  return files;
+}
+
+function zipText(files: ReadonlyMap<string, Uint8Array>, name: string): string {
+  const bytes = files.get(name);
+  if (bytes === undefined) throw new Error(`PPTX missing ${name}`);
+  return new TextDecoder().decode(bytes);
+}
+
+function relationshipTargets(xml: string): ReadonlyMap<string, string> {
+  const relationships = new Map<string, string>();
+  for (const relationship of xmlDescendants(parseXml(xml), "Relationship")) relationships.set(xmlAttribute(relationship, "Id"), xmlAttribute(relationship, "Target"));
+  return relationships;
+}
+
+function resolvePartPath(basePath: string, target: string): string {
+  const parts = basePath.split("/");
+  parts.pop();
+  for (const segment of target.split("/")) {
+    if (segment === "..") parts.pop();
+    else if (segment !== ".") parts.push(segment);
+  }
+  return parts.join("/");
+}
+
+function slidePartPaths(files: ReadonlyMap<string, Uint8Array>): readonly string[] {
+  const presentation = parseXml(zipText(files, "ppt/presentation.xml"));
+  const relationships = relationshipTargets(zipText(files, "ppt/_rels/presentation.xml.rels"));
+  const slides = xmlDescendants(presentation, "p:sldId");
+  if (slides.length === 0) throw new Error("PPTX presentation has no slides");
+  return slides.map((slide) => {
+    const id = xmlAttribute(slide, "r:id");
+    const target = relationships.get(id);
+    if (target === undefined) throw new Error(`PPTX presentation missing slide relationship ${id}`);
+    return resolvePartPath("ppt/presentation.xml", target);
+  });
+}
+
+function slideRelationshipsPath(slidePath: string): string {
+  const parts = slidePath.split("/");
+  const filename = parts.pop();
+  if (filename === undefined) throw new Error("PPTX slide path is invalid");
+  parts.push("_rels", `${filename}.rels`);
+  return parts.join("/");
+}
+
+function markdownSpan(value: string, left: string, right: string): string {
+  const leading = /^[ \t]*/.exec(value)![0];
+  const trailing = /[ \t]*$/.exec(value)![0];
+  const core = value.slice(leading.length, value.length - trailing.length);
+  return core === "" ? value : `${leading}${left}${core}${right}${trailing}`;
+}
+
+function linkMarkdown(value: string, target: string): string {
+  const leading = /^[ \t]*/.exec(value)![0];
+  const trailing = /[ \t]*$/.exec(value)![0];
+  const core = value.slice(leading.length, value.length - trailing.length);
+  return core === "" ? value : `${leading}[${core.replace(/[[\]\\]/g, "\\$&")}](${target.replace(/\)/g, "%29")})${trailing}`;
+}
+
+function formattedRunMarkdown(run: XmlNode, relationships: ReadonlyMap<string, string>): string {
+  const text = xmlDescendants(run, "a:t").map(xmlText).join("");
+  const runProperties = xmlChildren(run, "a:rPr")[0];
+  if (runProperties === undefined) return text;
+  const hyperlink = xmlDescendants(runProperties, "a:hlinkClick")[0];
+  let markdown = text;
+  if (runProperties.attributes.get("u") !== undefined && runProperties.attributes.get("u") !== "none" && hyperlink === undefined) markdown = markdownSpan(markdown, "<u>", "</u>");
+  if (runProperties.attributes.get("strike") !== undefined && runProperties.attributes.get("strike") !== "noStrike") markdown = markdownSpan(markdown, "~~", "~~");
+  if (runProperties.attributes.get("b") === "1" && runProperties.attributes.get("i") === "1") markdown = markdownSpan(markdown, "***", "***");
+  else if (runProperties.attributes.get("b") === "1") markdown = markdownSpan(markdown, "**", "**");
+  else if (runProperties.attributes.get("i") === "1") markdown = markdownSpan(markdown, "_", "_");
+  if (hyperlink !== undefined) {
+    const id = xmlAttribute(hyperlink, "r:id");
+    const target = relationships.get(id);
+    if (target === undefined) throw new Error(`PPTX slide missing hyperlink relationship ${id}`);
+    markdown = linkMarkdown(markdown, target);
+  }
+  return markdown;
+}
+
+function paragraphMarkdown(paragraph: XmlNode, relationships: ReadonlyMap<string, string>): Readonly<{ text: string; list: "bullet" | "number" | null; level: number }> {
+  const pPr = xmlChildren(paragraph, "a:pPr")[0];
+  const list = pPr === undefined || xmlChildren(pPr, "a:buNone").length !== 0 ? null : xmlChildren(pPr, "a:buAutoNum").length !== 0 ? "number" : xmlChildren(pPr, "a:buChar").length !== 0 ? "bullet" : null;
+  const levelValue = pPr === undefined ? undefined : pPr.attributes.get("lvl");
+  const level = levelValue === undefined ? 0 : Number(levelValue);
+  const pieces: string[] = [];
+  for (const child of paragraph.children.filter(isXmlNode)) {
+    if (child.name === "a:br") pieces.push("\n");
+    if (child.name === "a:r" || child.name === "a:fld") pieces.push(formattedRunMarkdown(child, relationships));
+  }
+  return Object.freeze({ text: pieces.join("").replace(/[ \t]+$/gm, ""), list, level });
+}
+
+function slideMarkdown(slide: XmlNode, relationships: ReadonlyMap<string, string>): string {
+  const paragraphs = xmlDescendants(slide, "a:p").map((paragraph) => paragraphMarkdown(paragraph, relationships)).filter((paragraph) => paragraph.text.trim() !== "");
+  const lines = paragraphs.map((paragraph, index) => {
+    if (index === 0 && paragraph.list === null) return `## ${paragraph.text.trim()}`;
+    if (paragraph.list === "bullet") return `${"  ".repeat(paragraph.level)}- ${paragraph.text.trim()}`;
+    if (paragraph.list === "number") return `${"  ".repeat(paragraph.level)}1. ${paragraph.text.trim()}`;
+    return paragraph.text.trim();
+  });
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+function slidesMarkdown(bytes: Uint8Array): string {
+  const files = unzipFiles(bytes);
+  const slides = slidePartPaths(files).map((slidePath) => {
+    const slide = parseXml(zipText(files, slidePath));
+    const relationships = relationshipTargets(zipText(files, slideRelationshipsPath(slidePath)));
+    return slideMarkdown(slide, relationships);
+  });
+  return `${slides.join("\n\n---\n\n")}\n`;
 }
 
 function urlParam(url: URL, name: string): string | null {
@@ -401,6 +673,12 @@ async function fetchGoogleDocument(runtime: RuntimeCapabilities, source: Source)
     exportUrl = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(documentId)}/export?${query}`;
     label = "Sheets CSV export";
     sheetGid = gid;
+  } else if (source.type === "presentation") {
+    const query = new URLSearchParams({ format: "pptx" });
+    const key = resourceKey(source);
+    if (key !== null) query.set("resourcekey", key);
+    exportUrl = `https://docs.google.com/presentation/d/${encodeURIComponent(documentId)}/export?${query}`;
+    label = "Slides PPTX export";
   } else {
     const query = new URLSearchParams({ format: "md" });
     const key = resourceKey(source);
@@ -409,6 +687,11 @@ async function fetchGoogleDocument(runtime: RuntimeCapabilities, source: Source)
     if (tab !== null) query.set("tab", tab);
     exportUrl = `https://docs.google.com/document/d/${encodeURIComponent(documentId)}/export?${query}`;
     label = "Docs Markdown export";
+  }
+  if (source.type === "presentation") {
+    const exported = await googleExportBytes(runtime, exportUrl, label);
+    const markdown = slidesMarkdown(exported.bytes);
+    return Object.freeze({ title: exported.title, markdown, data: { document_id: documentId, title: exported.title, output_path: null, sheet_gid: sheetGid, markdown, rows: null, presentation: true } });
   }
   const exported = await googleExport(runtime, exportUrl, label);
   const rows = source["sheet_gid"] === undefined ? null : parseCsv(exported.text);
@@ -419,6 +702,13 @@ async function fetchGoogleDocument(runtime: RuntimeCapabilities, source: Source)
 
 async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, _url: string, source: Source, base: JsonValue, markdown: string): Promise<FetchedDocument> {
   const remote = await fetchGoogleDocument(runtime, source);
+  if (source.type === "presentation") {
+    const baseMarkdown = objectValue(base)["markdown"];
+    if (typeof baseMarkdown !== "string") throw new Error("Google sync base must include markdown");
+    if (markdown === baseMarkdown || markdown === remote.markdown) return remote;
+    if (remote.markdown === baseMarkdown) throw new Error("Google Slides sync is download-only. Revert local edits or use `wire download <url>` for a fresh copy.");
+    throw new Error("Google Slides changed remotely and locally. Resolve the conflict in Google Slides or the local Markdown file before syncing again.");
+  }
   const baseMarkdown = objectValue(base)["markdown"];
   const label = source["sheet_gid"] === undefined ? "Google Docs" : "Google Sheets";
   if (typeof baseMarkdown !== "string") throw new Error("Google sync base must include markdown");
@@ -448,12 +738,13 @@ async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, _url: str
 
 export const googleDocsService = defineService<RuntimeCapabilities>({
   name: "google-docs",
-  matches: (url) => url.hostname === "docs.google.com" && /^\/(document|spreadsheets)(?:\/u\/\d+)?\/d\/[^/]+(?:\/.*)?$/.test(url.pathname),
+  matches: (url) => url.hostname === "docs.google.com" && /^\/(document|presentation|spreadsheets)(?:\/u\/\d+)?\/d\/[^/]+(?:\/.*)?$/.test(url.pathname),
   parse: (url) => {
-    const match = /^\/(document|spreadsheets)(?:\/u\/\d+)?\/d\/([^/]+)(?:\/.*)?$/.exec(url.pathname)!;
+    const match = /^\/(document|presentation|spreadsheets)(?:\/u\/\d+)?\/d\/([^/]+)(?:\/.*)?$/.exec(url.pathname)!;
     const documentId = match[2]!;
     const key = urlParam(url, "resourcekey");
     const resource_key = key === null || key === "" ? {} : { resource_key: key };
+    if (match[1] === "presentation") return Object.freeze({ service: "google-docs", identifier: documentId, type: "presentation", ...resource_key });
     if (match[1] === "spreadsheets") {
       const queryGid = url.searchParams.get("gid");
       const hashGid = new URLSearchParams(url.hash.slice(1)).get("gid");

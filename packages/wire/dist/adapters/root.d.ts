@@ -1,5 +1,5 @@
 import { type Group } from "toolcraft";
-import type { FetchedDocument, InitializedWire, Resource, SwitchedWireBackend, Wire, WireResult, WireWatchSession } from "wire-core";
+import { type FetchedDocument, type InitializedWire, type Resource, type SwitchedWireBackend, type Wire, type WireResult, type WireWatchSession } from "wire-core";
 import type { Auth, AuthResult, AuthService } from "../auth.js";
 export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;

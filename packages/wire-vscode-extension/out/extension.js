@@ -35,7 +35,7 @@ __export(extension_exports, {
 });
 module.exports = __toCommonJS(extension_exports);
 var import_node_child_process2 = require("node:child_process");
-var import_node_fs2 = require("node:fs");
+var import_node_fs3 = require("node:fs");
 var import_promises5 = require("node:fs/promises");
 var import_node_path4 = require("node:path");
 var import_node_util = require("node:util");
@@ -357,9 +357,57 @@ function parsePastedCookieMetadata(contents) {
   if (!("metadata" in value)) return Object.freeze({});
   return Object.freeze(Object.fromEntries(Object.entries(value["metadata"]).map(([name, metadataValue]) => [name, metadataValue.toString()])));
 }
+function cookiesDirectory(home) {
+  return `${home}/.wire/auth`;
+}
+function cookiesFile(home, service) {
+  return `${cookiesDirectory(home)}/${service}_cookies.txt`;
+}
+function repositoryCookiesFile(repositoryRoot2, service) {
+  return `${repositoryRoot2}/${service}_cookies.txt`;
+}
+async function existingCookiesFile(filesystem, paths) {
+  for (const path of paths) if (await filesystem.exists(path)) return path;
+  return null;
+}
 function serializeNetscapeCookies(cookies, metadata) {
   return `${["# Netscape HTTP Cookie File", ...Object.entries(metadata).map(([name, value]) => `# wire	${name}	${value}`), ...cookies.map((cookie) => `${cookie.httpOnly ? "#HttpOnly_" : ""}${cookie.domain}	${cookie.includeSubdomains ? "TRUE" : "FALSE"}	${cookie.path}	${cookie.secure ? "TRUE" : "FALSE"}	${cookie.expires}	${cookie.name}	${cookie.value}`)].join("\n")}
 `;
+}
+function createCookiesCapability(filesystem, home, repositoryRoot2, overrideFile) {
+  const paths = (service) => {
+    const overridePath = overrideFile?.(service);
+    const repositoryRootPath = repositoryRoot2?.();
+    return [
+      ...overridePath === void 0 ? [] : [overridePath],
+      ...repositoryRootPath === void 0 ? [] : [repositoryCookiesFile(repositoryRootPath, service)],
+      cookiesFile(home(), service)
+    ];
+  };
+  return Object.freeze({
+    loadSaved: async (service) => {
+      const path = await existingCookiesFile(filesystem, paths(service));
+      return path === null ? null : parseNetscapeCookies(await filesystem.readText(path));
+    },
+    load: async (service) => {
+      const path = await existingCookiesFile(filesystem, paths(service));
+      if (path !== null) return parseNetscapeCookies(await filesystem.readText(path));
+      throw new Error(`${service} cookie authentication is missing. Run \`wire ${service} login\` once; other commands reuse saved cookies.`);
+    },
+    metadata: async (service) => {
+      const path = await existingCookiesFile(filesystem, paths(service));
+      if (path === null) throw new Error(`${service} cookie authentication is missing. Run \`wire ${service} login\` once; other commands reuse saved cookies.`);
+      return parseCookieMetadata(await filesystem.readText(path));
+    },
+    save: async (service, cookies, metadata) => {
+      const candidatePaths = paths(service);
+      const path = await existingCookiesFile(filesystem, candidatePaths) ?? candidatePaths[0];
+      await filesystem.writeText(path, serializeNetscapeCookies(cookies, metadata));
+    },
+    delete: async (service) => {
+      for (const path of paths(service)) if (await filesystem.exists(path)) await filesystem.delete(path);
+    }
+  });
 }
 
 // ../wire-core/src/runtime/chrome.ts
@@ -694,9 +742,361 @@ function createGoogleTokensCapability(filesystem, http, clock, credentialsPath, 
   });
 }
 
-// ../wire-core/src/operations.ts
+// ../wire-core/src/storage/registry.ts
 var import_node_crypto = require("node:crypto");
+var import_node_fs = require("node:fs");
+var import_promises3 = require("node:fs/promises");
+var import_node_module = require("node:module");
 var import_node_path = require("node:path");
+var require2 = (0, import_node_module.createRequire)("/wire-core/storage/registry.js");
+function compareStrings3(left, right) {
+  const leftCodePoints = Array.from(left, (character) => character.codePointAt(0));
+  const rightCodePoints = Array.from(right, (character) => character.codePointAt(0));
+  const length = Math.min(leftCodePoints.length, rightCodePoints.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = leftCodePoints[index] - rightCodePoints[index];
+    if (difference !== 0) return difference;
+  }
+  return leftCodePoints.length - rightCodePoints.length;
+}
+function storageResource(resource) {
+  return normalizeResource({
+    ...resource,
+    filesystem_links: resource.filesystem_links.map((link) => ({ ...link, path: link.path.replaceAll(import_node_path.sep, "/") }))
+  });
+}
+function fileResourceName(resourceId2) {
+  if (resourceId2 !== "." && resourceId2 !== ".." && !resourceId2.includes("/") && !resourceId2.includes("\\") && !resourceId2.includes("\0")) return `${resourceId2}.json`;
+  return `~${Buffer.from(resourceId2).toString("base64url")}.json`;
+}
+function parseResource(value) {
+  return JSON.parse(value);
+}
+function assertUnique(values2) {
+  if (new Set(values2).size !== values2.length) throw new Error(JSON.stringify(values2));
+}
+function assertUniqueFileResource(resource) {
+  assertUnique(resource.identifiers.map((identifier) => JSON.stringify([identifier.service, identifier.identifier])));
+  assertUnique(resource.urls);
+  assertUnique(resource.filesystem_links.map((link) => JSON.stringify([link.path, link.role])));
+  assertUnique(resource.data.map((item) => JSON.stringify([item.namespace, item.key])));
+  assertUnique(resource.relationships.map((relationship) => JSON.stringify([resource.id, relationship.target_id, relationship.type])));
+}
+function missingResource(resourceId2) {
+  return new Error(`Resource not found: ${resourceId2}`);
+}
+function missingIdentifier(service, identifier) {
+  return new Error(`Resource identifier not found: ${service}/${identifier}`);
+}
+function missingUrl(url) {
+  return new Error(`Resource URL not found: ${url}`);
+}
+var SqliteRegistry = class {
+  path;
+  constructor(path) {
+    this.path = realpathSyncParent(path);
+    const database = this.connect();
+    database.exec(`
+      PRAGMA journal_mode=DELETE;
+      PRAGMA foreign_keys=ON;
+      CREATE TABLE IF NOT EXISTS resources (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS resource_identifiers (
+        resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+        service TEXT NOT NULL,
+        identifier TEXT NOT NULL,
+        PRIMARY KEY (service, identifier),
+        UNIQUE (resource_id, service, identifier)
+      );
+      CREATE TABLE IF NOT EXISTS resource_urls (
+        resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+        url TEXT NOT NULL PRIMARY KEY,
+        UNIQUE (resource_id, url)
+      );
+      CREATE TABLE IF NOT EXISTS filesystem_links (
+        resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        role TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        PRIMARY KEY (resource_id, path, role)
+      );
+      CREATE INDEX IF NOT EXISTS filesystem_links_path ON filesystem_links(path);
+      CREATE TABLE IF NOT EXISTS resource_data (
+        resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+        namespace TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value_json TEXT NOT NULL,
+        PRIMARY KEY (resource_id, namespace, key)
+      );
+      CREATE TABLE IF NOT EXISTS resource_relationships (
+        source_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+        target_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        PRIMARY KEY (source_id, target_id, type)
+      );
+      CREATE INDEX IF NOT EXISTS resource_relationships_target ON resource_relationships(target_id);
+    `);
+    database.close();
+  }
+  async put(resource) {
+    const normalized = storageResource(resource);
+    assertUniqueFileResource(normalized);
+    const database = this.connect();
+    for (const identifier of normalized.identifiers) {
+      const row = database.prepare("SELECT resource_id FROM resource_identifiers WHERE service = ? AND identifier = ? AND resource_id != ?").get(identifier.service, identifier.identifier, normalized.id);
+      if (row !== void 0) {
+        database.close();
+        throw new Error(`${identifier.service}/${identifier.identifier}`);
+      }
+    }
+    for (const url of normalized.urls) {
+      const row = database.prepare("SELECT resource_id FROM resource_urls WHERE url = ? AND resource_id != ?").get(url, normalized.id);
+      if (row !== void 0) {
+        database.close();
+        throw new Error(url);
+      }
+    }
+    database.exec("BEGIN");
+    database.prepare("INSERT INTO resources (id, type) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET type=excluded.type").run(normalized.id, normalized.type);
+    database.prepare("DELETE FROM resource_identifiers WHERE resource_id = ?").run(normalized.id);
+    database.prepare("DELETE FROM resource_urls WHERE resource_id = ?").run(normalized.id);
+    database.prepare("DELETE FROM filesystem_links WHERE resource_id = ?").run(normalized.id);
+    database.prepare("DELETE FROM resource_data WHERE resource_id = ?").run(normalized.id);
+    database.prepare("DELETE FROM resource_relationships WHERE source_id = ?").run(normalized.id);
+    const insertIdentifier = database.prepare("INSERT INTO resource_identifiers (resource_id, service, identifier) VALUES (?, ?, ?)");
+    for (const item of normalized.identifiers) insertIdentifier.run(normalized.id, item.service, item.identifier);
+    const insertUrl = database.prepare("INSERT INTO resource_urls (resource_id, url) VALUES (?, ?)");
+    for (const url of normalized.urls) insertUrl.run(normalized.id, url);
+    const insertLink = database.prepare("INSERT INTO filesystem_links (resource_id, path, role, data_json) VALUES (?, ?, ?, ?)");
+    for (const link of normalized.filesystem_links) insertLink.run(normalized.id, link.path, link.role, stableJsonCompact(link.data));
+    const insertData = database.prepare("INSERT INTO resource_data (resource_id, namespace, key, value_json) VALUES (?, ?, ?, ?)");
+    for (const item of normalized.data) insertData.run(normalized.id, item.namespace, item.key, stableJsonCompact(item.value));
+    const insertRelationship = database.prepare("INSERT INTO resource_relationships (source_id, target_id, type, data_json) VALUES (?, ?, ?, ?)");
+    for (const relationship of normalized.relationships) insertRelationship.run(normalized.id, relationship.target_id, relationship.type, stableJsonCompact(relationship.data));
+    database.exec("COMMIT");
+    database.close();
+    return normalized;
+  }
+  async get(resourceId2) {
+    const database = this.connect();
+    const row = database.prepare("SELECT id FROM resources WHERE id = ?").get(resourceId2);
+    if (row === void 0) {
+      database.close();
+      throw missingResource(resourceId2);
+    }
+    database.exec("BEGIN");
+    const resource = this.getResource(database, resourceId2);
+    database.exec("COMMIT");
+    database.close();
+    return resource;
+  }
+  async findByIdentifier(service, identifier) {
+    const database = this.connect();
+    database.exec("BEGIN");
+    const row = database.prepare("SELECT resource_id FROM resource_identifiers WHERE service = ? AND identifier = ?").get(service, identifier);
+    if (row === void 0) {
+      database.close();
+      throw missingIdentifier(service, identifier);
+    }
+    const resource = this.getResource(database, row.resource_id);
+    database.exec("COMMIT");
+    database.close();
+    return resource;
+  }
+  async findByUrl(url) {
+    const database = this.connect();
+    database.exec("BEGIN");
+    const row = database.prepare("SELECT resource_id FROM resource_urls WHERE url = ?").get(url);
+    if (row === void 0) {
+      database.close();
+      throw missingUrl(url);
+    }
+    const resource = this.getResource(database, row.resource_id);
+    database.exec("COMMIT");
+    database.close();
+    return resource;
+  }
+  async findByPath(path) {
+    const database = this.connect();
+    database.exec("BEGIN");
+    const rows = database.prepare("SELECT DISTINCT resource_id FROM filesystem_links WHERE path = ? ORDER BY resource_id").all(path.replaceAll(import_node_path.sep, "/"));
+    const resources = rows.map((row) => this.getResource(database, row.resource_id));
+    database.exec("COMMIT");
+    database.close();
+    return resources;
+  }
+  async listResources() {
+    const database = this.connect();
+    database.exec("BEGIN");
+    const rows = database.prepare("SELECT id FROM resources ORDER BY id").all();
+    const resources = rows.map((row) => this.getResource(database, row.id));
+    database.exec("COMMIT");
+    database.close();
+    return resources;
+  }
+  async delete(resourceId2) {
+    const database = this.connect();
+    database.prepare("DELETE FROM resources WHERE id = ?").run(resourceId2);
+    database.close();
+  }
+  getResource(database, resourceId2) {
+    const row = database.prepare("SELECT id, type FROM resources WHERE id = ?").get(resourceId2);
+    if (row === void 0) throw missingResource(resourceId2);
+    const identifiers = database.prepare("SELECT service, identifier FROM resource_identifiers WHERE resource_id = ? ORDER BY service, identifier").all(resourceId2);
+    const urls = database.prepare("SELECT url FROM resource_urls WHERE resource_id = ? ORDER BY url").all(resourceId2);
+    const links = database.prepare("SELECT path, role, data_json FROM filesystem_links WHERE resource_id = ? ORDER BY path, role").all(resourceId2);
+    const data = database.prepare("SELECT namespace, key, value_json FROM resource_data WHERE resource_id = ? ORDER BY namespace, key").all(resourceId2);
+    const relationships = database.prepare("SELECT target_id, type, data_json FROM resource_relationships WHERE source_id = ? ORDER BY type, target_id").all(resourceId2);
+    return {
+      id: row.id,
+      type: row.type,
+      identifiers: identifiers.map((identifier) => ({ service: identifier.service, identifier: identifier.identifier })),
+      urls: urls.map((item) => item.url),
+      filesystem_links: links.map((link) => ({ path: link.path, role: link.role, data: JSON.parse(link.data_json) })),
+      data: data.map((item) => ({ namespace: item.namespace, key: item.key, value: JSON.parse(item.value_json) })),
+      relationships: relationships.map((relationship) => ({ target_id: relationship.target_id, type: relationship.type, data: JSON.parse(relationship.data_json) }))
+    };
+  }
+  connect() {
+    const database = new (require2("node:sqlite")).DatabaseSync(this.path);
+    database.exec("PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON");
+    return database;
+  }
+};
+var FileRegistry = class {
+  path;
+  constructor(path) {
+    this.path = realpathSyncDirectory(path);
+  }
+  async put(resource) {
+    const normalized = storageResource(resource);
+    assertUniqueFileResource(normalized);
+    const existingResources = (await this.listResources()).filter((existing) => existing.id !== normalized.id);
+    const existingUrls = new Set(existingResources.flatMap((existing) => existing.urls));
+    for (const identifier of normalized.identifiers) {
+      if (existingResources.some((existing) => existing.identifiers.some((item) => item.service === identifier.service && item.identifier === identifier.identifier))) {
+        throw new Error(`${identifier.service}/${identifier.identifier}`);
+      }
+    }
+    for (const url of normalized.urls) {
+      if (existingUrls.has(url)) throw new Error(url);
+    }
+    const tempPath = (0, import_node_path.join)(this.path, (0, import_node_crypto.randomUUID)());
+    const handle = await (0, import_promises3.open)(tempPath, "wx", 384);
+    await handle.writeFile(`${stableJsonPretty(normalized)}
+`, "utf8");
+    await handle.close();
+    await (0, import_promises3.rename)(tempPath, this.resourcePath(normalized.id));
+    return normalized;
+  }
+  async get(resourceId2) {
+    if (!(0, import_node_fs.existsSync)(this.resourcePath(resourceId2))) throw missingResource(resourceId2);
+    return parseResource(await (0, import_promises3.readFile)(this.resourcePath(resourceId2), "utf8"));
+  }
+  async findByIdentifier(service, identifier) {
+    const resource = (await this.listResources()).find((item) => item.identifiers.some((value) => value.service === service && value.identifier === identifier));
+    if (resource === void 0) throw missingIdentifier(service, identifier);
+    return this.get(resource.id);
+  }
+  async findByUrl(url) {
+    const resource = (await this.listResources()).find((item) => item.urls.includes(url));
+    if (resource === void 0) throw missingUrl(url);
+    return this.get(resource.id);
+  }
+  async findByPath(path) {
+    const normalizedPath = path.replaceAll(import_node_path.sep, "/");
+    return (await this.listResources()).filter((resource) => resource.filesystem_links.some((link) => link.path === normalizedPath));
+  }
+  async listResources() {
+    const filenames = (await (0, import_promises3.readdir)(this.path)).filter((filename) => (0, import_node_path.extname)(filename) === ".json").sort(compareStrings3);
+    const resources = await Promise.all(filenames.map(async (filename) => parseResource(await (0, import_promises3.readFile)((0, import_node_path.join)(this.path, filename), "utf8"))));
+    return resources.sort((left, right) => compareStrings3(left.id, right.id));
+  }
+  async delete(resourceId2) {
+    await (0, import_promises3.unlink)(this.resourcePath(resourceId2));
+  }
+  resourcePath(resourceId2) {
+    return (0, import_node_path.join)(this.path, fileResourceName(resourceId2));
+  }
+};
+function realpathSyncParent(path) {
+  if ((0, import_node_fs.existsSync)(path)) return (0, import_node_fs.realpathSync)(path);
+  const parent = (0, import_node_path.dirname)(path);
+  (0, import_node_fs.mkdirSync)(parent, { recursive: true });
+  return (0, import_node_path.join)((0, import_node_fs.realpathSync)(parent), (0, import_node_path.basename)(path));
+}
+function realpathSyncDirectory(path) {
+  (0, import_node_fs.mkdirSync)(path, { recursive: true });
+  return (0, import_node_fs.realpathSync)(path);
+}
+
+// ../wire-core/src/storage/workspace.ts
+var import_node_fs2 = require("node:fs");
+var import_promises4 = require("node:fs/promises");
+var import_node_path2 = require("node:path");
+var defaultWireBackend = "files";
+var defaultWireRegistryPath = "records";
+function canonicalPath(path) {
+  const resolved = (0, import_node_path2.resolve)(path);
+  if ((0, import_node_fs2.existsSync)(resolved)) return (0, import_node_fs2.realpathSync)(resolved);
+  return (0, import_node_path2.join)(canonicalPath((0, import_node_path2.dirname)(resolved)), (0, import_node_path2.basename)(resolved));
+}
+async function discoverWireRoot(path, home) {
+  const homePath = canonicalPath(home);
+  let currentPath = canonicalPath(path);
+  if (!(0, import_node_fs2.existsSync)(currentPath) || !(0, import_node_fs2.statSync)(currentPath).isDirectory()) currentPath = (0, import_node_path2.dirname)(currentPath);
+  while (true) {
+    const wirePath = (0, import_node_path2.join)(currentPath, ".wire");
+    if ((0, import_node_fs2.existsSync)(wirePath) && (0, import_node_fs2.statSync)(wirePath).isDirectory()) return wirePath;
+    const parentPath = (0, import_node_path2.dirname)(currentPath);
+    if (parentPath === currentPath) return (0, import_node_path2.join)(homePath, ".wire");
+    currentPath = parentPath;
+  }
+}
+async function configuredWireRoot(path, home) {
+  const wireRoot2 = await discoverWireRoot(path, home);
+  const configPath = (0, import_node_path2.join)(wireRoot2, "config.json");
+  return (0, import_node_fs2.existsSync)(configPath) && (0, import_node_fs2.statSync)(configPath).isFile() ? wireRoot2 : null;
+}
+function wireRelativePath(path, wireRoot2) {
+  return (0, import_node_path2.relative)((0, import_node_path2.dirname)(canonicalPath(wireRoot2)), canonicalPath(path)).replaceAll(import_node_path2.sep, "/");
+}
+async function loadWireConfig(wireRoot2) {
+  return JSON.parse(await (0, import_promises4.readFile)((0, import_node_path2.join)(wireRoot2, "config.json"), "utf8"));
+}
+async function openWireRegistry(path, home) {
+  const wireRoot2 = await discoverWireRoot(path, home);
+  const config = await loadWireConfig(wireRoot2);
+  const registryPath = (0, import_node_path2.join)(wireRoot2, config.path);
+  if (config.backend === "sqlite") return new SqliteRegistry(registryPath);
+  if (config.backend === "files") return new FileRegistry(registryPath);
+  throw new Error(config.backend);
+}
+async function initializeWire(path, backend, registryPath) {
+  const wireRoot2 = (0, import_node_path2.join)(canonicalPath(path), ".wire");
+  await (0, import_promises4.mkdir)(wireRoot2, { recursive: true });
+  const configPath = (0, import_node_path2.join)(wireRoot2, "config.json");
+  if ((0, import_node_fs2.existsSync)(configPath) && (0, import_node_fs2.statSync)(configPath).isFile()) {
+    const existing = await loadWireConfig(wireRoot2);
+    if (existing.backend !== backend || existing.path !== registryPath) throw new Error(`Wire workspace already initialized with ${existing.backend} registry at ${existing.path}. Existing registries are not overwritten.`);
+    return { root: wireRoot2, backend: existing.backend, path: (0, import_node_path2.join)(wireRoot2, existing.path), created: false };
+  }
+  const config = { backend, path: registryPath };
+  await (0, import_promises4.writeFile)(configPath, `${stableJsonPretty(config)}
+`, "utf8");
+  const fullRegistryPath = (0, import_node_path2.join)(wireRoot2, registryPath);
+  if (backend === "sqlite") new SqliteRegistry(fullRegistryPath);
+  else if (backend === "files") new FileRegistry(fullRegistryPath);
+  else throw new Error(backend);
+  return { root: wireRoot2, backend, path: fullRegistryPath, created: true };
+}
+
+// ../wire-core/src/operations.ts
+var import_node_crypto2 = require("node:crypto");
+var import_node_path3 = require("node:path");
 async function wireRoot(dependencies, path) {
   const configured = await dependencies.workspace.configuredRoot(path, dependencies.home);
   if (configured !== null) return configured;
@@ -720,7 +1120,7 @@ function primaryLink(resource) {
 function collisionFilename(title2, service, identifier) {
   const base = markdownFilename(title2).slice(0, -3);
   const suffix = `${service}-${identifier}`.replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^-+|-+$/g, "");
-  const compact2 = suffix.length <= 48 ? suffix : `${suffix.slice(0, 32).replace(/[-_.]+$/g, "")}-${(0, import_node_crypto.createHash)("sha256").update(suffix).digest("hex").slice(0, 10)}`;
+  const compact2 = suffix.length <= 48 ? suffix : `${suffix.slice(0, 32).replace(/[-_.]+$/g, "")}-${(0, import_node_crypto2.createHash)("sha256").update(suffix).digest("hex").slice(0, 10)}`;
   return `${base}-${compact2}.md`;
 }
 function markdownLines(markdown) {
@@ -779,11 +1179,11 @@ function composeWire(dependencies) {
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const current = await existingResource(registry, source.service, source.identifier);
     let outputPath;
-    if (current !== null) outputPath = (0, import_node_path.join)((0, import_node_path.dirname)(root), primaryLink(current).path);
+    if (current !== null) outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(current).path);
     else if (fixedOutputPath !== void 0) outputPath = fixedOutputPath;
     else {
-      const cleanPath = (0, import_node_path.join)((0, import_node_path.resolve)(path), markdownFilename(fetched.title));
-      outputPath = await dependencies.filesystem.exists(cleanPath) ? (0, import_node_path.join)((0, import_node_path.resolve)(path), collisionFilename(fetched.title, source.service, source.identifier)) : cleanPath;
+      const cleanPath = (0, import_node_path3.join)((0, import_node_path3.resolve)(path), markdownFilename(fetched.title));
+      outputPath = await dependencies.filesystem.exists(cleanPath) ? (0, import_node_path3.join)((0, import_node_path3.resolve)(path), collisionFilename(fetched.title, source.service, source.identifier)) : cleanPath;
     }
     const relativePath = dependencies.workspace.relativePath(outputPath, root);
     const previous = previousMarkdown === null ? await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "" : previousMarkdown;
@@ -821,8 +1221,8 @@ function composeWire(dependencies) {
   const downloadSource = async (url, path) => {
     const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
     const source = parseSourceUrl(url, dependencies.catalog);
-    const cleanPath = (0, import_node_path.join)((0, import_node_path.resolve)(path), markdownFilename(fetched.title));
-    const outputPath = await dependencies.filesystem.exists(cleanPath) ? (0, import_node_path.join)((0, import_node_path.resolve)(path), collisionFilename(fetched.title, source.service, source.identifier)) : cleanPath;
+    const cleanPath = (0, import_node_path3.join)((0, import_node_path3.resolve)(path), markdownFilename(fetched.title));
+    const outputPath = await dependencies.filesystem.exists(cleanPath) ? (0, import_node_path3.join)((0, import_node_path3.resolve)(path), collisionFilename(fetched.title, source.service, source.identifier)) : cleanPath;
     const previous = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
     await dependencies.filesystem.writeText(outputPath, fetched.markdown);
     const id = resourceId(source);
@@ -831,7 +1231,7 @@ function composeWire(dependencies) {
       type: source.type,
       identifiers: [{ service: source.service, identifier: source.identifier }],
       urls: [url],
-      filesystem_links: [{ path: (0, import_node_path.basename)(outputPath), role: "primary", data: { format: "markdown" } }],
+      filesystem_links: [{ path: (0, import_node_path3.basename)(outputPath), role: "primary", data: { format: "markdown" } }],
       data: [
         { namespace: "wire", key: "title", value: fetched.title },
         { namespace: "wire", key: "synced_at", value: dependencies.now().toISOString() },
@@ -849,7 +1249,7 @@ function composeWire(dependencies) {
       if (resource === void 0) throw new Error(`Resource URL not found: ${value}`);
       return resource;
     }
-    const candidatePath = (0, import_node_path.resolve)(path, value);
+    const candidatePath = (0, import_node_path3.resolve)(path, value);
     const relativePath = dependencies.workspace.relativePath(candidatePath, root);
     const resources = await registry.findByPath(relativePath);
     if (resources.length > 0 || await dependencies.filesystem.exists(candidatePath)) {
@@ -861,7 +1261,7 @@ function composeWire(dependencies) {
     return registry.get(value);
   };
   const sync = async (value, path) => {
-    const candidatePath = (0, import_node_path.resolve)(path, value);
+    const candidatePath = (0, import_node_path3.resolve)(path, value);
     const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const relativePath = dependencies.workspace.relativePath(candidatePath, root);
@@ -869,11 +1269,11 @@ function composeWire(dependencies) {
     if (pathResources.length === 0 && await dependencies.filesystem.exists(candidatePath)) {
       const markdown2 = await dependencies.filesystem.readText(candidatePath);
       const uploaded = await uploadSource(dependencies.fetchInput, dependencies.catalog, markdown2, candidatePath);
-      return store(uploaded.url, (0, import_node_path.dirname)(candidatePath), uploaded, markdown2, "uploaded", candidatePath, void 0, uploaded.markdown);
+      return store(uploaded.url, (0, import_node_path3.dirname)(candidatePath), uploaded, markdown2, "uploaded", candidatePath, void 0, uploaded.markdown);
     }
     const resource = await resolveResource(registry, value, root, path);
-    const outputPath = (0, import_node_path.join)((0, import_node_path.dirname)(root), primaryLink(resource).path);
-    const outputDirectory = (0, import_node_path.dirname)(outputPath);
+    const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
+    const outputDirectory = (0, import_node_path3.dirname)(outputPath);
     const source = parseSourceUrl(resource.urls[0], dependencies.catalog);
     const snapshot = resource.data.find((item) => item.namespace === source.service && item.key === "snapshot").value;
     const markdown = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
@@ -885,32 +1285,33 @@ function composeWire(dependencies) {
     return store(resource.urls[0], outputDirectory, fetched, markdown, action, void 0, action === "uploaded" && baseMarkdown !== null ? baseMarkdown : void 0, action === "uploaded" ? markdown : fetched.markdown);
   };
   const download = async (value, path) => {
-    const candidatePath = (0, import_node_path.resolve)(path, value);
+    const candidatePath = (0, import_node_path3.resolve)(path, value);
     const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
-    const outputPath = (0, import_node_path.join)((0, import_node_path.dirname)(root), primaryLink(resource).path);
+    const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
     const markdown = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
     const fetched = await fetchSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog);
-    return store(resource.urls[0], (0, import_node_path.dirname)(outputPath), fetched, markdown, "downloaded", void 0, void 0, fetched.markdown);
+    return store(resource.urls[0], (0, import_node_path3.dirname)(outputPath), fetched, markdown, "downloaded", void 0, void 0, fetched.markdown);
   };
   const detach = async (value, path) => {
-    const candidatePath = (0, import_node_path.resolve)(path, value);
+    const candidatePath = (0, import_node_path3.resolve)(path, value);
     const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
-    const result = await download(value, path);
+    const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
+    const markdown = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
     await registry.delete(resource.id);
-    return { ...result, summary: { ...result.summary, action: "detached" } };
+    return { resource, path: outputPath, markdown, summary: { action: "detached", added: 0, modified: 0, removed: 0, remote: resource.urls[0], local: outputPath } };
   };
-  const unlink = detach;
+  const unlink2 = detach;
   const watch = async (value, path) => {
-    const candidatePath = (0, import_node_path.resolve)(path, value);
+    const candidatePath = (0, import_node_path3.resolve)(path, value);
     const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const config = watchConfig(await dependencies.workspace.loadConfig(root));
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
-    const outputPath = (0, import_node_path.join)((0, import_node_path.dirname)(root), primaryLink(resource).path);
+    const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
     const initial = await dependencies.filesystem.exists(outputPath) ? null : await download(value, path);
     let lastSyncedMarkdown = initial === null ? await dependencies.filesystem.readText(outputPath) : initial.markdown;
     let debounce;
@@ -951,7 +1352,7 @@ function composeWire(dependencies) {
     });
   };
   const openResource2 = async (value, path) => {
-    const candidatePath = (0, import_node_path.resolve)(path, value);
+    const candidatePath = (0, import_node_path3.resolve)(path, value);
     const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
@@ -964,10 +1365,10 @@ function composeWire(dependencies) {
     const scope = dependencies.workspace.relativePath(path, root);
     const results = [];
     for (const resource of await registry.listResources()) {
-      const outputPath = (0, import_node_path.join)((0, import_node_path.dirname)(root), primaryLink(resource).path);
+      const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
       if (relativePathContains(scope, primaryLink(resource).path)) {
         try {
-          results.push(await sync(resource.id, (0, import_node_path.dirname)(outputPath)));
+          results.push(await sync(resource.id, (0, import_node_path3.dirname)(outputPath)));
         } catch (error) {
           results.push({ resource, path: outputPath, markdown: "", summary: { action: "failed", added: 0, modified: 0, removed: 0, remote: resource.urls[0], local: outputPath, error: errorMessage(error) } });
         }
@@ -980,7 +1381,7 @@ function composeWire(dependencies) {
     return (await dependencies.workspace.openRegistry(root, dependencies.home)).listResources();
   };
   const showResource = async (value, path) => {
-    const candidatePath = (0, import_node_path.resolve)(path, value);
+    const candidatePath = (0, import_node_path3.resolve)(path, value);
     const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     return resolveResource(registry, value, root, path);
@@ -993,7 +1394,7 @@ function composeWire(dependencies) {
     sync,
     download,
     detach,
-    unlink,
+    unlink: unlink2,
     watch,
     openResource: openResource2,
     syncAll,
@@ -1949,6 +2350,7 @@ var gmailProvider = Object.freeze({
 });
 
 // ../provider-google-docs/src/google-docs.ts
+var import_node_zlib = require("node:zlib");
 async function cookieHeader3(runtime2) {
   const cookies = await runtime2.cookies.loadSaved("google-docs");
   if (cookies === null) throw cookieAuthenticationError();
@@ -1963,7 +2365,7 @@ function filenameTitle(value, label) {
   const bare = /filename=([^;]+)/i.exec(value);
   if (encoded === null && quoted === null && bare === null) throw new Error(`Google ${label} did not include a filename`);
   const filename = encoded !== null ? decodeURIComponent(encoded[1]) : quoted !== null ? quoted[1] : bare[1].trim();
-  return filename.replace(/\.(csv|html|md|txt|xlsx)$/i, "");
+  return filename.replace(/\.(csv|html|md|pptx|txt|xlsx)$/i, "");
 }
 async function googleExport(runtime2, url, label) {
   const response = await runtime2.http.request(url, { headers: { Cookie: await cookieHeader3(runtime2) } });
@@ -1972,6 +2374,14 @@ async function googleExport(runtime2, url, label) {
   const disposition = response.headers.get("content-disposition");
   if (disposition === null) throw cookieAuthenticationError();
   return Object.freeze({ title: filenameTitle(disposition, label), text: await response.text() });
+}
+async function googleExportBytes(runtime2, url, label) {
+  const response = await runtime2.http.request(url, { headers: { Cookie: await cookieHeader3(runtime2) } });
+  if (response.status === 401 || response.status === 403) throw cookieAuthenticationError();
+  if (!response.ok) throw new Error(`Google ${label} failed: HTTP ${response.status}`);
+  const disposition = response.headers.get("content-disposition");
+  if (disposition === null) throw cookieAuthenticationError();
+  return Object.freeze({ title: filenameTitle(disposition, label), bytes: new Uint8Array(await response.arrayBuffer()) });
 }
 async function googleText(runtime2, url, label) {
   const response = await runtime2.http.request(url, { headers: { Cookie: await cookieHeader3(runtime2) } });
@@ -2105,6 +2515,244 @@ function docEditUrl(documentId, key2, tab) {
 function documentTab(source) {
   const tab = source["document_tab"];
   return typeof tab === "string" && tab !== "" ? tab : null;
+}
+function decodeXml(value) {
+  return value.replace(/&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|apos);/g, (_match, entity) => {
+    if (entity.startsWith("#x")) return String.fromCodePoint(Number.parseInt(entity.slice(2), 16));
+    if (entity.startsWith("#")) return String.fromCodePoint(Number.parseInt(entity.slice(1), 10));
+    if (entity === "amp") return "&";
+    if (entity === "lt") return "<";
+    if (entity === "gt") return ">";
+    if (entity === "quot") return '"';
+    if (entity === "apos") return "'";
+    throw new Error(`PPTX XML unknown entity: ${entity}`);
+  });
+}
+function xmlTagEnd(xml, start) {
+  let quote2 = null;
+  for (let index = start + 1; index < xml.length; index += 1) {
+    const char = xml[index];
+    if (quote2 === null && char === ">") return index;
+    if (quote2 === null && (char === '"' || char === "'")) quote2 = char;
+    else if (quote2 === char) quote2 = null;
+  }
+  throw new Error("PPTX XML tag is unterminated");
+}
+function parseAttributes(value) {
+  const attributes = /* @__PURE__ */ new Map();
+  let index = 0;
+  while (index < value.length) {
+    while (index < value.length && /\s/.test(value[index])) index += 1;
+    if (index >= value.length) break;
+    const nameStart = index;
+    while (index < value.length && !/[\s=]/.test(value[index])) index += 1;
+    const name = value.slice(nameStart, index);
+    while (index < value.length && /\s/.test(value[index])) index += 1;
+    if (value[index] !== "=") throw new Error(`PPTX XML attribute ${name} is invalid`);
+    index += 1;
+    while (index < value.length && /\s/.test(value[index])) index += 1;
+    const quote2 = value[index];
+    if (quote2 !== '"' && quote2 !== "'") throw new Error(`PPTX XML attribute ${name} is unquoted`);
+    index += 1;
+    const textStart = index;
+    while (index < value.length && value[index] !== quote2) index += 1;
+    attributes.set(name, decodeXml(value.slice(textStart, index)));
+    index += 1;
+  }
+  return attributes;
+}
+function parseXml(xml) {
+  const root = { name: "#document", attributes: /* @__PURE__ */ new Map(), children: [] };
+  const stack = [root];
+  let index = 0;
+  while (index < xml.length) {
+    if (xml.startsWith("<?", index)) {
+      index = xml.indexOf("?>", index) + 2;
+    } else if (xml.startsWith("<!--", index)) {
+      index = xml.indexOf("-->", index) + 3;
+    } else if (xml.startsWith("<![CDATA[", index)) {
+      const end = xml.indexOf("]]>", index);
+      stack[stack.length - 1].children.push(xml.slice(index + 9, end));
+      index = end + 3;
+    } else if (xml.startsWith("</", index)) {
+      const end = xmlTagEnd(xml, index);
+      const name = xml.slice(index + 2, end).trim();
+      const node = stack.pop();
+      if (node.name !== name) throw new Error(`PPTX XML closing tag mismatch: ${name}`);
+      stack[stack.length - 1].children.push(Object.freeze({ name: node.name, attributes: node.attributes, children: Object.freeze(node.children) }));
+      index = end + 1;
+    } else if (xml[index] === "<") {
+      const end = xmlTagEnd(xml, index);
+      const raw = xml.slice(index + 1, end).trim();
+      const selfClosing = raw.endsWith("/");
+      const tag = selfClosing ? raw.slice(0, -1).trimEnd() : raw;
+      const nameEnd = tag.search(/\s/);
+      const name = nameEnd === -1 ? tag : tag.slice(0, nameEnd);
+      const attributes = parseAttributes(nameEnd === -1 ? "" : tag.slice(nameEnd + 1));
+      if (selfClosing) stack[stack.length - 1].children.push(Object.freeze({ name, attributes, children: Object.freeze([]) }));
+      else stack.push({ name, attributes, children: [] });
+      index = end + 1;
+    } else {
+      const end = xml.indexOf("<", index);
+      const text2 = decodeXml(xml.slice(index, end === -1 ? xml.length : end));
+      if (text2 !== "") stack[stack.length - 1].children.push(text2);
+      index = end === -1 ? xml.length : end;
+    }
+  }
+  if (stack.length !== 1) throw new Error("PPTX XML document is unclosed");
+  return Object.freeze({ name: root.name, attributes: root.attributes, children: Object.freeze(root.children) });
+}
+function isXmlNode(value) {
+  return typeof value !== "string";
+}
+function xmlChildren(node, name) {
+  return node.children.filter(isXmlNode).filter((child) => child.name === name);
+}
+function xmlDescendants(node, name) {
+  return node.children.filter(isXmlNode).flatMap((child) => child.name === name ? [child, ...xmlDescendants(child, name)] : xmlDescendants(child, name));
+}
+function xmlText(node) {
+  return node.children.map((child) => typeof child === "string" ? child : xmlText(child)).join("");
+}
+function xmlAttribute(node, name) {
+  const value = node.attributes.get(name);
+  if (value === void 0) throw new Error(`PPTX XML missing ${name}`);
+  return value;
+}
+function zipEndOfCentralDirectory(bytes) {
+  for (let index = bytes.length - 22; index >= Math.max(0, bytes.length - 65557); index -= 1) {
+    if (bytes[index] === 80 && bytes[index + 1] === 75 && bytes[index + 2] === 5 && bytes[index + 3] === 6) return index;
+  }
+  throw new Error("PPTX ZIP missing central directory");
+}
+function unzipFiles(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const end = zipEndOfCentralDirectory(bytes);
+  const totalEntries = view.getUint16(end + 10, true);
+  let centralOffset = view.getUint32(end + 16, true);
+  const files = /* @__PURE__ */ new Map();
+  const decoder = new TextDecoder();
+  for (let entryIndex = 0; entryIndex < totalEntries; entryIndex += 1) {
+    if (view.getUint32(centralOffset, true) !== 33639248) throw new Error("PPTX ZIP central directory entry is invalid");
+    const method = view.getUint16(centralOffset + 10, true);
+    const compressedSize = view.getUint32(centralOffset + 20, true);
+    const nameLength = view.getUint16(centralOffset + 28, true);
+    const extraLength = view.getUint16(centralOffset + 30, true);
+    const commentLength = view.getUint16(centralOffset + 32, true);
+    const localOffset = view.getUint32(centralOffset + 42, true);
+    const name = decoder.decode(bytes.subarray(centralOffset + 46, centralOffset + 46 + nameLength));
+    if (view.getUint32(localOffset, true) !== 67324752) throw new Error("PPTX ZIP local file entry is invalid");
+    const localNameLength = view.getUint16(localOffset + 26, true);
+    const localExtraLength = view.getUint16(localOffset + 28, true);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = bytes.subarray(dataStart, dataStart + compressedSize);
+    if (method === 0) files.set(name, compressed);
+    else if (method === 8) files.set(name, (0, import_node_zlib.inflateRawSync)(compressed));
+    else throw new Error(`PPTX ZIP compression method is unsupported: ${method}`);
+    centralOffset += 46 + nameLength + extraLength + commentLength;
+  }
+  return files;
+}
+function zipText(files, name) {
+  const bytes = files.get(name);
+  if (bytes === void 0) throw new Error(`PPTX missing ${name}`);
+  return new TextDecoder().decode(bytes);
+}
+function relationshipTargets(xml) {
+  const relationships = /* @__PURE__ */ new Map();
+  for (const relationship of xmlDescendants(parseXml(xml), "Relationship")) relationships.set(xmlAttribute(relationship, "Id"), xmlAttribute(relationship, "Target"));
+  return relationships;
+}
+function resolvePartPath(basePath, target) {
+  const parts = basePath.split("/");
+  parts.pop();
+  for (const segment of target.split("/")) {
+    if (segment === "..") parts.pop();
+    else if (segment !== ".") parts.push(segment);
+  }
+  return parts.join("/");
+}
+function slidePartPaths(files) {
+  const presentation = parseXml(zipText(files, "ppt/presentation.xml"));
+  const relationships = relationshipTargets(zipText(files, "ppt/_rels/presentation.xml.rels"));
+  const slides = xmlDescendants(presentation, "p:sldId");
+  if (slides.length === 0) throw new Error("PPTX presentation has no slides");
+  return slides.map((slide) => {
+    const id = xmlAttribute(slide, "r:id");
+    const target = relationships.get(id);
+    if (target === void 0) throw new Error(`PPTX presentation missing slide relationship ${id}`);
+    return resolvePartPath("ppt/presentation.xml", target);
+  });
+}
+function slideRelationshipsPath(slidePath) {
+  const parts = slidePath.split("/");
+  const filename = parts.pop();
+  if (filename === void 0) throw new Error("PPTX slide path is invalid");
+  parts.push("_rels", `${filename}.rels`);
+  return parts.join("/");
+}
+function markdownSpan(value, left, right) {
+  const leading = /^[ \t]*/.exec(value)[0];
+  const trailing = /[ \t]*$/.exec(value)[0];
+  const core = value.slice(leading.length, value.length - trailing.length);
+  return core === "" ? value : `${leading}${left}${core}${right}${trailing}`;
+}
+function linkMarkdown(value, target) {
+  const leading = /^[ \t]*/.exec(value)[0];
+  const trailing = /[ \t]*$/.exec(value)[0];
+  const core = value.slice(leading.length, value.length - trailing.length);
+  return core === "" ? value : `${leading}[${core.replace(/[[\]\\]/g, "\\$&")}](${target.replace(/\)/g, "%29")})${trailing}`;
+}
+function formattedRunMarkdown(run, relationships) {
+  const text2 = xmlDescendants(run, "a:t").map(xmlText).join("");
+  const runProperties = xmlChildren(run, "a:rPr")[0];
+  if (runProperties === void 0) return text2;
+  const hyperlink = xmlDescendants(runProperties, "a:hlinkClick")[0];
+  let markdown = text2;
+  if (runProperties.attributes.get("u") !== void 0 && runProperties.attributes.get("u") !== "none" && hyperlink === void 0) markdown = markdownSpan(markdown, "<u>", "</u>");
+  if (runProperties.attributes.get("strike") !== void 0 && runProperties.attributes.get("strike") !== "noStrike") markdown = markdownSpan(markdown, "~~", "~~");
+  if (runProperties.attributes.get("b") === "1" && runProperties.attributes.get("i") === "1") markdown = markdownSpan(markdown, "***", "***");
+  else if (runProperties.attributes.get("b") === "1") markdown = markdownSpan(markdown, "**", "**");
+  else if (runProperties.attributes.get("i") === "1") markdown = markdownSpan(markdown, "_", "_");
+  if (hyperlink !== void 0) {
+    const id = xmlAttribute(hyperlink, "r:id");
+    const target = relationships.get(id);
+    if (target === void 0) throw new Error(`PPTX slide missing hyperlink relationship ${id}`);
+    markdown = linkMarkdown(markdown, target);
+  }
+  return markdown;
+}
+function paragraphMarkdown(paragraph, relationships) {
+  const pPr = xmlChildren(paragraph, "a:pPr")[0];
+  const list = pPr === void 0 || xmlChildren(pPr, "a:buNone").length !== 0 ? null : xmlChildren(pPr, "a:buAutoNum").length !== 0 ? "number" : xmlChildren(pPr, "a:buChar").length !== 0 ? "bullet" : null;
+  const levelValue = pPr === void 0 ? void 0 : pPr.attributes.get("lvl");
+  const level = levelValue === void 0 ? 0 : Number(levelValue);
+  const pieces = [];
+  for (const child of paragraph.children.filter(isXmlNode)) {
+    if (child.name === "a:br") pieces.push("\n");
+    if (child.name === "a:r" || child.name === "a:fld") pieces.push(formattedRunMarkdown(child, relationships));
+  }
+  return Object.freeze({ text: pieces.join("").replace(/[ \t]+$/gm, ""), list, level });
+}
+function slideMarkdown(slide, relationships) {
+  const paragraphs = xmlDescendants(slide, "a:p").map((paragraph) => paragraphMarkdown(paragraph, relationships)).filter((paragraph) => paragraph.text.trim() !== "");
+  const lines = paragraphs.map((paragraph, index) => {
+    if (index === 0 && paragraph.list === null) return `## ${paragraph.text.trim()}`;
+    if (paragraph.list === "bullet") return `${"  ".repeat(paragraph.level)}- ${paragraph.text.trim()}`;
+    if (paragraph.list === "number") return `${"  ".repeat(paragraph.level)}1. ${paragraph.text.trim()}`;
+    return paragraph.text.trim();
+  });
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+function slidesMarkdown(bytes) {
+  const files = unzipFiles(bytes);
+  const slides = slidePartPaths(files).map((slidePath) => {
+    const slide = parseXml(zipText(files, slidePath));
+    const relationships = relationshipTargets(zipText(files, slideRelationshipsPath(slidePath)));
+    return slideMarkdown(slide, relationships);
+  });
+  return `${slides.join("\n\n---\n\n")}
+`;
 }
 function urlParam(url, name) {
   const query = url.searchParams.get(name);
@@ -2318,6 +2966,12 @@ async function fetchGoogleDocument(runtime2, source) {
     exportUrl = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(documentId)}/export?${query}`;
     label = "Sheets CSV export";
     sheetGid = gid2;
+  } else if (source.type === "presentation") {
+    const query = new URLSearchParams({ format: "pptx" });
+    const key2 = resourceKey(source);
+    if (key2 !== null) query.set("resourcekey", key2);
+    exportUrl = `https://docs.google.com/presentation/d/${encodeURIComponent(documentId)}/export?${query}`;
+    label = "Slides PPTX export";
   } else {
     const query = new URLSearchParams({ format: "md" });
     const key2 = resourceKey(source);
@@ -2327,6 +2981,11 @@ async function fetchGoogleDocument(runtime2, source) {
     exportUrl = `https://docs.google.com/document/d/${encodeURIComponent(documentId)}/export?${query}`;
     label = "Docs Markdown export";
   }
+  if (source.type === "presentation") {
+    const exported2 = await googleExportBytes(runtime2, exportUrl, label);
+    const markdown2 = slidesMarkdown(exported2.bytes);
+    return Object.freeze({ title: exported2.title, markdown: markdown2, data: { document_id: documentId, title: exported2.title, output_path: null, sheet_gid: sheetGid, markdown: markdown2, rows: null, presentation: true } });
+  }
   const exported = await googleExport(runtime2, exportUrl, label);
   const rows = source["sheet_gid"] === void 0 ? null : parseCsv(exported.text);
   const markdown = rows === null ? exported.text : rowsMarkdown(rows);
@@ -2335,6 +2994,13 @@ async function fetchGoogleDocument(runtime2, source) {
 }
 async function synchronizeGoogleDocument(runtime2, _url, source, base, markdown) {
   const remote = await fetchGoogleDocument(runtime2, source);
+  if (source.type === "presentation") {
+    const baseMarkdown2 = objectValue(base)["markdown"];
+    if (typeof baseMarkdown2 !== "string") throw new Error("Google sync base must include markdown");
+    if (markdown === baseMarkdown2 || markdown === remote.markdown) return remote;
+    if (remote.markdown === baseMarkdown2) throw new Error("Google Slides sync is download-only. Revert local edits or use `wire download <url>` for a fresh copy.");
+    throw new Error("Google Slides changed remotely and locally. Resolve the conflict in Google Slides or the local Markdown file before syncing again.");
+  }
   const baseMarkdown = objectValue(base)["markdown"];
   const label = source["sheet_gid"] === void 0 ? "Google Docs" : "Google Sheets";
   if (typeof baseMarkdown !== "string") throw new Error("Google sync base must include markdown");
@@ -2364,12 +3030,13 @@ Prefix it with an apostrophe or rewrite it as plain text before syncing.`);
 }
 var googleDocsService = defineService({
   name: "google-docs",
-  matches: (url) => url.hostname === "docs.google.com" && /^\/(document|spreadsheets)(?:\/u\/\d+)?\/d\/[^/]+(?:\/.*)?$/.test(url.pathname),
+  matches: (url) => url.hostname === "docs.google.com" && /^\/(document|presentation|spreadsheets)(?:\/u\/\d+)?\/d\/[^/]+(?:\/.*)?$/.test(url.pathname),
   parse: (url) => {
-    const match = /^\/(document|spreadsheets)(?:\/u\/\d+)?\/d\/([^/]+)(?:\/.*)?$/.exec(url.pathname);
+    const match = /^\/(document|presentation|spreadsheets)(?:\/u\/\d+)?\/d\/([^/]+)(?:\/.*)?$/.exec(url.pathname);
     const documentId = match[2];
     const key2 = urlParam(url, "resourcekey");
     const resource_key = key2 === null || key2 === "" ? {} : { resource_key: key2 };
+    if (match[1] === "presentation") return Object.freeze({ service: "google-docs", identifier: documentId, type: "presentation", ...resource_key });
     if (match[1] === "spreadsheets") {
       const queryGid = url.searchParams.get("gid");
       const hashGid = new URLSearchParams(url.hash.slice(1)).get("gid");
@@ -2390,7 +3057,7 @@ var googleDocsProvider = Object.freeze({
 });
 
 // ../provider-notion/src/notion-sync.ts
-var import_node_crypto2 = require("node:crypto");
+var import_node_crypto3 = require("node:crypto");
 function object3(value) {
   return value;
 }
@@ -2419,7 +3086,7 @@ function compact(value) {
   return stableJsonCompact(value);
 }
 function hash(value) {
-  return `sha256:${(0, import_node_crypto2.createHash)("sha256").update(compact(value)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto3.createHash)("sha256").update(compact(value)).digest("hex")}`;
 }
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -2887,7 +3554,7 @@ function parserBlockToNotionBlock(block, id, parentId, parentTable, spaceId, use
   if (["header", "sub_header", "sub_sub_header"].includes(block.type)) return { ...base, properties: { title: block.rich_text }, ...block.properties["format"] === void 0 ? {} : { format: block.properties["format"] } };
   return { ...base, properties: { title: block.rich_text } };
 }
-function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTime, createId = () => (0, import_node_crypto2.randomUUID)()) {
+function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTime, createId = () => (0, import_node_crypto3.randomUUID)()) {
   const operations = [];
   const topLevelIds = [];
   const lastAtIndent = /* @__PURE__ */ new Map();
@@ -2966,7 +3633,7 @@ function localTree(blocks) {
   return roots;
 }
 function outputNode(node, remoteNode, parentId, remote, currentTime) {
-  const id = remoteNode?.id ?? formatBlockId((0, import_node_crypto2.randomUUID)().replaceAll("-", ""));
+  const id = remoteNode?.id ?? formatBlockId((0, import_node_crypto3.randomUUID)().replaceAll("-", ""));
   return { id, block: parserBlockToNotionBlock(node.block, id, parentId, "block", remote.spaceId, remote.userId, currentTime), children: node.children.map((child, index) => outputNode(child, remoteNode?.children[index], id, remote, currentTime)) };
 }
 function emitUpdates(remote, local, blockId, spaceId) {
@@ -3230,7 +3897,7 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
   const spaces = await notionPost(runtime2, "getSpaces", cookie, {}, {});
   const spaceView = object3(object3(spaces[userId])["space_view"]);
   const spaceId = object3(spaceView[Object.keys(spaceView)[0]])["spaceId"];
-  const pageId = (0, import_node_crypto2.randomUUID)();
+  const pageId = (0, import_node_crypto3.randomUUID)();
   const compactPageId = pageId.replaceAll("-", "");
   const currentTime = runtime2.clock.now().getTime();
   const headers2 = { "x-notion-active-user-header": userId, "x-notion-space-id": spaceId, referer: `https://www.notion.so/${compactPageId}`, ...csrf === void 0 ? {} : { "x-csrf-token": csrf } };
@@ -3257,7 +3924,7 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
   };
   const localBlocks = parseNotionMarkdown(split.body);
   const operations = [pageOperation, ...buildNotionCreateOperations(localBlocks, pageId, spaceId, userId, currentTime).operations];
-  await notionPost(runtime2, "saveTransactionsFanout", cookie, { requestId: (0, import_node_crypto2.randomUUID)(), transactions: [{ id: (0, import_node_crypto2.randomUUID)(), spaceId, operations }] }, headers2);
+  await notionPost(runtime2, "saveTransactionsFanout", cookie, { requestId: (0, import_node_crypto3.randomUUID)(), transactions: [{ id: (0, import_node_crypto3.randomUUID)(), spaceId, operations }] }, headers2);
   const pageTree = {
     id: pageId,
     block: pageOperation.args,
@@ -3308,7 +3975,7 @@ ${split.body}`;
     }
     const titleRich2 = split.title === "" ? object3(remote.tree.block["properties"])["title"] : titleRichText(split.title);
     const titleChanged = split.title !== "" && compact(object3(remote.tree.block["properties"])["title"]) !== compact(titleRich2);
-    if (titleChanged) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto2.randomUUID)(), transactions: [{ id: (0, import_node_crypto2.randomUUID)(), spaceId: remote.spaceId, operations: [{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "set", args: titleRich2 }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime2.clock.now().getTime() }] }] }, remote.headers);
+    if (titleChanged) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto3.randomUUID)(), transactions: [{ id: (0, import_node_crypto3.randomUUID)(), spaceId: remote.spaceId, operations: [{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "set", args: titleRich2 }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime2.clock.now().getTime() }] }] }, remote.headers);
     const outputTree2 = { ...remote.tree, block: { ...remote.tree.block, properties: { ...object3(remote.tree.block["properties"]), title: titleRich2 } } };
     const output2 = renderNotionTreeToMarkdown(outputTree2, mentions);
     return { title: output2.split("\n")[0].replace(/^# */, ""), markdown: output2, data: notionData(remote.tree.id, output2, outputTree2, mentions) };
@@ -3327,7 +3994,7 @@ ${split.body}`;
   const operations = [...diffResult.operations];
   const titleRich = split.title === "" ? object3(remote.tree.block["properties"])["title"] : titleRichText(split.title);
   if (split.title !== "" && compact(object3(remote.tree.block["properties"])["title"]) !== compact(titleRich)) operations.unshift({ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "set", args: titleRich });
-  if (operations.length > 0) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto2.randomUUID)(), transactions: [{ id: (0, import_node_crypto2.randomUUID)(), spaceId: remote.spaceId, operations }] }, remote.headers);
+  if (operations.length > 0) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto3.randomUUID)(), transactions: [{ id: (0, import_node_crypto3.randomUUID)(), spaceId: remote.spaceId, operations }] }, remote.headers);
   const outputTree = { id: remote.tree.id, block: { ...remote.tree.block, properties: { ...object3(remote.tree.block["properties"]), title: titleRich } }, children: localTree(localBlocks).map((node, index) => outputNode(node, remote.tree.children[index], remote.tree.id, remote, ambient.currentTime)) };
   const output = renderNotionTreeToMarkdown(outputTree, mentions);
   return { title: output.split("\n")[0].replace(/^# */, ""), markdown: output, data: notionData(remote.tree.id, output, outputTree, mentions) };
@@ -3619,9 +4286,14 @@ var zoomHubService = defineService({
     const document = files[0];
     const notes = document["meetingNotes"];
     const meetingId = notes["meetingId"];
+    const base = { recording_id: source.identifier, title: document["title"], source_url: document["fileLink"], meeting_id: meetingId, main_meeting_id: notes["mainMeetingId"], owner: document["owner"]["ownerName"], created_at: document["createdInfo"]["time"], updated_at: document["updatedInfo"]["time"] };
+    if (meetingId === "") {
+      const result2 = { ...base, transcript: "", state: "missing" };
+      const markdown = [`# ${result2.title}`, "", `- Transcript state: ${result2.state}`, `- Recording ID: ${result2.recording_id}`, `- Meeting ID: ${result2.meeting_id}`, `- Main meeting ID: ${result2.main_meeting_id}`, `- Owner: ${result2.owner}`, `- Zoom document: ${result2.source_url}`].join("\n");
+      return Object.freeze({ title: result2.title, markdown, data: result2 });
+    }
     const statusResponse = await zoomRequest(runtime2, jar, metadata, `https://us01docs.zoom.us/api/meeting/transcript_status?meetingId=${encodeURIComponent(meetingId)}`, { headers: hubHeaders(jwt) });
     const status = (await zoomJson(statusResponse, "transcript status"))["aicTranscript"];
-    const base = { recording_id: source.identifier, title: document["title"], source_url: document["fileLink"], meeting_id: meetingId, main_meeting_id: notes["mainMeetingId"], owner: document["owner"]["ownerName"], created_at: document["createdInfo"]["time"], updated_at: document["updatedInfo"]["time"] };
     if (!status["exist"] || !status["canAccess"]) {
       const result2 = { ...base, transcript: "", state: status["exist"] ? "denied" : "missing" };
       const markdown = [`# ${result2.title}`, "", `- Transcript state: ${result2.state}`, `- Recording ID: ${result2.recording_id}`, `- Meeting ID: ${result2.meeting_id}`, `- Main meeting ID: ${result2.main_meeting_id}`, `- Owner: ${result2.owner}`, `- Zoom document: ${result2.source_url}`].join("\n");
@@ -3649,175 +4321,21 @@ var zoomProvider = Object.freeze({
 // src/service-catalog.ts
 var serviceCatalog = createServiceRegistry().use(zoomProvider).use(notionProvider).use(slackProvider).use(chatgptProvider).use(googleDocsProvider).use(gmailProvider).use(asanaProvider).catalog();
 
-// src/workspace.ts
-var import_node_fs = require("node:fs");
-var import_promises4 = require("node:fs/promises");
-var import_node_path3 = require("node:path");
-
-// src/file-registry.ts
-var import_promises3 = require("node:fs/promises");
-var import_node_path2 = require("node:path");
-function fileResourceName(resourceId2) {
-  if (resourceId2 !== "." && resourceId2 !== ".." && !resourceId2.includes("/") && !resourceId2.includes("\\") && !resourceId2.includes("\0")) return `${resourceId2}.json`;
-  return `~${Buffer.from(resourceId2).toString("base64url")}.json`;
-}
-function assertUnique(values2) {
-  if (new Set(values2).size !== values2.length) throw new Error(JSON.stringify(values2));
-}
-function assertUniqueResource(resource) {
-  assertUnique(resource.identifiers.map((identifier) => JSON.stringify([identifier.service, identifier.identifier])));
-  assertUnique(resource.urls);
-  assertUnique(resource.filesystem_links.map((link) => JSON.stringify([link.path, link.role])));
-  assertUnique(resource.data.map((item) => JSON.stringify([item.namespace, item.key])));
-  assertUnique(resource.relationships.map((relationship) => JSON.stringify([resource.id, relationship.target_id, relationship.type])));
-}
-var FileRegistry = class {
-  path;
-  constructor(path) {
-    this.path = path;
-  }
-  async put(resource) {
-    const normalized = normalizeResource({
-      ...resource,
-      filesystem_links: resource.filesystem_links.map((link) => ({ ...link, path: link.path.replaceAll("\\", "/") }))
-    });
-    assertUniqueResource(normalized);
-    const existing = (await this.listResources()).filter((item) => item.id !== normalized.id);
-    for (const identifier of normalized.identifiers) {
-      if (existing.some((item) => item.identifiers.some((candidate) => candidate.service === identifier.service && candidate.identifier === identifier.identifier))) throw new Error(`Duplicate identifier: ${identifier.service}/${identifier.identifier}`);
-    }
-    for (const url of normalized.urls) {
-      if (existing.some((item) => item.urls.includes(url))) throw new Error(`Duplicate URL: ${url}`);
-    }
-    await (0, import_promises3.mkdir)(this.path, { recursive: true });
-    await (0, import_promises3.writeFile)(this.resourcePath(normalized.id), `${stableJsonPretty(normalized)}
-`, "utf8");
-    return normalized;
-  }
-  async get(resourceId2) {
-    return normalizeResource(JSON.parse(await (0, import_promises3.readFile)(this.resourcePath(resourceId2), "utf8")));
-  }
-  async findByIdentifier(service, identifier) {
-    const resource = (await this.listResources()).find((item) => item.identifiers.some((candidate) => candidate.service === service && candidate.identifier === identifier));
-    if (resource === void 0) throw new Error(`Resource identifier not found: ${service}/${identifier}`);
-    return resource;
-  }
-  async findByUrl(url) {
-    const resource = (await this.listResources()).find((item) => item.urls.includes(url));
-    if (resource === void 0) throw new Error(`Resource URL not found: ${url}`);
-    return resource;
-  }
-  async findByPath(path) {
-    return (await this.listResources()).filter((resource) => resource.filesystem_links.some((link) => link.path === path.replaceAll("\\", "/")));
-  }
-  async listResources() {
-    await (0, import_promises3.mkdir)(this.path, { recursive: true });
-    const filenames = (await (0, import_promises3.readdir)(this.path)).filter((filename) => filename.endsWith(".json")).sort();
-    const resources = await Promise.all(filenames.map(async (filename) => normalizeResource(JSON.parse(await (0, import_promises3.readFile)((0, import_node_path2.join)(this.path, filename), "utf8")))));
-    return resources.sort((left, right) => left.id.localeCompare(right.id));
-  }
-  async delete(resourceId2) {
-    await (0, import_promises3.rm)(this.resourcePath(resourceId2), { force: true });
-  }
-  resourcePath(resourceId2) {
-    return (0, import_node_path2.join)(this.path, fileResourceName(resourceId2));
-  }
-};
-
-// src/workspace.ts
-function canonicalPath(path) {
-  const resolved = (0, import_node_path3.resolve)(path);
-  if ((0, import_node_fs.existsSync)(resolved)) return (0, import_node_fs.realpathSync)(resolved);
-  return (0, import_node_path3.join)(canonicalPath((0, import_node_path3.dirname)(resolved)), (0, import_node_path3.basename)(resolved));
-}
-async function discoverWireRoot(path, home) {
-  const homePath = canonicalPath(home);
-  let currentPath = canonicalPath(path);
-  if (!(0, import_node_fs.existsSync)(currentPath) || !(0, import_node_fs.statSync)(currentPath).isDirectory()) currentPath = (0, import_node_path3.dirname)(currentPath);
-  while (true) {
-    const wirePath = (0, import_node_path3.join)(currentPath, ".wire");
-    if ((0, import_node_fs.existsSync)(wirePath) && (0, import_node_fs.statSync)(wirePath).isDirectory()) return wirePath;
-    const parentPath = (0, import_node_path3.dirname)(currentPath);
-    if (parentPath === currentPath) return (0, import_node_path3.join)(homePath, ".wire");
-    currentPath = parentPath;
-  }
-}
-async function configuredWireRoot(path, home) {
-  const wireRoot2 = await discoverWireRoot(path, home);
-  const configPath = (0, import_node_path3.join)(wireRoot2, "config.json");
-  return (0, import_node_fs.existsSync)(configPath) && (0, import_node_fs.statSync)(configPath).isFile() ? wireRoot2 : null;
-}
-function wireRelativePath(path, wireRoot2) {
-  return (0, import_node_path3.relative)((0, import_node_path3.dirname)(canonicalPath(wireRoot2)), canonicalPath(path)).replaceAll(import_node_path3.sep, "/");
-}
-async function loadWireConfig(wireRoot2) {
-  return JSON.parse(await (0, import_promises4.readFile)((0, import_node_path3.join)(wireRoot2, "config.json"), "utf8"));
-}
-async function openWireRegistry(path, home) {
-  const wireRoot2 = await discoverWireRoot(path, home);
-  const config = await loadWireConfig(wireRoot2);
-  if (config.backend !== "files") throw new Error(`Wire VSCode extension requires files backend: ${config.backend}`);
-  return new FileRegistry((0, import_node_path3.join)(wireRoot2, config.path));
-}
-async function initializeWire(path, backend, registryPath) {
-  if (backend !== "files") throw new Error(`Wire VSCode extension requires files backend: ${backend}`);
-  const wireRoot2 = (0, import_node_path3.join)(canonicalPath(path), ".wire");
-  await (0, import_promises4.mkdir)(wireRoot2, { recursive: true });
-  const configPath = (0, import_node_path3.join)(wireRoot2, "config.json");
-  if ((0, import_node_fs.existsSync)(configPath) && (0, import_node_fs.statSync)(configPath).isFile()) {
-    const existing = await loadWireConfig(wireRoot2);
-    if (existing.backend !== backend || existing.path !== registryPath) throw new Error(`Wire workspace already initialized with ${existing.backend} registry at ${existing.path}. Existing registries are not overwritten.`);
-    return { root: wireRoot2, backend: existing.backend, path: (0, import_node_path3.join)(wireRoot2, existing.path), created: false };
-  }
-  const config = { backend, path: registryPath };
-  await (0, import_promises4.writeFile)(configPath, `${stableJsonPretty(config)}
-`, "utf8");
-  await (0, import_promises4.mkdir)((0, import_node_path3.join)(wireRoot2, registryPath), { recursive: true });
-  return { root: wireRoot2, backend, path: (0, import_node_path3.join)(wireRoot2, registryPath), created: true };
-}
-
 // src/extension.ts
 var execFileAsync = (0, import_node_util.promisify)(import_node_child_process2.execFile);
 var authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"];
 var wireStatus;
-function setting(name) {
-  const value = vscode.workspace.getConfiguration().get(name);
-  if (value === void 0 || value.trim() === "") throw new Error(`Missing VSCode setting: ${name}`);
-  return value;
-}
-function serviceSetting(service) {
-  return {
-    asana: "wire.auth.asanaCookiesFile",
-    chatgpt: "wire.auth.chatgptCookiesFile",
-    gmail: "wire.auth.gmailCookiesFile",
-    "google-docs": "wire.auth.googleDocsCookiesFile",
-    notion: "wire.auth.notionCookiesFile",
-    slack: "wire.auth.slackCookiesFile",
-    zoom: "wire.auth.zoomCookiesFile"
-  }[service];
-}
 function environment(name) {
   const value = process.env[name];
   if (value === void 0 || value.trim() === "") throw new Error(`Missing environment variable: ${name}`);
   return value;
 }
-function cookiesCapability() {
-  const load = async (service) => parseNetscapeCookies(await (0, import_promises5.readFile)(setting(serviceSetting(service)), "utf8"));
-  return {
-    load,
-    loadSaved: load,
-    metadata: async (service) => parsePastedCookieMetadata(await (0, import_promises5.readFile)(setting(serviceSetting(service)), "utf8")),
-    save: async (service, cookies, metadata) => {
-      await (0, import_promises5.writeFile)(setting(serviceSetting(service)), serializeNetscapeCookies(cookies, metadata), "utf8");
-    },
-    delete: async (service) => {
-      await (0, import_promises5.rm)(setting(serviceSetting(service)));
-    }
-  };
+function repositoryRoot() {
+  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 function runtime() {
   const filesystem = {
-    exists: async (path) => (0, import_node_fs2.existsSync)(path),
+    exists: async (path) => (0, import_node_fs3.existsSync)(path),
     readText: (path) => (0, import_promises5.readFile)(path, "utf8"),
     writeText: async (path, contents) => {
       await (0, import_promises5.mkdir)((0, import_node_path4.dirname)(path), { recursive: true });
@@ -3841,14 +4359,14 @@ function runtime() {
     openFiles: { open: async (path) => {
       await vscode.env.openExternal(vscode.Uri.parse(path));
     } },
-    configuration: { get: setting },
+    configuration: { get: environment },
     secrets: { get: async (reference) => {
       throw new Error(`Missing secret provider for ${reference}`);
     } },
-    cookies: cookiesCapability(),
+    cookies: createCookiesCapability(filesystem, () => environment("HOME"), repositoryRoot),
     gmailTokens: {
-      load: () => createGoogleTokensCapability(filesystem, { request: (input, init) => fetch(input, init) }, clock, setting("wire.google.credentialsFile"), setting("wire.google.tokenFile")).load(),
-      refresh: () => createGoogleTokensCapability(filesystem, { request: (input, init) => fetch(input, init) }, clock, setting("wire.google.credentialsFile"), setting("wire.google.tokenFile")).refresh()
+      load: () => createGoogleTokensCapability(filesystem, { request: (input, init) => fetch(input, init) }, clock, environment("GOOGLE_CREDENTIALS_FILE"), environment("GOOGLE_TOKEN_FILE")).load(),
+      refresh: () => createGoogleTokensCapability(filesystem, { request: (input, init) => fetch(input, init) }, clock, environment("GOOGLE_CREDENTIALS_FILE"), environment("GOOGLE_TOKEN_FILE")).refresh()
     }
   };
 }
@@ -3859,8 +4377,8 @@ function wire() {
     fetchInput: capabilities,
     catalog: serviceCatalog,
     filesystem: {
-      exists: async (path) => (0, import_node_fs2.existsSync)(path),
-      isFile: async (path) => (0, import_node_fs2.existsSync)(path) && (0, import_node_fs2.statSync)(path).isFile(),
+      exists: async (path) => (0, import_node_fs3.existsSync)(path),
+      isFile: async (path) => (0, import_node_fs3.existsSync)(path) && (0, import_node_fs3.statSync)(path).isFile(),
       readText: capabilities.filesystem.readText,
       writeText: capabilities.filesystem.writeText
     },
@@ -3871,7 +4389,7 @@ function wire() {
       openRegistry: openWireRegistry,
       relativePath: wireRelativePath
     },
-    initialization: { backend: "files", registryPath: "records" },
+    initialization: { backend: defaultWireBackend, registryPath: defaultWireRegistryPath },
     now: capabilities.clock.now,
     open: capabilities.openFiles.open
   });
@@ -3888,6 +4406,39 @@ function showWireStatus(message) {
   setWireStatus(message);
   vscode.window.showInformationMessage(message);
 }
+async function wireProgress(message, operation) {
+  setWireStatus(message.toLowerCase());
+  return vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Wire - ${message}` }, operation);
+}
+function wireError(error) {
+  if (!(error instanceof Error)) return null;
+  const login = /Run `([^`]+)`/.exec(error.message);
+  if (login !== null) return { message: `Wire - Login required. Run in terminal: ${login[1]}`, command: login[1] };
+  const missingGoogle = /^Missing environment variable: (GOOGLE_CREDENTIALS_FILE|GOOGLE_TOKEN_FILE)$/.exec(error.message);
+  if (missingGoogle !== null) return { message: "Wire - Google login required. Run in terminal: wire google-docs login", command: "wire google-docs login" };
+  const unregisteredPath = /^Resource path is not registered: ([\s\S]+)$/.exec(error.message);
+  if (unregisteredPath !== null) return { message: `Wire - Not attached: ${unregisteredPath[1]}. Use Wire - Attach to track a source URL, or Wire - Download for a one-time copy.` };
+  const missingPath = /^Resource path not found: ([\s\S]+)$/.exec(error.message);
+  if (missingPath !== null) return { message: `Wire - Not found: ${missingPath[1]}.` };
+  const missingWorkspace = /^Wire workspace not initialized\. Run `wire init` or `wire <url>` first\.$/.exec(error.message);
+  if (missingWorkspace !== null) return { message: "Wire - Workspace is not initialized. Use Wire - Attach to start tracking a source URL." };
+  const unsupportedSource = /^Unsupported source URL: ([\s\S]+)$/.exec(error.message);
+  if (unsupportedSource !== null) return { message: `Wire - Unsupported source URL: ${unsupportedSource[1]}. Supported sources: Asana, ChatGPT, Gmail, Google Docs/Sheets/Slides, Notion, Slack, Zoom.` };
+  return null;
+}
+function wireCommand(command) {
+  return async (...args) => {
+    try {
+      await command(...args);
+    } catch (error) {
+      const display = wireError(error);
+      if (display === null) throw error;
+      setWireStatus("error");
+      const action = display.command === void 0 ? await vscode.window.showErrorMessage(display.message) : await vscode.window.showErrorMessage(display.message, "Copy command");
+      if (action === "Copy command") await vscode.env.clipboard.writeText(display.command);
+    }
+  };
+}
 function identityText(result) {
   const entries = Object.entries(result.identity);
   if (entries.length === 0) return result.service;
@@ -3901,69 +4452,89 @@ function selectedPath(uri) {
 }
 function selectedDirectory(uri) {
   const path = selectedPath(uri);
-  return (0, import_node_fs2.existsSync)(path) && (0, import_node_fs2.statSync)(path).isDirectory() ? path : (0, import_node_path4.dirname)(path);
+  return (0, import_node_fs3.existsSync)(path) && (0, import_node_fs3.statSync)(path).isDirectory() ? path : (0, import_node_path4.dirname)(path);
+}
+function projectDirectory() {
+  const root = repositoryRoot();
+  if (root === void 0) throw new Error("No workspace folder open");
+  return root;
 }
 function resourceFile(uri) {
   const path = selectedPath(uri);
-  if (!(0, import_node_fs2.statSync)(path).isFile()) throw new Error(`Expected file: ${path}`);
+  if (!(0, import_node_fs3.statSync)(path).isFile()) throw new Error(`Expected file: ${path}`);
   return path;
 }
 function title(resource) {
   return resource.data.find((item) => item.namespace === "wire" && item.key === "title").value;
 }
 function resultMessage(result) {
-  return `${result.summary.action} +${result.summary.added} ~${result.summary.modified} -${result.summary.removed} ${title(result.resource)}`;
+  return `Wire - ${result.summary.action[0].toUpperCase()}${result.summary.action.slice(1)}: ${title(result.resource)}`;
+}
+async function showWireResultStatus(result) {
+  const message = resultMessage(result);
+  setWireStatus(message);
+  if (result.summary.action !== "uploaded") {
+    vscode.window.showInformationMessage(message);
+    return;
+  }
+  const action = await vscode.window.showInformationMessage(message, "Copy URL", "Open URL");
+  if (action === "Copy URL") await vscode.env.clipboard.writeText(result.summary.remote);
+  if (action === "Open URL") await vscode.env.openExternal(vscode.Uri.parse(result.summary.remote));
 }
 async function attachHere(uri) {
   const directory = selectedDirectory(uri);
   const url = await vscode.window.showInputBox({ prompt: "Source URL" });
   if (url === void 0 || url.trim() === "") throw new Error("Source URL required");
-  setWireStatus("attaching");
-  const result = await wire().attach(url, directory);
+  const result = await wireProgress("Attaching", () => wire().attach(url, directory));
   await vscode.window.showTextDocument(vscode.Uri.file(result.path));
-  showWireStatus(resultMessage(result));
+  await showWireResultStatus(result);
+}
+async function initProject() {
+  const directory = projectDirectory();
+  const existingRoot = await configuredWireRoot(directory, environment("HOME"));
+  if (existingRoot !== null) {
+    const config = await loadWireConfig(existingRoot);
+    showWireStatus(`Wire - Project ready: ${config.backend}`);
+    return;
+  }
+  const result = await wireProgress("Initializing project", () => initializeWire(directory, defaultWireBackend, defaultWireRegistryPath));
+  showWireStatus(`Wire - Project initialized: ${result.backend}`);
 }
 async function downloadHere(uri) {
   const directory = selectedDirectory(uri);
   const url = await vscode.window.showInputBox({ prompt: "Source URL" });
   if (url === void 0 || url.trim() === "") throw new Error("Source URL required");
-  setWireStatus("downloading");
-  const result = await wire().downloadSource(url, directory);
+  const result = await wireProgress("Downloading", () => wire().downloadSource(url, directory));
   await vscode.window.showTextDocument(vscode.Uri.file(result.path));
-  showWireStatus(resultMessage(result));
+  await showWireResultStatus(result);
 }
 async function previewUrl() {
   const url = await vscode.window.showInputBox({ prompt: "Source URL" });
   if (url === void 0 || url.trim() === "") throw new Error("Source URL required");
-  setWireStatus("previewing");
-  const result = await wire().view(url);
+  const result = await wireProgress("Previewing", () => wire().view(url));
   const document = await vscode.workspace.openTextDocument({ language: "markdown", content: result.markdown });
   await vscode.window.showTextDocument(document);
-  showWireStatus(`previewed ${result.title}`);
+  showWireStatus(`Wire - Previewed: ${result.title}`);
 }
 async function syncFile(uri) {
   const path = resourceFile(uri);
-  setWireStatus("syncing file");
-  const result = await wire().sync(path, (0, import_node_path4.dirname)(path));
-  showWireStatus(resultMessage(result));
+  const result = await wireProgress("Syncing", () => wire().sync(path, (0, import_node_path4.dirname)(path)));
+  await showWireResultStatus(result);
 }
 async function detachFile(uri) {
   const path = resourceFile(uri);
-  setWireStatus("detaching file");
-  const result = await wire().detach(path, (0, import_node_path4.dirname)(path));
-  showWireStatus(resultMessage(result));
+  const result = await wireProgress("Detaching", () => wire().detach(path, (0, import_node_path4.dirname)(path)));
+  await showWireResultStatus(result);
 }
 async function openResource(uri) {
   const path = resourceFile(uri);
-  setWireStatus("opening resource");
-  const resource = await wire().openResource(path, (0, import_node_path4.dirname)(path));
-  showWireStatus(`opened ${title(resource)}`);
+  const resource = await wireProgress("Opening", () => wire().openResource(path, (0, import_node_path4.dirname)(path)));
+  showWireStatus(`Wire - Opened: ${title(resource)}`);
 }
 async function syncDirectory(uri) {
   const directory = selectedDirectory(uri);
-  setWireStatus("syncing directory");
-  const results = await wire().syncAll(directory);
-  showWireStatus(`synced ${results.length} resources`);
+  const results = await wireProgress("Syncing all", () => wire().syncAll(directory));
+  showWireStatus(`Wire - Synced ${results.length} resources`);
 }
 async function selectedAuthService() {
   const service = await vscode.window.showQuickPick([...authServices], { placeHolder: "Service" });
@@ -3972,13 +4543,11 @@ async function selectedAuthService() {
 }
 async function authStatus() {
   const service = await selectedAuthService();
-  setWireStatus(`${service} status`);
-  const result = await auth().status(service);
-  showWireStatus(`authenticated ${identityText(result)}`);
+  const result = await wireProgress("Checking login", () => auth().status(service));
+  showWireStatus(`Wire - Authenticated: ${identityText(result)}`);
 }
 async function authLogin() {
   const service = await selectedAuthService();
-  setWireStatus(`${service} login waiting for browser`);
   const authClient = auth();
   const actions = {
     asana: authClient.extractAsana,
@@ -3989,14 +4558,13 @@ async function authLogin() {
     slack: authClient.extractSlack,
     zoom: authClient.extractZoom
   };
-  const result = await actions[service]();
-  showWireStatus(`login saved ${identityText(result)}`);
+  const result = await wireProgress("Logging in", () => actions[service]());
+  showWireStatus(`Wire - Login saved: ${identityText(result)}`);
 }
 async function authLogout() {
   const service = await selectedAuthService();
-  setWireStatus(`${service} logout`);
-  await auth().logout(service);
-  showWireStatus(`logged out ${service}`);
+  await wireProgress("Logging out", () => auth().logout(service));
+  showWireStatus(`Wire - Logged out: ${service}`);
 }
 async function compileAndReload() {
   const root = (0, import_node_path4.resolve)(__dirname, "..");
@@ -4009,17 +4577,18 @@ function activate(context2) {
   setWireStatus("ready");
   context2.subscriptions.push(
     wireStatus,
-    vscode.commands.registerCommand("wire.attachHere", attachHere),
-    vscode.commands.registerCommand("wire.downloadHere", downloadHere),
-    vscode.commands.registerCommand("wire.previewUrl", previewUrl),
-    vscode.commands.registerCommand("wire.syncFile", syncFile),
-    vscode.commands.registerCommand("wire.detachFile", detachFile),
-    vscode.commands.registerCommand("wire.openResource", openResource),
-    vscode.commands.registerCommand("wire.syncDirectory", syncDirectory),
-    vscode.commands.registerCommand("wire.authStatus", authStatus),
-    vscode.commands.registerCommand("wire.authLogin", authLogin),
-    vscode.commands.registerCommand("wire.authLogout", authLogout),
-    vscode.commands.registerCommand("wire.compileAndReload", compileAndReload)
+    vscode.commands.registerCommand("wire.initProject", wireCommand(initProject)),
+    vscode.commands.registerCommand("wire.attachHere", wireCommand(attachHere)),
+    vscode.commands.registerCommand("wire.downloadHere", wireCommand(downloadHere)),
+    vscode.commands.registerCommand("wire.previewUrl", wireCommand(previewUrl)),
+    vscode.commands.registerCommand("wire.syncFile", wireCommand(syncFile)),
+    vscode.commands.registerCommand("wire.detachFile", wireCommand(detachFile)),
+    vscode.commands.registerCommand("wire.openResource", wireCommand(openResource)),
+    vscode.commands.registerCommand("wire.syncDirectory", wireCommand(syncDirectory)),
+    vscode.commands.registerCommand("wire.authStatus", wireCommand(authStatus)),
+    vscode.commands.registerCommand("wire.authLogin", wireCommand(authLogin)),
+    vscode.commands.registerCommand("wire.authLogout", wireCommand(authLogout)),
+    vscode.commands.registerCommand("wire.compileAndReload", wireCommand(compileAndReload))
   );
 }
 function deactivate() {

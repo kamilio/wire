@@ -1,16 +1,51 @@
 {
   "name": "wire-vscode-extension",
   "publisher": "wire",
-  "displayName": "Wire",
-  "description": "VSCode extension for Wire SDK resource sync.",
-  "version": "0.1.0",
+  "displayName": "Wire - Markdown Sync",
+  "description": "Attach Notion, Google Docs, Slack, Gmail, Asana, ChatGPT, and Zoom resources as local Markdown you can sync from VS Code.",
+  "version": "0.1.2",
   "type": "commonjs",
   "engines": {
     "vscode": "^1.90.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Productivity",
+    "Other"
+  ],
+  "keywords": [
+    "wire",
+    "markdown",
+    "sync",
+    "notion",
+    "google docs",
+    "slack",
+    "gmail",
+    "asana",
+    "chatgpt",
+    "zoom",
+    "documentation",
+    "knowledge base",
+    "agents"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kamilio/wire.git"
+  },
+  "homepage": "https://github.com/kamilio/wire#readme",
+  "bugs": {
+    "url": "https://github.com/kamilio/wire/issues"
+  },
+  "qna": false,
+  "galleryBanner": {
+    "color": "#111827",
+    "theme": "dark"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
   "activationEvents": [
     "onStartupFinished",
+    "onCommand:wire.initProject",
     "onCommand:wire.attachHere",
     "onCommand:wire.downloadHere",
     "onCommand:wire.previewUrl",
@@ -25,120 +60,76 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
-    "configuration": {
-      "title": "Wire",
-      "properties": {
-        "wire.auth.asanaCookiesFile": {
-          "type": "string",
-          "scope": "application",
-          "description": "Netscape cookies file for Asana."
-        },
-        "wire.auth.chatgptCookiesFile": {
-          "type": "string",
-          "scope": "application",
-          "description": "Netscape cookies file for ChatGPT."
-        },
-        "wire.auth.gmailCookiesFile": {
-          "type": "string",
-          "scope": "application",
-          "description": "Netscape cookies file for Gmail."
-        },
-        "wire.auth.googleDocsCookiesFile": {
-          "type": "string",
-          "scope": "application",
-          "description": "Netscape cookies file for Google Docs and Sheets."
-        },
-        "wire.auth.notionCookiesFile": {
-          "type": "string",
-          "scope": "application",
-          "description": "Netscape cookies file for Notion."
-        },
-        "wire.auth.slackCookiesFile": {
-          "type": "string",
-          "scope": "application",
-          "description": "Netscape cookies file for Slack."
-        },
-        "wire.auth.zoomCookiesFile": {
-          "type": "string",
-          "scope": "application",
-          "description": "Netscape cookies file for Zoom."
-        },
-        "wire.google.credentialsFile": {
-          "type": "string",
-          "scope": "application",
-          "description": "Google OAuth credentials JSON file."
-        },
-        "wire.google.tokenFile": {
-          "type": "string",
-          "scope": "application",
-          "description": "Google OAuth token JSON file."
-        }
-      }
-    },
     "commands": [
       {
+        "command": "wire.initProject",
+        "title": "Wire - Init Project",
+        "category": "Wire",
+        "icon": "$(database)"
+      },
+      {
         "command": "wire.attachHere",
-        "title": "Attach URL Here",
+        "title": "Wire - Attach",
         "category": "Wire",
         "icon": "$(plug)"
       },
       {
         "command": "wire.downloadHere",
-        "title": "Download URL Here",
+        "title": "Wire - Download",
         "category": "Wire",
         "icon": "$(cloud-download)"
       },
       {
         "command": "wire.previewUrl",
-        "title": "Preview URL",
+        "title": "Wire - Preview",
         "category": "Wire",
         "icon": "$(preview)"
       },
       {
         "command": "wire.syncFile",
-        "title": "Sync File",
+        "title": "Wire - Sync",
         "category": "Wire",
         "icon": "$(sync)"
       },
       {
         "command": "wire.detachFile",
-        "title": "Detach File",
+        "title": "Wire - Detach",
         "category": "Wire",
         "icon": "$(debug-disconnect)"
       },
       {
         "command": "wire.openResource",
-        "title": "Open Resource",
+        "title": "Wire - Open",
         "category": "Wire",
         "icon": "$(globe)"
       },
       {
         "command": "wire.syncDirectory",
-        "title": "Sync Directory",
+        "title": "Wire - Sync All",
         "category": "Wire",
         "icon": "$(sync)"
       },
       {
         "command": "wire.authStatus",
-        "title": "Auth Status",
+        "title": "Wire - Auth Status",
         "category": "Wire",
         "icon": "$(key)"
       },
       {
         "command": "wire.authLogin",
-        "title": "Login",
+        "title": "Wire - Login",
         "category": "Wire",
         "icon": "$(sign-in)"
       },
       {
         "command": "wire.authLogout",
-        "title": "Logout",
+        "title": "Wire - Logout",
         "category": "Wire",
         "icon": "$(sign-out)"
       },
       {
         "command": "wire.compileAndReload",
-        "title": "Compile and Reload",
+        "title": "Wire - Compile and Reload",
         "category": "Wire",
         "icon": "$(refresh)"
       }
@@ -189,6 +180,9 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "wire.initProject"
+        },
         {
           "command": "wire.attachHere"
         },

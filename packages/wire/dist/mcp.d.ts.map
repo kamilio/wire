@@ -1,1 +1,1 @@
-{"version":3,"file":"mcp.d.ts","sourceRoot":"","sources":["../src/mcp.ts"],"names":[],"mappings":"AAEA,OAAO,KAAK,EAAE,QAAQ,EAAE,MAAM,oBAAoB,CAAC;AAEnD,wBAAgB,mBAAmB,CAAC,IAAI,EAAE,QAAQ;;EAEjD;AAED,wBAAgB,UAAU,CAAC,IAAI,EAAE,QAAQ,GAAG,OAAO,CAAC,IAAI,CAAC,CAExD"}
+{"version":3,"file":"mcp.d.ts","sourceRoot":"","sources":["../src/mcp.ts"],"names":[],"mappings":"AAIA,OAAO,KAAK,EAAE,QAAQ,EAAE,MAAM,oBAAoB,CAAC;AAEnD,wBAAgB,mBAAmB,CAAC,IAAI,EAAE,QAAQ;;EAGjD;AAED,wBAAgB,UAAU,CAAC,IAAI,EAAE,QAAQ,GAAG,OAAO,CAAC,IAAI,CAAC,CAGxD"}

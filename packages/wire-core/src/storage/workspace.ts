@@ -9,6 +9,15 @@ import { FileRegistry, SqliteRegistry } from "./registry.js";
 
 export type { InitializedWire, WireBackend, WireConfig } from "../ports.js";
 
+export const defaultWireBackend = "files" satisfies WireBackend;
+export const defaultWireRegistryPath = "records";
+
+export function registryPathForBackend(backend: WireBackend): string {
+  if (backend === "files") return "records";
+  if (backend === "sqlite") return "registry.sqlite3";
+  throw new Error(backend);
+}
+
 function canonicalPath(path: string): string {
   const resolved = resolve(path);
   if (existsSync(resolved)) return realpathSync(resolved);
@@ -76,7 +85,7 @@ export async function switchWireBackend(path: string, home: string): Promise<Swi
   const source = config.backend === "sqlite" ? new SqliteRegistry(fromPath) : new FileRegistry(fromPath);
   const resources = await source.listResources();
   const to = config.backend === "sqlite" ? "files" : "sqlite";
-  const targetRelativePath = to === "sqlite" ? "registry.sqlite3" : "records";
+  const targetRelativePath = registryPathForBackend(to);
   const toPath = join(wireRoot, targetRelativePath);
   await rm(toPath, { recursive: true, force: true });
   const target = to === "sqlite" ? new SqliteRegistry(toPath) : new FileRegistry(toPath);

@@ -6,7 +6,7 @@ import { createRoot } from "./adapters/root.js";
 import { composeAuth } from "./auth.js";
 import { serviceCatalog } from "./adapters/services/catalog.js";
 import { withWireHooks } from "./hooks.js";
-import { composeWire, configuredWireRoot, createCookiesCapability, createGoogleTokensCapability, createNodeClock, createNodeConfiguration, createNodeFilesystem, createNodeHttp, createNodeOpenFiles, createNodeProcess, createNodeSecrets, createNodeWatch, extractChromeCookies, initializeWire, loadWireConfig, openWireRegistry, switchWireBackend, wireRelativePath, type NodeEnvironment } from "wire-core";
+import { composeWire, configuredWireRoot, createCookiesCapability, createGoogleTokensCapability, createNodeClock, createNodeConfiguration, createNodeFilesystem, createNodeHttp, createNodeOpenFiles, createNodeProcess, createNodeSecrets, createNodeWatch, defaultWireBackend, defaultWireRegistryPath, extractChromeCookies, initializeWire, loadWireConfig, openWireRegistry, switchWireBackend, wireRelativePath, type NodeEnvironment } from "wire-core";
 import type { WireConfig } from "wire-core";
 
 function readStandardInput(): Promise<string> {
@@ -93,7 +93,7 @@ export function createExecutableRoot(environment: NodeEnvironment, currentDirect
       relativePath: wireRelativePath,
       switchBackend: switchWireBackend,
     },
-    initialization: { backend: "sqlite", registryPath: "registry.sqlite3" },
+    initialization: { backend: defaultWireBackend, registryPath: defaultWireRegistryPath },
     watch: createNodeWatch(),
     now: runtime.clock.now,
     open: runtime.openFiles.open,

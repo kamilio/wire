@@ -133,8 +133,8 @@ const removedCommandNames = Object.freeze({
 const outputFormatNames = new Set(["rich", "md", "markdown", "json"]);
 const outputFormatList = "md, markdown, json, rich";
 const debugModeNames = new Set(["raw"]);
-const backendNames = new Set(["sqlite", "files"]);
-const backendList = "sqlite, files";
+const backendNames = new Set(["files", "sqlite"]);
+const backendList = "files, sqlite";
 
 function isSourceUrl(value: string): boolean {
   return /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(value);

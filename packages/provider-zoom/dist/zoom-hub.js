@@ -185,9 +185,14 @@ export const zoomHubService = defineService({
         const document = files[0];
         const notes = document["meetingNotes"];
         const meetingId = notes["meetingId"];
+        const base = { recording_id: source.identifier, title: document["title"], source_url: document["fileLink"], meeting_id: meetingId, main_meeting_id: notes["mainMeetingId"], owner: document["owner"]["ownerName"], created_at: document["createdInfo"]["time"], updated_at: document["updatedInfo"]["time"] };
+        if (meetingId === "") {
+            const result = { ...base, transcript: "", state: "missing" };
+            const markdown = [`# ${result.title}`, "", `- Transcript state: ${result.state}`, `- Recording ID: ${result.recording_id}`, `- Meeting ID: ${result.meeting_id}`, `- Main meeting ID: ${result.main_meeting_id}`, `- Owner: ${result.owner}`, `- Zoom document: ${result.source_url}`].join("\n");
+            return Object.freeze({ title: transcriptTitle(result.title, result.created_at, runtime.clock.localTimezone()), markdown, data: result });
+        }
         const statusResponse = await zoomRequest(runtime, jar, metadata, `https://us01docs.zoom.us/api/meeting/transcript_status?meetingId=${encodeURIComponent(meetingId)}`, { headers: hubHeaders(jwt) });
         const status = (await zoomJson(statusResponse, "transcript status"))["aicTranscript"];
-        const base = { recording_id: source.identifier, title: document["title"], source_url: document["fileLink"], meeting_id: meetingId, main_meeting_id: notes["mainMeetingId"], owner: document["owner"]["ownerName"], created_at: document["createdInfo"]["time"], updated_at: document["updatedInfo"]["time"] };
         if (!status["exist"] || !status["canAccess"]) {
             const result = { ...base, transcript: "", state: status["exist"] ? "denied" : "missing" };
             const markdown = [`# ${result.title}`, "", `- Transcript state: ${result.state}`, `- Recording ID: ${result.recording_id}`, `- Meeting ID: ${result.meeting_id}`, `- Main meeting ID: ${result.main_meeting_id}`, `- Owner: ${result.owner}`, `- Zoom document: ${result.source_url}`].join("\n");

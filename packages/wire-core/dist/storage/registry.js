@@ -1,55 +1,3 @@
-var __addDisposableResource = (this && this.__addDisposableResource) || function (env, value, async) {
-    if (value !== null && value !== void 0) {
-        if (typeof value !== "object" && typeof value !== "function") throw new TypeError("Object expected.");
-        var dispose, inner;
-        if (async) {
-            if (!Symbol.asyncDispose) throw new TypeError("Symbol.asyncDispose is not defined.");
-            dispose = value[Symbol.asyncDispose];
-        }
-        if (dispose === void 0) {
-            if (!Symbol.dispose) throw new TypeError("Symbol.dispose is not defined.");
-            dispose = value[Symbol.dispose];
-            if (async) inner = dispose;
-        }
-        if (typeof dispose !== "function") throw new TypeError("Object not disposable.");
-        if (inner) dispose = function() { try { inner.call(this); } catch (e) { return Promise.reject(e); } };
-        env.stack.push({ value: value, dispose: dispose, async: async });
-    }
-    else if (async) {
-        env.stack.push({ async: true });
-    }
-    return value;
-};
-var __disposeResources = (this && this.__disposeResources) || (function (SuppressedError) {
-    return function (env) {
-        function fail(e) {
-            env.error = env.hasError ? new SuppressedError(e, env.error, "An error was suppressed during disposal.") : e;
-            env.hasError = true;
-        }
-        var r, s = 0;
-        function next() {
-            while (r = env.stack.pop()) {
-                try {
-                    if (!r.async && s === 1) return s = 0, env.stack.push(r), Promise.resolve().then(next);
-                    if (r.dispose) {
-                        var result = r.dispose.call(r.value);
-                        if (r.async) return s |= 2, Promise.resolve(result).then(next, function(e) { fail(e); return next(); });
-                    }
-                    else s |= 1;
-                }
-                catch (e) {
-                    fail(e);
-                }
-            }
-            if (s === 1) return env.hasError ? Promise.reject(env.error) : Promise.resolve();
-            if (env.hasError) throw env.error;
-        }
-        return next();
-    };
-})(typeof SuppressedError === "function" ? SuppressedError : function (error, suppressed, message) {
-    var e = new Error(message);
-    return e.name = "SuppressedError", e.error = error, e.suppressed = suppressed, e;
-});
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { open, readdir, readFile, rename, unlink } from "node:fs/promises";
@@ -57,7 +5,7 @@ import { createRequire } from "node:module";
 import { basename, dirname, extname, join, sep } from "node:path";
 import { stableJsonCompact, stableJsonPretty } from "../core/json.js";
 import { normalizeResource } from "../core/resource.js";
-const require = createRequire(import.meta.url);
+const require = createRequire("/wire-core/storage/registry.js");
 function compareStrings(left, right) {
     const leftCodePoints = Array.from(left, (character) => character.codePointAt(0));
     const rightCodePoints = Array.from(right, (character) => character.codePointAt(0));
@@ -106,11 +54,9 @@ function missingUrl(url) {
 export class SqliteRegistry {
     path;
     constructor(path) {
-        const env_1 = { stack: [], error: void 0, hasError: false };
-        try {
-            this.path = realpathSyncParent(path);
-            const database = __addDisposableResource(env_1, this.connect(), false);
-            database.exec(`
+        this.path = realpathSyncParent(path);
+        const database = this.connect();
+        database.exec(`
       PRAGMA journal_mode=DELETE;
       PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS resources (
@@ -153,159 +99,113 @@ export class SqliteRegistry {
       );
       CREATE INDEX IF NOT EXISTS resource_relationships_target ON resource_relationships(target_id);
     `);
-        }
-        catch (e_1) {
-            env_1.error = e_1;
-            env_1.hasError = true;
-        }
-        finally {
-            __disposeResources(env_1);
-        }
+        database.close();
     }
     async put(resource) {
-        const env_2 = { stack: [], error: void 0, hasError: false };
-        try {
-            const normalized = storageResource(resource);
-            const database = __addDisposableResource(env_2, this.connect(), false);
-            database.exec("BEGIN");
-            database.prepare("INSERT INTO resources (id, type) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET type=excluded.type").run(normalized.id, normalized.type);
-            database.prepare("DELETE FROM resource_identifiers WHERE resource_id = ?").run(normalized.id);
-            database.prepare("DELETE FROM resource_urls WHERE resource_id = ?").run(normalized.id);
-            database.prepare("DELETE FROM filesystem_links WHERE resource_id = ?").run(normalized.id);
-            database.prepare("DELETE FROM resource_data WHERE resource_id = ?").run(normalized.id);
-            database.prepare("DELETE FROM resource_relationships WHERE source_id = ?").run(normalized.id);
-            const insertIdentifier = database.prepare("INSERT INTO resource_identifiers (resource_id, service, identifier) VALUES (?, ?, ?)");
-            for (const item of normalized.identifiers)
-                insertIdentifier.run(normalized.id, item.service, item.identifier);
-            const insertUrl = database.prepare("INSERT INTO resource_urls (resource_id, url) VALUES (?, ?)");
-            for (const url of normalized.urls)
-                insertUrl.run(normalized.id, url);
-            const insertLink = database.prepare("INSERT INTO filesystem_links (resource_id, path, role, data_json) VALUES (?, ?, ?, ?)");
-            for (const link of normalized.filesystem_links)
-                insertLink.run(normalized.id, link.path, link.role, stableJsonCompact(link.data));
-            const insertData = database.prepare("INSERT INTO resource_data (resource_id, namespace, key, value_json) VALUES (?, ?, ?, ?)");
-            for (const item of normalized.data)
-                insertData.run(normalized.id, item.namespace, item.key, stableJsonCompact(item.value));
-            const insertRelationship = database.prepare("INSERT INTO resource_relationships (source_id, target_id, type, data_json) VALUES (?, ?, ?, ?)");
-            for (const relationship of normalized.relationships)
-                insertRelationship.run(normalized.id, relationship.target_id, relationship.type, stableJsonCompact(relationship.data));
-            database.exec("COMMIT");
-            return normalized;
+        const normalized = storageResource(resource);
+        assertUniqueFileResource(normalized);
+        const database = this.connect();
+        for (const identifier of normalized.identifiers) {
+            const row = database.prepare("SELECT resource_id FROM resource_identifiers WHERE service = ? AND identifier = ? AND resource_id != ?").get(identifier.service, identifier.identifier, normalized.id);
+            if (row !== undefined) {
+                database.close();
+                throw new Error(`${identifier.service}/${identifier.identifier}`);
+            }
         }
-        catch (e_2) {
-            env_2.error = e_2;
-            env_2.hasError = true;
+        for (const url of normalized.urls) {
+            const row = database.prepare("SELECT resource_id FROM resource_urls WHERE url = ? AND resource_id != ?").get(url, normalized.id);
+            if (row !== undefined) {
+                database.close();
+                throw new Error(url);
+            }
         }
-        finally {
-            __disposeResources(env_2);
-        }
+        database.exec("BEGIN");
+        database.prepare("INSERT INTO resources (id, type) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET type=excluded.type").run(normalized.id, normalized.type);
+        database.prepare("DELETE FROM resource_identifiers WHERE resource_id = ?").run(normalized.id);
+        database.prepare("DELETE FROM resource_urls WHERE resource_id = ?").run(normalized.id);
+        database.prepare("DELETE FROM filesystem_links WHERE resource_id = ?").run(normalized.id);
+        database.prepare("DELETE FROM resource_data WHERE resource_id = ?").run(normalized.id);
+        database.prepare("DELETE FROM resource_relationships WHERE source_id = ?").run(normalized.id);
+        const insertIdentifier = database.prepare("INSERT INTO resource_identifiers (resource_id, service, identifier) VALUES (?, ?, ?)");
+        for (const item of normalized.identifiers)
+            insertIdentifier.run(normalized.id, item.service, item.identifier);
+        const insertUrl = database.prepare("INSERT INTO resource_urls (resource_id, url) VALUES (?, ?)");
+        for (const url of normalized.urls)
+            insertUrl.run(normalized.id, url);
+        const insertLink = database.prepare("INSERT INTO filesystem_links (resource_id, path, role, data_json) VALUES (?, ?, ?, ?)");
+        for (const link of normalized.filesystem_links)
+            insertLink.run(normalized.id, link.path, link.role, stableJsonCompact(link.data));
+        const insertData = database.prepare("INSERT INTO resource_data (resource_id, namespace, key, value_json) VALUES (?, ?, ?, ?)");
+        for (const item of normalized.data)
+            insertData.run(normalized.id, item.namespace, item.key, stableJsonCompact(item.value));
+        const insertRelationship = database.prepare("INSERT INTO resource_relationships (source_id, target_id, type, data_json) VALUES (?, ?, ?, ?)");
+        for (const relationship of normalized.relationships)
+            insertRelationship.run(normalized.id, relationship.target_id, relationship.type, stableJsonCompact(relationship.data));
+        database.exec("COMMIT");
+        database.close();
+        return normalized;
     }
     async get(resourceId) {
-        const env_3 = { stack: [], error: void 0, hasError: false };
-        try {
-            const database = __addDisposableResource(env_3, this.connect(), false);
-            database.exec("BEGIN");
-            const resource = this.getResource(database, resourceId);
-            database.exec("COMMIT");
-            return resource;
+        const database = this.connect();
+        const row = database.prepare("SELECT id FROM resources WHERE id = ?").get(resourceId);
+        if (row === undefined) {
+            database.close();
+            throw missingResource(resourceId);
         }
-        catch (e_3) {
-            env_3.error = e_3;
-            env_3.hasError = true;
-        }
-        finally {
-            __disposeResources(env_3);
-        }
+        database.exec("BEGIN");
+        const resource = this.getResource(database, resourceId);
+        database.exec("COMMIT");
+        database.close();
+        return resource;
     }
     async findByIdentifier(service, identifier) {
-        const env_4 = { stack: [], error: void 0, hasError: false };
-        try {
-            const database = __addDisposableResource(env_4, this.connect(), false);
-            database.exec("BEGIN");
-            const row = database.prepare("SELECT resource_id FROM resource_identifiers WHERE service = ? AND identifier = ?").get(service, identifier);
-            if (row === undefined)
-                throw missingIdentifier(service, identifier);
-            const resource = this.getResource(database, row.resource_id);
-            database.exec("COMMIT");
-            return resource;
+        const database = this.connect();
+        database.exec("BEGIN");
+        const row = database.prepare("SELECT resource_id FROM resource_identifiers WHERE service = ? AND identifier = ?").get(service, identifier);
+        if (row === undefined) {
+            database.close();
+            throw missingIdentifier(service, identifier);
         }
-        catch (e_4) {
-            env_4.error = e_4;
-            env_4.hasError = true;
-        }
-        finally {
-            __disposeResources(env_4);
-        }
+        const resource = this.getResource(database, row.resource_id);
+        database.exec("COMMIT");
+        database.close();
+        return resource;
     }
     async findByUrl(url) {
-        const env_5 = { stack: [], error: void 0, hasError: false };
-        try {
-            const database = __addDisposableResource(env_5, this.connect(), false);
-            database.exec("BEGIN");
-            const row = database.prepare("SELECT resource_id FROM resource_urls WHERE url = ?").get(url);
-            if (row === undefined)
-                throw missingUrl(url);
-            const resource = this.getResource(database, row.resource_id);
-            database.exec("COMMIT");
-            return resource;
+        const database = this.connect();
+        database.exec("BEGIN");
+        const row = database.prepare("SELECT resource_id FROM resource_urls WHERE url = ?").get(url);
+        if (row === undefined) {
+            database.close();
+            throw missingUrl(url);
         }
-        catch (e_5) {
-            env_5.error = e_5;
-            env_5.hasError = true;
-        }
-        finally {
-            __disposeResources(env_5);
-        }
+        const resource = this.getResource(database, row.resource_id);
+        database.exec("COMMIT");
+        database.close();
+        return resource;
     }
     async findByPath(path) {
-        const env_6 = { stack: [], error: void 0, hasError: false };
-        try {
-            const database = __addDisposableResource(env_6, this.connect(), false);
-            database.exec("BEGIN");
-            const rows = database.prepare("SELECT DISTINCT resource_id FROM filesystem_links WHERE path = ? ORDER BY resource_id").all(path.replaceAll(sep, "/"));
-            const resources = rows.map((row) => this.getResource(database, row.resource_id));
-            database.exec("COMMIT");
-            return resources;
-        }
-        catch (e_6) {
-            env_6.error = e_6;
-            env_6.hasError = true;
-        }
-        finally {
-            __disposeResources(env_6);
-        }
+        const database = this.connect();
+        database.exec("BEGIN");
+        const rows = database.prepare("SELECT DISTINCT resource_id FROM filesystem_links WHERE path = ? ORDER BY resource_id").all(path.replaceAll(sep, "/"));
+        const resources = rows.map((row) => this.getResource(database, row.resource_id));
+        database.exec("COMMIT");
+        database.close();
+        return resources;
     }
     async listResources() {
-        const env_7 = { stack: [], error: void 0, hasError: false };
-        try {
-            const database = __addDisposableResource(env_7, this.connect(), false);
-            database.exec("BEGIN");
-            const rows = database.prepare("SELECT id FROM resources ORDER BY id").all();
-            const resources = rows.map((row) => this.getResource(database, row.id));
-            database.exec("COMMIT");
-            return resources;
-        }
-        catch (e_7) {
-            env_7.error = e_7;
-            env_7.hasError = true;
-        }
-        finally {
-            __disposeResources(env_7);
-        }
+        const database = this.connect();
+        database.exec("BEGIN");
+        const rows = database.prepare("SELECT id FROM resources ORDER BY id").all();
+        const resources = rows.map((row) => this.getResource(database, row.id));
+        database.exec("COMMIT");
+        database.close();
+        return resources;
     }
     async delete(resourceId) {
-        const env_8 = { stack: [], error: void 0, hasError: false };
-        try {
-            const database = __addDisposableResource(env_8, this.connect(), false);
-            database.prepare("DELETE FROM resources WHERE id = ?").run(resourceId);
-        }
-        catch (e_8) {
-            env_8.error = e_8;
-            env_8.hasError = true;
-        }
-        finally {
-            __disposeResources(env_8);
-        }
+        const database = this.connect();
+        database.prepare("DELETE FROM resources WHERE id = ?").run(resourceId);
+        database.close();
     }
     getResource(database, resourceId) {
         const row = database.prepare("SELECT id, type FROM resources WHERE id = ?").get(resourceId);
@@ -352,22 +252,9 @@ export class FileRegistry {
                 throw new Error(url);
         }
         const tempPath = join(this.path, randomUUID());
-        {
-            const env_9 = { stack: [], error: void 0, hasError: false };
-            try {
-                const handle = __addDisposableResource(env_9, await open(tempPath, "wx", 0o600), true);
-                await handle.writeFile(`${stableJsonPretty(normalized)}\n`, "utf8");
-            }
-            catch (e_9) {
-                env_9.error = e_9;
-                env_9.hasError = true;
-            }
-            finally {
-                const result_1 = __disposeResources(env_9);
-                if (result_1)
-                    await result_1;
-            }
-        }
+        const handle = await open(tempPath, "wx", 0o600);
+        await handle.writeFile(`${stableJsonPretty(normalized)}\n`, "utf8");
+        await handle.close();
         await rename(tempPath, this.resourcePath(normalized.id));
         return normalized;
     }

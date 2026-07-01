@@ -11,6 +11,8 @@ export { extractChromeCookies } from "../../../packages/wire-core/src/runtime/ch
 export type { ChromeCookieExtraction, ChromeCookieResult } from "../../../packages/wire-core/src/runtime/chrome.js";
 export { createGoogleTokensCapability } from "../../../packages/wire-core/src/runtime/google.js";
 export type { NodeEnvironment } from "../../../packages/wire-core/src/runtime/node.js";
+export { FileRegistry, SqliteRegistry } from "../../../packages/wire-core/src/storage/registry.js";
+export { configuredWireRoot, defaultWireBackend, defaultWireRegistryPath, discoverWireRoot, initializeWire, loadWireConfig, openWireRegistry, registryPathForBackend, switchWireBackend, wireRelativePath } from "../../../packages/wire-core/src/storage/workspace.js";
 export { composeWire } from "../../../packages/wire-core/src/operations.js";
 export type { Wire, WireAction, WireDependencies, WireFilesystem, WireResult, WireWatchSession } from "../../../packages/wire-core/src/operations.js";
 export { composeAuth } from "../../../packages/wire/src/auth.js";

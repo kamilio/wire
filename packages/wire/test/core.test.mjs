@@ -22,6 +22,8 @@ const sourceCases = [
   ["https://docs.google.com/document/d/document-id/edit?tab=t.abc123", { service: "google-docs", identifier: "document-id#tab=t.abc123", type: "document", document_id: "document-id", document_tab: "t.abc123" }],
   ["https://docs.google.com/document/d/document-id/edit#tab=t.abc123", { service: "google-docs", identifier: "document-id#tab=t.abc123", type: "document", document_id: "document-id", document_tab: "t.abc123" }],
   ["https://docs.google.com/document/d/document-id/edit?resourcekey=doc-key", { service: "google-docs", identifier: "document-id", type: "document", resource_key: "doc-key" }],
+  ["https://docs.google.com/presentation/d/presentation-id/edit", { service: "google-docs", identifier: "presentation-id", type: "presentation" }],
+  ["https://docs.google.com/presentation/u/0/d/presentation-id/edit?resourcekey=presentation-key", { service: "google-docs", identifier: "presentation-id", type: "presentation", resource_key: "presentation-key" }],
   ["https://docs.google.com/spreadsheets/d/sheet-id/edit#gid=0", { service: "google-docs", identifier: "sheet-id#gid=0", type: "spreadsheet", document_id: "sheet-id", sheet_gid: "0" }],
   ["https://docs.google.com/spreadsheets/u/0/d/sheet-id/edit#gid=0", { service: "google-docs", identifier: "sheet-id#gid=0", type: "spreadsheet", document_id: "sheet-id", sheet_gid: "0" }],
   ["https://docs.google.com/spreadsheets/d/sheet-id/edit#gid=0&range=A1", { service: "google-docs", identifier: "sheet-id#gid=0", type: "spreadsheet", document_id: "sheet-id", sheet_gid: "0" }],

@@ -1,4 +1,5 @@
 import { UserError, defineCommand, defineGroup, S } from "toolcraft";
+import { defaultWireBackend, registryPathForBackend } from "wire-core";
 const authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"];
 const removedCliCommandNames = Object.freeze({
     create: "Use `wire attach <url>` or `wire <url>`.",
@@ -54,21 +55,23 @@ function formatWireCountsRich(result, primitives) {
 }
 function formatWireResult(result) {
     const local = lineText(primaryFilesystemLink(result.resource).path);
+    const remote = lineText(result.summary.remote);
     const titleText = lineText(wireTitle(result.resource));
     if (result.summary.action === "failed")
         return [`failed  ${titleText}`, `local:  ${local}`, formatMultilineField("error", result.summary.error)].join("\n");
-    const changed = result.summary.added !== 0 || result.summary.modified !== 0 || result.summary.removed !== 0;
+    const changed = result.summary.action !== "detached" && (result.summary.added !== 0 || result.summary.modified !== 0 || result.summary.removed !== 0);
     const title = changed ? `${result.summary.action}  ${formatWireCounts(result)}  ${titleText}` : `${result.summary.action}  ${titleText}`;
-    return [title, `local:  ${local}`].join("\n");
+    return [title, ...(result.summary.action === "uploaded" ? [`remote: ${remote}`] : []), `local:  ${local}`].join("\n");
 }
 function formatWireResultRich(result, primitives) {
     const local = lineText(primaryFilesystemLink(result.resource).path);
+    const remote = lineText(result.summary.remote);
     const titleText = lineText(wireTitle(result.resource));
     if (result.summary.action === "failed")
         return [`failed  ${titleText}`, `local:  ${local}`, formatMultilineField("error", result.summary.error)].join("\n");
-    const changed = result.summary.added !== 0 || result.summary.modified !== 0 || result.summary.removed !== 0;
+    const changed = result.summary.action !== "detached" && (result.summary.added !== 0 || result.summary.modified !== 0 || result.summary.removed !== 0);
     const title = changed ? `${result.summary.action}  ${formatWireCountsRich(result, primitives)}  ${titleText}` : `${result.summary.action}  ${titleText}`;
-    return [title, `local:  ${local}`].join("\n");
+    return [title, ...(result.summary.action === "uploaded" ? [`remote: ${remote}`] : []), `local:  ${local}`].join("\n");
 }
 function formatMultilineField(label, value) {
     const lines = value.split(/\r\n|\n|\r/).map(lineText);
@@ -125,12 +128,12 @@ function watchSessionJson(value) {
     return { resource_id: value.resource.id, title: wireTitle(value.resource), remote: value.resource.urls[0], local: primaryFilesystemLink(value.resource).path, path: value.path, mode: value.mode, debounceMs: value.debounceMs, pollMs: value.pollMs };
 }
 function wireUserErrorMessage(message) {
-    return /^Unsupported source URL: /.test(message) || /^Wire workspace not initialized\. Run `wire init` or `wire <url>` first\.$/.test(message) || /^Wire workspace already initialized with (sqlite|files) registry at .+\. Existing registries are not overwritten\.$/.test(message) || /^Resource path is not registered: /.test(message) || /^Resource (path |identifier |URL )?not found: /.test(message) || /^Ambiguous resource path /.test(message) || /^Login not saved$/.test(message) || /authentication (is missing|is missing or expired|failed|expired).*Run `wire (asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.test(message) || /^Asana API /.test(message) || /^(GET|POST|PUT|DELETE) \/.* failed: \d+ /.test(message) || /^(Invalid Asana project heading|Asana section appears|Asana milestone appears|Asana task appears|Asana subtask appears|Unsupported Asana Markdown|Duplicate Asana identity|Missing Asana project heading|Asana project identity changed|Unknown Asana identity|Conflicting Asana edits)/.test(message) || /^ChatGPT conversation download failed\. Run `wire chatgpt login`\./.test(message) || /^Gmail API .+ failed: HTTP \d+ /.test(message) || /^Slack API [\w.]+ failed: /.test(message) || /^Zoom Hub (.+ failed: HTTP \d+|file .+ was not returned by batch_get)/.test(message) || /^(Markdown document requires a first heading|Markdown and Notion changed since last sync|lossless Markdown headings deeper than level 3 are not supported)$/.test(message) || /^Indented Notion Markdown block has no parent at indent \d+$/.test(message) || /^POST [A-Za-z0-9]+ failed: \d+ /.test(message) || /^Google (Docs|Sheets) changed remotely and locally\./.test(message) || /^Google Docs local edit cannot be mapped to the live document text$/.test(message) || /^Google Docs sync cannot upload formatting-only Markdown edits$/.test(message) || /^Google (Docs|Sheets) editor did not include save metadata$/.test(message) || /^Google (Docs Markdown|Sheets CSV) export (did not include a filename|failed: HTTP \d+)$/.test(message) || /^Google (Docs|Sheets) save (failed: |verification failed$)/.test(message) || /^Google sync base must /.test(message) || /^Google Sheets sync base /.test(message) || /^Google Sheets sync cannot upload formula-like cell text at row \d+, column \d+\nPrefix it with an apostrophe or rewrite it as plain text before syncing\.$/.test(message) || /^Google Sheets sync requires a Markdown table/.test(message) || /^Google Sheets sync requires every Markdown table row to have the same number of cells$/.test(message) || /^Google Sheets sync requires every Markdown table row to have \d+ cells: line \d+ has \d+$/.test(message);
+    return /^Unsupported source URL: /.test(message) || /^Wire workspace not initialized\. Run `wire init` or `wire <url>` first\.$/.test(message) || /^Wire workspace already initialized with (sqlite|files) registry at .+\. Existing registries are not overwritten\.$/.test(message) || /^Resource path is not registered: /.test(message) || /^Resource (path |identifier |URL )?not found: /.test(message) || /^Ambiguous resource path /.test(message) || /^Login not saved$/.test(message) || /authentication (is missing|is missing or expired|failed|expired).*Run `wire (asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.test(message) || /^Asana API /.test(message) || /^(GET|POST|PUT|DELETE) \/.* failed: \d+ /.test(message) || /^(Invalid Asana project heading|Asana section appears|Asana milestone appears|Asana task appears|Asana subtask appears|Unsupported Asana Markdown|Duplicate Asana identity|Missing Asana project heading|Asana project identity changed|Unknown Asana identity|Conflicting Asana edits)/.test(message) || /^ChatGPT conversation download failed\. Run `wire chatgpt login`\./.test(message) || /^Gmail API .+ failed: HTTP \d+ /.test(message) || /^Slack API [\w.]+ failed: /.test(message) || /^Zoom Hub (.+ failed: HTTP \d+|file .+ was not returned by batch_get)/.test(message) || /^(Markdown document requires a first heading|Markdown and Notion changed since last sync|lossless Markdown headings deeper than level 3 are not supported)$/.test(message) || /^Indented Notion Markdown block has no parent at indent \d+$/.test(message) || /^POST [A-Za-z0-9]+ failed: \d+ /.test(message) || /^Google (Docs|Sheets|Slides) changed remotely and locally\./.test(message) || /^Google Docs local edit cannot be mapped to the live document text$/.test(message) || /^Google Docs sync cannot upload formatting-only Markdown edits$/.test(message) || /^Google Slides sync is download-only\./.test(message) || /^Google (Docs|Sheets) editor did not include save metadata$/.test(message) || /^Google (Docs Markdown|Sheets CSV|Slides PPTX) export (did not include a filename|failed: HTTP \d+)$/.test(message) || /^Google (Docs|Sheets) save (failed: |verification failed$)/.test(message) || /^Google sync base must /.test(message) || /^Google Sheets sync base /.test(message) || /^Google Sheets sync cannot upload formula-like cell text at row \d+, column \d+\nPrefix it with an apostrophe or rewrite it as plain text before syncing\.$/.test(message) || /^Google Sheets sync requires a Markdown table/.test(message) || /^Google Sheets sync requires every Markdown table row to have the same number of cells$/.test(message) || /^Google Sheets sync requires every Markdown table row to have \d+ cells: line \d+ has \d+$/.test(message);
 }
 function wireUserErrorDisplayMessage(message) {
     const unsupportedSource = /^Unsupported source URL: ([\s\S]+)$/.exec(message);
     if (unsupportedSource !== null)
-        return `unsupported source\nurl: ${lineText(unsupportedSource[1])}\nsupported: Asana, ChatGPT, Gmail, Google Docs/Sheets, Notion, Slack, Zoom`;
+        return `unsupported source\nurl: ${lineText(unsupportedSource[1])}\nsupported: Asana, ChatGPT, Gmail, Google Docs/Sheets/Slides, Notion, Slack, Zoom`;
     const missingWorkspace = /^Wire workspace not initialized\. Run `wire init` or `wire <url>` first\.$/.exec(message);
     if (missingWorkspace !== null)
         return "workspace not initialized\nrun: wire init\nattach: wire <url>";
@@ -185,42 +188,45 @@ function wireUserErrorDisplayMessage(message) {
     const chatgptDownload = /^ChatGPT conversation download failed\. Run `wire chatgpt login`\.([\s\S]*)$/.exec(message);
     if (chatgptDownload !== null)
         return `download failed\nservice: ChatGPT\nlogin: wire chatgpt login\ndetail: ${lineText(chatgptDownload[1])}`;
-    const googleExportMissingFilename = /^Google (Docs Markdown|Sheets CSV) export did not include a filename$/.exec(message);
+    const googleExportMissingFilename = /^Google (Docs Markdown|Sheets CSV|Slides PPTX) export did not include a filename$/.exec(message);
     if (googleExportMissingFilename !== null)
-        return `export failed\nservice: Google Docs/Sheets\nsource: Google ${googleExportMissingFilename[1]}\ndetail: missing filename`;
-    const googleExportHttp = /^Google (Docs Markdown|Sheets CSV) export failed: HTTP (\d+)(?: ([\s\S]+))?$/.exec(message);
+        return `export failed\nservice: Google Docs/Sheets/Slides\nsource: Google ${googleExportMissingFilename[1]}\ndetail: missing filename`;
+    const googleExportHttp = /^Google (Docs Markdown|Sheets CSV|Slides PPTX) export failed: HTTP (\d+)(?: ([\s\S]+))?$/.exec(message);
     if (googleExportHttp !== null)
-        return `export failed\nservice: Google Docs/Sheets\nsource: Google ${googleExportHttp[1]}\nstatus: HTTP ${googleExportHttp[2]}${googleExportHttp[3] === undefined ? "" : `\ndetail: ${lineText(googleExportHttp[3])}`}`;
+        return `export failed\nservice: Google Docs/Sheets/Slides\nsource: Google ${googleExportHttp[1]}\nstatus: HTTP ${googleExportHttp[2]}${googleExportHttp[3] === undefined ? "" : `\ndetail: ${lineText(googleExportHttp[3])}`}`;
     const googleEditorMetadata = /^Google (Docs|Sheets) editor did not include save metadata$/.exec(message);
     if (googleEditorMetadata !== null)
-        return `save metadata missing\nservice: Google Docs/Sheets\nsource: Google ${googleEditorMetadata[1]} editor`;
+        return `save metadata missing\nservice: Google Docs/Sheets/Slides\nsource: Google ${googleEditorMetadata[1]} editor`;
     const googleSaveFailed = /^Google (Docs|Sheets) save failed: ([\s\S]+)$/.exec(message);
     if (googleSaveFailed !== null)
-        return `save failed\nservice: Google Docs/Sheets\nsource: Google ${googleSaveFailed[1]}\ndetail: ${lineText(googleSaveFailed[2])}`;
+        return `save failed\nservice: Google Docs/Sheets/Slides\nsource: Google ${googleSaveFailed[1]}\ndetail: ${lineText(googleSaveFailed[2])}`;
     const googleSaveVerification = /^Google (Docs|Sheets) save verification failed$/.exec(message);
     if (googleSaveVerification !== null)
-        return `save verification failed\nservice: Google Docs/Sheets\nsource: Google ${googleSaveVerification[1]}`;
-    const googleConflict = /^Google (Docs|Sheets) changed remotely and locally\. Resolve the conflict in Google (Docs|Sheets) or the local Markdown file before syncing again\.$/.exec(message);
+        return `save verification failed\nservice: Google Docs/Sheets/Slides\nsource: Google ${googleSaveVerification[1]}`;
+    const googleConflict = /^Google (Docs|Sheets|Slides) changed remotely and locally\. Resolve the conflict in Google (Docs|Sheets|Slides) or the local Markdown file before syncing again\.$/.exec(message);
     if (googleConflict !== null)
-        return `sync conflict\nservice: Google Docs/Sheets\nsource: Google ${googleConflict[1]}\nresolve: edit Google ${googleConflict[2]} or local Markdown, then sync again`;
+        return `sync conflict\nservice: Google Docs/Sheets/Slides\nsource: Google ${googleConflict[1]}\nresolve: edit Google ${googleConflict[2]} or local Markdown, then sync again`;
     const googleDocsMapping = /^Google Docs local edit cannot be mapped to the live document text$/.exec(message);
     if (googleDocsMapping !== null)
-        return "local edit not mappable\nservice: Google Docs/Sheets\nsource: Google Docs\nresolve: edit Google Docs or simplify local Markdown";
+        return "local edit not mappable\nservice: Google Docs/Sheets/Slides\nsource: Google Docs\nresolve: edit Google Docs or simplify local Markdown";
     const googleFormattingOnly = /^Google Docs sync cannot upload formatting-only Markdown edits$/.exec(message);
     if (googleFormattingOnly !== null)
-        return "local edit not uploadable\nservice: Google Docs/Sheets\nsource: Google Docs\ndetail: formatting-only Markdown edit";
+        return "local edit not uploadable\nservice: Google Docs/Sheets/Slides\nsource: Google Docs\ndetail: formatting-only Markdown edit";
+    const googleSlidesDownloadOnly = /^Google Slides sync is download-only\. Revert local edits or use `wire download <url>` for a fresh copy\.$/.exec(message);
+    if (googleSlidesDownloadOnly !== null)
+        return "local edit not uploadable\nservice: Google Docs/Sheets/Slides\nsource: Google Slides\ndetail: download-only";
     const googleSyncBase = /^Google sync base must ([\s\S]+)$/.exec(message);
     if (googleSyncBase !== null)
-        return `sync base invalid\nservice: Google Docs/Sheets\ndetail: must ${lineText(googleSyncBase[1])}`;
+        return `sync base invalid\nservice: Google Docs/Sheets/Slides\ndetail: must ${lineText(googleSyncBase[1])}`;
     const googleSheetsSyncBase = /^Google Sheets sync base ([\s\S]+)$/.exec(message);
     if (googleSheetsSyncBase !== null)
-        return `sync base invalid\nservice: Google Docs/Sheets\nsource: Google Sheets\ndetail: ${lineText(googleSheetsSyncBase[1])}`;
+        return `sync base invalid\nservice: Google Docs/Sheets/Slides\nsource: Google Sheets\ndetail: ${lineText(googleSheetsSyncBase[1])}`;
     const googleSheetsFormulaCell = /^Google Sheets sync cannot upload formula-like cell text at row (\d+), column (\d+)\nPrefix it with an apostrophe or rewrite it as plain text before syncing\.$/.exec(message);
     if (googleSheetsFormulaCell !== null)
-        return `formula-like cell blocked\nservice: Google Docs/Sheets\nsource: Google Sheets\ncell: row ${googleSheetsFormulaCell[1]}, column ${googleSheetsFormulaCell[2]}\nresolve: prefix with an apostrophe or rewrite as plain text`;
+        return `formula-like cell blocked\nservice: Google Docs/Sheets/Slides\nsource: Google Sheets\ncell: row ${googleSheetsFormulaCell[1]}, column ${googleSheetsFormulaCell[2]}\nresolve: prefix with an apostrophe or rewrite as plain text`;
     const googleSheetsTable = /^Google Sheets sync requires (a Markdown table(?: separator row)?|every Markdown table row to have the same number of cells|every Markdown table row to have \d+ cells: line \d+ has \d+)$/.exec(message);
     if (googleSheetsTable !== null)
-        return `local table invalid\nservice: Google Docs/Sheets\nsource: Google Sheets\ndetail: requires ${lineText(googleSheetsTable[1])}`;
+        return `local table invalid\nservice: Google Docs/Sheets/Slides\nsource: Google Sheets\ndetail: requires ${lineText(googleSheetsTable[1])}`;
     const missingPath = /^Resource path (not found|is not registered): ([\s\S]+)$/.exec(message);
     if (missingPath !== null)
         return `${missingPath[1] === "not found" ? "resource not found" : "resource not registered"}\npath: ${lineText(missingPath[2])}`;
@@ -258,7 +264,7 @@ function serviceTitle(service) {
         asana: "Asana",
         chatgpt: "ChatGPT",
         gmail: "Gmail",
-        "google-docs": "Google Docs/Sheets",
+        "google-docs": "Google Docs/Sheets/Slides",
         notion: "Notion",
         slack: "Slack",
         zoom: "Zoom",
@@ -363,9 +369,9 @@ export function createRoot(wire, currentDirectory, auth, readInput) {
                 name: "init",
                 description: "Initialize a wire workspace in the current directory.",
                 params: S.Object({
-                    backend: S.Optional(S.Enum(["sqlite", "files"], { default: "sqlite", description: "Registry backend: sqlite or files." })),
+                    backend: S.Optional(S.Enum(["files", "sqlite"], { default: defaultWireBackend, description: "Registry backend: files or sqlite." })),
                 }),
-                handler: ({ params }) => userFacing(() => wire.init(currentDirectory, params.backend, params.backend === "files" ? "records" : "registry.sqlite3")),
+                handler: ({ params }) => userFacing(() => wire.init(currentDirectory, params.backend, registryPathForBackend(params.backend))),
                 render: wirePresentation.init,
             }),
             defineCommand({

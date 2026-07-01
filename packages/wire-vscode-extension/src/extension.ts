@@ -4,31 +4,12 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import * as vscode from "vscode";
-import { composeAuth, composeWire, createGoogleTokensCapability, extractChromeCookies, parseNetscapeCookies, parsePastedCookieMetadata, serializeNetscapeCookies, type AuthResult, type AuthService, type Cookie, type CookiesCapability, type RuntimeCapabilities } from "wire-core";
+import { composeAuth, composeWire, configuredWireRoot, createCookiesCapability, createGoogleTokensCapability, defaultWireBackend, defaultWireRegistryPath, extractChromeCookies, initializeWire, loadWireConfig, openWireRegistry, wireRelativePath, type AuthResult, type AuthService, type RuntimeCapabilities, type WireResult } from "wire-core";
 import { serviceCatalog } from "./service-catalog.js";
-import { configuredWireRoot, initializeWire, loadWireConfig, openWireRegistry, wireRelativePath } from "./workspace.js";
 
 const execFileAsync = promisify(execFile);
 const authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
 let wireStatus: vscode.StatusBarItem;
-
-function setting(name: string): string {
-  const value = vscode.workspace.getConfiguration().get<string>(name);
-  if (value === undefined || value.trim() === "") throw new Error(`Missing VSCode setting: ${name}`);
-  return value;
-}
-
-function serviceSetting(service: string): string {
-  return {
-    asana: "wire.auth.asanaCookiesFile",
-    chatgpt: "wire.auth.chatgptCookiesFile",
-    gmail: "wire.auth.gmailCookiesFile",
-    "google-docs": "wire.auth.googleDocsCookiesFile",
-    notion: "wire.auth.notionCookiesFile",
-    slack: "wire.auth.slackCookiesFile",
-    zoom: "wire.auth.zoomCookiesFile"
-  }[service]!;
-}
 
 function environment(name: string): string {
   const value = process.env[name];
@@ -36,15 +17,8 @@ function environment(name: string): string {
   return value;
 }
 
-function cookiesCapability(): CookiesCapability {
-  const load = async (service: string): Promise<readonly Cookie[]> => parseNetscapeCookies(await readFile(setting(serviceSetting(service)), "utf8"));
-  return {
-    load,
-    loadSaved: load,
-    metadata: async (service: string) => parsePastedCookieMetadata(await readFile(setting(serviceSetting(service)), "utf8")),
-    save: async (service: string, cookies: readonly Cookie[], metadata: Readonly<Record<string, string>>) => { await writeFile(setting(serviceSetting(service)), serializeNetscapeCookies(cookies, metadata), "utf8"); },
-    delete: async (service: string) => { await rm(setting(serviceSetting(service))); }
-  };
+function repositoryRoot(): string | undefined {
+  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 
 function runtime(): RuntimeCapabilities {
@@ -71,12 +45,12 @@ function runtime(): RuntimeCapabilities {
     } },
     clock,
     openFiles: { open: async (path: string) => { await vscode.env.openExternal(vscode.Uri.parse(path)); } },
-    configuration: { get: setting },
+    configuration: { get: environment },
     secrets: { get: async (reference: string) => { throw new Error(`Missing secret provider for ${reference}`); } },
-    cookies: cookiesCapability(),
+    cookies: createCookiesCapability(filesystem, () => environment("HOME"), repositoryRoot),
     gmailTokens: {
-      load: () => createGoogleTokensCapability(filesystem, { request: (input: string | URL | Request, init?: RequestInit) => fetch(input, init) }, clock, setting("wire.google.credentialsFile"), setting("wire.google.tokenFile")).load(),
-      refresh: () => createGoogleTokensCapability(filesystem, { request: (input: string | URL | Request, init?: RequestInit) => fetch(input, init) }, clock, setting("wire.google.credentialsFile"), setting("wire.google.tokenFile")).refresh()
+      load: () => createGoogleTokensCapability(filesystem, { request: (input: string | URL | Request, init?: RequestInit) => fetch(input, init) }, clock, environment("GOOGLE_CREDENTIALS_FILE"), environment("GOOGLE_TOKEN_FILE")).load(),
+      refresh: () => createGoogleTokensCapability(filesystem, { request: (input: string | URL | Request, init?: RequestInit) => fetch(input, init) }, clock, environment("GOOGLE_CREDENTIALS_FILE"), environment("GOOGLE_TOKEN_FILE")).refresh()
     }
   };
 }
@@ -100,7 +74,7 @@ function wire() {
       openRegistry: openWireRegistry,
       relativePath: wireRelativePath
     },
-    initialization: { backend: "files", registryPath: "records" },
+    initialization: { backend: defaultWireBackend, registryPath: defaultWireRegistryPath },
     now: capabilities.clock.now,
     open: capabilities.openFiles.open
   });
@@ -121,6 +95,44 @@ function showWireStatus(message: string): void {
   vscode.window.showInformationMessage(message);
 }
 
+async function wireProgress<T>(message: string, operation: () => Promise<T>): Promise<T> {
+  setWireStatus(message.toLowerCase());
+  return vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Wire - ${message}` }, operation);
+}
+
+type WireDisplayError = Readonly<{ message: string; command?: string }>;
+
+function wireError(error: unknown): WireDisplayError | null {
+  if (!(error instanceof Error)) return null;
+  const login = /Run `([^`]+)`/.exec(error.message);
+  if (login !== null) return { message: `Wire - Login required. Run in terminal: ${login[1]!}`, command: login[1]! };
+  const missingGoogle = /^Missing environment variable: (GOOGLE_CREDENTIALS_FILE|GOOGLE_TOKEN_FILE)$/.exec(error.message);
+  if (missingGoogle !== null) return { message: "Wire - Google login required. Run in terminal: wire google-docs login", command: "wire google-docs login" };
+  const unregisteredPath = /^Resource path is not registered: ([\s\S]+)$/.exec(error.message);
+  if (unregisteredPath !== null) return { message: `Wire - Not attached: ${unregisteredPath[1]}. Use Wire - Attach to track a source URL, or Wire - Download for a one-time copy.` };
+  const missingPath = /^Resource path not found: ([\s\S]+)$/.exec(error.message);
+  if (missingPath !== null) return { message: `Wire - Not found: ${missingPath[1]}.` };
+  const missingWorkspace = /^Wire workspace not initialized\. Run `wire init` or `wire <url>` first\.$/.exec(error.message);
+  if (missingWorkspace !== null) return { message: "Wire - Workspace is not initialized. Use Wire - Attach to start tracking a source URL." };
+  const unsupportedSource = /^Unsupported source URL: ([\s\S]+)$/.exec(error.message);
+  if (unsupportedSource !== null) return { message: `Wire - Unsupported source URL: ${unsupportedSource[1]}. Supported sources: Asana, ChatGPT, Gmail, Google Docs/Sheets/Slides, Notion, Slack, Zoom.` };
+  return null;
+}
+
+function wireCommand<Args extends readonly unknown[]>(command: (...args: Args) => Promise<void>): (...args: Args) => Promise<void> {
+  return async (...args) => {
+    try {
+      await command(...args);
+    } catch (error) {
+      const display = wireError(error);
+      if (display === null) throw error;
+      setWireStatus("error");
+      const action = display.command === undefined ? await vscode.window.showErrorMessage(display.message) : await vscode.window.showErrorMessage(display.message, "Copy command");
+      if (action === "Copy command") await vscode.env.clipboard.writeText(display.command!);
+    }
+  };
+}
+
 function identityText(result: AuthResult): string {
   const entries = Object.entries(result.identity);
   if (entries.length === 0) return result.service;
@@ -139,6 +151,12 @@ function selectedDirectory(uri: vscode.Uri | undefined): string {
   return existsSync(path) && statSync(path).isDirectory() ? path : dirname(path);
 }
 
+function projectDirectory(): string {
+  const root = repositoryRoot();
+  if (root === undefined) throw new Error("No workspace folder open");
+  return root;
+}
+
 function resourceFile(uri: vscode.Uri | undefined): string {
   const path = selectedPath(uri);
   if (!statSync(path).isFile()) throw new Error(`Expected file: ${path}`);
@@ -150,65 +168,82 @@ function title(resource: { data: readonly { namespace: string; key: string; valu
 }
 
 function resultMessage(result: { resource: { data: readonly { namespace: string; key: string; value: unknown }[] }; summary: { action: string; added: number; modified: number; removed: number } }): string {
-  return `${result.summary.action} +${result.summary.added} ~${result.summary.modified} -${result.summary.removed} ${title(result.resource)}`;
+  return `Wire - ${result.summary.action[0]!.toUpperCase()}${result.summary.action.slice(1)}: ${title(result.resource)}`;
+}
+
+async function showWireResultStatus(result: WireResult): Promise<void> {
+  const message = resultMessage(result);
+  setWireStatus(message);
+  if (result.summary.action !== "uploaded") {
+    vscode.window.showInformationMessage(message);
+    return;
+  }
+  const action = await vscode.window.showInformationMessage(message, "Copy URL", "Open URL");
+  if (action === "Copy URL") await vscode.env.clipboard.writeText(result.summary.remote);
+  if (action === "Open URL") await vscode.env.openExternal(vscode.Uri.parse(result.summary.remote));
 }
 
 async function attachHere(uri: vscode.Uri | undefined): Promise<void> {
   const directory = selectedDirectory(uri);
   const url = await vscode.window.showInputBox({ prompt: "Source URL" });
   if (url === undefined || url.trim() === "") throw new Error("Source URL required");
-  setWireStatus("attaching");
-  const result = await wire().attach(url, directory);
+  const result = await wireProgress("Attaching", () => wire().attach(url, directory));
   await vscode.window.showTextDocument(vscode.Uri.file(result.path));
-  showWireStatus(resultMessage(result));
+  await showWireResultStatus(result);
+}
+
+async function initProject(): Promise<void> {
+  const directory = projectDirectory();
+  const existingRoot = await configuredWireRoot(directory, environment("HOME"));
+  if (existingRoot !== null) {
+    const config = await loadWireConfig(existingRoot);
+    showWireStatus(`Wire - Project ready: ${config.backend}`);
+    return;
+  }
+  const result = await wireProgress("Initializing project", () => initializeWire(directory, defaultWireBackend, defaultWireRegistryPath));
+  showWireStatus(`Wire - Project initialized: ${result.backend}`);
 }
 
 async function downloadHere(uri: vscode.Uri | undefined): Promise<void> {
   const directory = selectedDirectory(uri);
   const url = await vscode.window.showInputBox({ prompt: "Source URL" });
   if (url === undefined || url.trim() === "") throw new Error("Source URL required");
-  setWireStatus("downloading");
-  const result = await wire().downloadSource(url, directory);
+  const result = await wireProgress("Downloading", () => wire().downloadSource(url, directory));
   await vscode.window.showTextDocument(vscode.Uri.file(result.path));
-  showWireStatus(resultMessage(result));
+  await showWireResultStatus(result);
 }
 
 async function previewUrl(): Promise<void> {
   const url = await vscode.window.showInputBox({ prompt: "Source URL" });
   if (url === undefined || url.trim() === "") throw new Error("Source URL required");
-  setWireStatus("previewing");
-  const result = await wire().view(url);
+  const result = await wireProgress("Previewing", () => wire().view(url));
   const document = await vscode.workspace.openTextDocument({ language: "markdown", content: result.markdown });
   await vscode.window.showTextDocument(document);
-  showWireStatus(`previewed ${result.title}`);
+  showWireStatus(`Wire - Previewed: ${result.title}`);
 }
 
 async function syncFile(uri: vscode.Uri | undefined): Promise<void> {
   const path = resourceFile(uri);
-  setWireStatus("syncing file");
-  const result = await wire().sync(path, dirname(path));
-  showWireStatus(resultMessage(result));
+  const result = await wireProgress("Syncing", () => wire().sync(path, dirname(path)));
+  await showWireResultStatus(result);
 }
 
 async function detachFile(uri: vscode.Uri | undefined): Promise<void> {
   const path = resourceFile(uri);
-  setWireStatus("detaching file");
-  const result = await wire().detach(path, dirname(path));
-  showWireStatus(resultMessage(result));
+  const result = await wireProgress("Detaching", () => wire().detach(path, dirname(path)));
+  await showWireResultStatus(result);
 }
 
 async function openResource(uri: vscode.Uri | undefined): Promise<void> {
   const path = resourceFile(uri);
-  setWireStatus("opening resource");
-  const resource = await wire().openResource(path, dirname(path));
-  showWireStatus(`opened ${title(resource)}`);
+  const resource = await wireProgress("Opening", () => wire().openResource(path, dirname(path)));
+  showWireStatus(`Wire - Opened: ${title(resource)}`);
 }
 
 async function syncDirectory(uri: vscode.Uri | undefined): Promise<void> {
   const directory = selectedDirectory(uri);
-  setWireStatus("syncing directory");
-  const results = await wire().syncAll(directory);
-  showWireStatus(`synced ${results.length} resources`);
+  const results = await wireProgress("Syncing all", () => wire().syncAll(directory));
+  showWireStatus(`Wire - Synced ${results.length} resources`);
 }
 
 async function selectedAuthService(): Promise<AuthService> {
@@ -219,14 +254,12 @@ async function selectedAuthService(): Promise<AuthService> {
 
 async function authStatus(): Promise<void> {
   const service = await selectedAuthService();
-  setWireStatus(`${service} status`);
-  const result = await auth().status(service);
-  showWireStatus(`authenticated ${identityText(result)}`);
+  const result = await wireProgress("Checking login", () => auth().status(service));
+  showWireStatus(`Wire - Authenticated: ${identityText(result)}`);
 }
 
 async function authLogin(): Promise<void> {
   const service = await selectedAuthService();
-  setWireStatus(`${service} login waiting for browser`);
   const authClient = auth();
   const actions = {
     asana: authClient.extractAsana,
@@ -237,15 +270,14 @@ async function authLogin(): Promise<void> {
     slack: authClient.extractSlack,
     zoom: authClient.extractZoom,
   };
-  const result = await actions[service]();
-  showWireStatus(`login saved ${identityText(result)}`);
+  const result = await wireProgress("Logging in", () => actions[service]());
+  showWireStatus(`Wire - Login saved: ${identityText(result)}`);
 }
 
 async function authLogout(): Promise<void> {
   const service = await selectedAuthService();
-  setWireStatus(`${service} logout`);
-  await auth().logout(service);
-  showWireStatus(`logged out ${service}`);
+  await wireProgress("Logging out", () => auth().logout(service));
+  showWireStatus(`Wire - Logged out: ${service}`);
 }
 
 async function compileAndReload(): Promise<void> {
@@ -260,17 +292,18 @@ export function activate(context: vscode.ExtensionContext): void {
   setWireStatus("ready");
   context.subscriptions.push(
     wireStatus,
-    vscode.commands.registerCommand("wire.attachHere", attachHere),
-    vscode.commands.registerCommand("wire.downloadHere", downloadHere),
-    vscode.commands.registerCommand("wire.previewUrl", previewUrl),
-    vscode.commands.registerCommand("wire.syncFile", syncFile),
-    vscode.commands.registerCommand("wire.detachFile", detachFile),
-    vscode.commands.registerCommand("wire.openResource", openResource),
-    vscode.commands.registerCommand("wire.syncDirectory", syncDirectory),
-    vscode.commands.registerCommand("wire.authStatus", authStatus),
-    vscode.commands.registerCommand("wire.authLogin", authLogin),
-    vscode.commands.registerCommand("wire.authLogout", authLogout),
-    vscode.commands.registerCommand("wire.compileAndReload", compileAndReload)
+    vscode.commands.registerCommand("wire.initProject", wireCommand(initProject)),
+    vscode.commands.registerCommand("wire.attachHere", wireCommand(attachHere)),
+    vscode.commands.registerCommand("wire.downloadHere", wireCommand(downloadHere)),
+    vscode.commands.registerCommand("wire.previewUrl", wireCommand(previewUrl)),
+    vscode.commands.registerCommand("wire.syncFile", wireCommand(syncFile)),
+    vscode.commands.registerCommand("wire.detachFile", wireCommand(detachFile)),
+    vscode.commands.registerCommand("wire.openResource", wireCommand(openResource)),
+    vscode.commands.registerCommand("wire.syncDirectory", wireCommand(syncDirectory)),
+    vscode.commands.registerCommand("wire.authStatus", wireCommand(authStatus)),
+    vscode.commands.registerCommand("wire.authLogin", wireCommand(authLogin)),
+    vscode.commands.registerCommand("wire.authLogout", wireCommand(authLogout)),
+    vscode.commands.registerCommand("wire.compileAndReload", wireCommand(compileAndReload))
   );
 }
 

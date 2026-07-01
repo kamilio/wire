@@ -1,4 +1,4 @@
-export type ResourceType = "document" | "email-thread" | "message-thread" | "project" | "spreadsheet" | "task" | "transcript";
+export type ResourceType = "document" | "email-thread" | "message-thread" | "presentation" | "project" | "spreadsheet" | "task" | "transcript";
 
 export type JsonPrimitive = boolean | null | number | string;
 export type JsonObject = Readonly<{ [key: string]: JsonValue }>;

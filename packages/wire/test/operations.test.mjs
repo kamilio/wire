@@ -441,8 +441,8 @@ test("download reports downloaded when local Markdown already matches remote", a
   assert.deepEqual(downloaded.summary, { action: "downloaded", added: 0, modified: 0, removed: 0, remote: "https://notion.test/page", local: created.path });
 });
 
-test("detach downloads latest Markdown and removes the resource from future syncs", async () => {
-  const project = join(testRoot, "detach-download-remove");
+test("detach removes tracking without downloading latest Markdown", async () => {
+  const project = join(testRoot, "detach-remove-local-only");
   await mkdir(project);
   await initializeWire(project, "sqlite", "registry.sqlite3");
   let revision = 0;
@@ -454,11 +454,24 @@ test("detach downloads latest Markdown and removes the resource from future sync
   await writeFile(created.path, "# Local edit\n");
   const detached = await wire.detach(created.path, project);
   const registry = await openWireRegistry(project, project);
-  assert.equal(await readFile(created.path, "utf8"), "# Remote 2\n");
+  assert.equal(await readFile(created.path, "utf8"), "# Local edit\n");
   assert.deepEqual(await registry.listResources(), []);
-  assert.deepEqual(detached.summary, { action: "detached", added: 0, modified: 1, removed: 0, remote: "https://notion.test/page", local: created.path });
+  assert.deepEqual(detached.summary, { action: "detached", added: 0, modified: 0, removed: 0, remote: "https://notion.test/page", local: created.path });
   await assert.rejects(() => wire.sync("notion:page", project), /Resource not found: notion:page/);
   assert.deepEqual(await wire.syncAll(project), []);
+});
+
+test("detach does not fetch or require source authentication", async () => {
+  const project = join(testRoot, "detach-no-fetch");
+  await mkdir(project);
+  await initializeWire(project, "sqlite", "registry.sqlite3");
+  const wire = createWire(project, async () => ({ title: "Document", markdown: "# Remote\n", data: {} }));
+  const created = await wire.attach("https://notion.test/page", project);
+  const offlineWire = createWire(project, async () => { throw new Error("authentication is missing. Run `wire zoom login`"); });
+  const detached = await offlineWire.detach(created.path, project);
+  const registry = await openWireRegistry(project, project);
+  assert.equal(detached.summary.action, "detached");
+  assert.deepEqual(await registry.listResources(), []);
 });
 
 test("sync absolute file uses its workspace registry", async () => {

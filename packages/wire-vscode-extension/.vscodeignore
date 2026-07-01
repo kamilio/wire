@@ -1,0 +1,8 @@
+out/*.map
+src/**
+test/**
+.vscode/**
+tsconfig.json
+build.mjs
+bump-version.mjs
+version.json

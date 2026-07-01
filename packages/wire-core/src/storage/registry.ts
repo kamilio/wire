@@ -19,7 +19,7 @@ type ResourceIdRow = Readonly<{ resource_id: string }>;
 type IdRow = Readonly<{ id: string }>;
 type SqliteModule = Readonly<{ DatabaseSync: new (path: string) => DatabaseSync }>;
 
-const require = createRequire(import.meta.url);
+const require = createRequire("/wire-core/storage/registry.js");
 
 function compareStrings(left: string, right: string): number {
   const leftCodePoints = Array.from(left, (character) => character.codePointAt(0)!);
@@ -77,7 +77,7 @@ export class SqliteRegistry implements Registry {
 
   constructor(path: string) {
     this.path = realpathSyncParent(path);
-    using database = this.connect();
+    const database = this.connect();
     database.exec(`
       PRAGMA journal_mode=DELETE;
       PRAGMA foreign_keys=ON;
@@ -121,11 +121,27 @@ export class SqliteRegistry implements Registry {
       );
       CREATE INDEX IF NOT EXISTS resource_relationships_target ON resource_relationships(target_id);
     `);
+    database.close();
   }
 
   async put(resource: Resource): Promise<Resource> {
     const normalized = storageResource(resource);
-    using database = this.connect();
+    assertUniqueFileResource(normalized);
+    const database = this.connect();
+    for (const identifier of normalized.identifiers) {
+      const row = database.prepare("SELECT resource_id FROM resource_identifiers WHERE service = ? AND identifier = ? AND resource_id != ?").get(identifier.service, identifier.identifier, normalized.id) as ResourceIdRow | undefined;
+      if (row !== undefined) {
+        database.close();
+        throw new Error(`${identifier.service}/${identifier.identifier}`);
+      }
+    }
+    for (const url of normalized.urls) {
+      const row = database.prepare("SELECT resource_id FROM resource_urls WHERE url = ? AND resource_id != ?").get(url, normalized.id) as ResourceIdRow | undefined;
+      if (row !== undefined) {
+        database.close();
+        throw new Error(url);
+      }
+    }
     database.exec("BEGIN");
     database.prepare("INSERT INTO resources (id, type) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET type=excluded.type").run(normalized.id, normalized.type);
     database.prepare("DELETE FROM resource_identifiers WHERE resource_id = ?").run(normalized.id);
@@ -144,58 +160,76 @@ export class SqliteRegistry implements Registry {
     const insertRelationship = database.prepare("INSERT INTO resource_relationships (source_id, target_id, type, data_json) VALUES (?, ?, ?, ?)");
     for (const relationship of normalized.relationships) insertRelationship.run(normalized.id, relationship.target_id, relationship.type, stableJsonCompact(relationship.data));
     database.exec("COMMIT");
+    database.close();
     return normalized;
   }
 
   async get(resourceId: string): Promise<Resource> {
-    using database = this.connect();
+    const database = this.connect();
+    const row = database.prepare("SELECT id FROM resources WHERE id = ?").get(resourceId) as IdRow | undefined;
+    if (row === undefined) {
+      database.close();
+      throw missingResource(resourceId);
+    }
     database.exec("BEGIN");
     const resource = this.getResource(database, resourceId);
     database.exec("COMMIT");
+    database.close();
     return resource;
   }
 
   async findByIdentifier(service: string, identifier: string): Promise<Resource> {
-    using database = this.connect();
+    const database = this.connect();
     database.exec("BEGIN");
     const row = database.prepare("SELECT resource_id FROM resource_identifiers WHERE service = ? AND identifier = ?").get(service, identifier) as ResourceIdRow | undefined;
-    if (row === undefined) throw missingIdentifier(service, identifier);
+    if (row === undefined) {
+      database.close();
+      throw missingIdentifier(service, identifier);
+    }
     const resource = this.getResource(database, row.resource_id);
     database.exec("COMMIT");
+    database.close();
     return resource;
   }
 
   async findByUrl(url: string): Promise<Resource> {
-    using database = this.connect();
+    const database = this.connect();
     database.exec("BEGIN");
     const row = database.prepare("SELECT resource_id FROM resource_urls WHERE url = ?").get(url) as ResourceIdRow | undefined;
-    if (row === undefined) throw missingUrl(url);
+    if (row === undefined) {
+      database.close();
+      throw missingUrl(url);
+    }
     const resource = this.getResource(database, row.resource_id);
     database.exec("COMMIT");
+    database.close();
     return resource;
   }
 
   async findByPath(path: string): Promise<readonly Resource[]> {
-    using database = this.connect();
+    const database = this.connect();
     database.exec("BEGIN");
     const rows = database.prepare("SELECT DISTINCT resource_id FROM filesystem_links WHERE path = ? ORDER BY resource_id").all(path.replaceAll(sep, "/")) as ResourceIdRow[];
     const resources = rows.map((row) => this.getResource(database, row.resource_id));
     database.exec("COMMIT");
+    database.close();
     return resources;
   }
 
   async listResources(): Promise<readonly Resource[]> {
-    using database = this.connect();
+    const database = this.connect();
     database.exec("BEGIN");
     const rows = database.prepare("SELECT id FROM resources ORDER BY id").all() as IdRow[];
     const resources = rows.map((row) => this.getResource(database, row.id));
     database.exec("COMMIT");
+    database.close();
     return resources;
   }
 
   async delete(resourceId: string): Promise<void> {
-    using database = this.connect();
+    const database = this.connect();
     database.prepare("DELETE FROM resources WHERE id = ?").run(resourceId);
+    database.close();
   }
 
   private getResource(database: DatabaseSync, resourceId: string): Resource {
@@ -245,10 +279,9 @@ export class FileRegistry implements Registry {
       if (existingUrls.has(url)) throw new Error(url);
     }
     const tempPath = join(this.path, randomUUID());
-    {
-      await using handle = await open(tempPath, "wx", 0o600);
-      await handle.writeFile(`${stableJsonPretty(normalized)}\n`, "utf8");
-    }
+    const handle = await open(tempPath, "wx", 0o600);
+    await handle.writeFile(`${stableJsonPretty(normalized)}\n`, "utf8");
+    await handle.close();
     await rename(tempPath, this.resourcePath(normalized.id));
     return normalized;
   }

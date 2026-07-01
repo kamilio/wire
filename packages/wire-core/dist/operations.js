@@ -222,9 +222,10 @@ export function composeWire(dependencies) {
         const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
         const resource = await resolveResource(registry, value, root, path);
-        const result = await download(value, path);
+        const outputPath = join(dirname(root), primaryLink(resource).path);
+        const markdown = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
         await registry.delete(resource.id);
-        return { ...result, summary: { ...result.summary, action: "detached" } };
+        return { resource, path: outputPath, markdown, summary: { action: "detached", added: 0, modified: 0, removed: 0, remote: resource.urls[0], local: outputPath } };
     };
     const unlink = detach;
     const watch = async (value, path) => {

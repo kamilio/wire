@@ -7,6 +7,6 @@ export { extractChromeCookies } from "./runtime/chrome.js";
 export { createGoogleTokensCapability, googleTokenExpired, mergeGoogleRefresh, parseGoogleCredentials, parseGoogleToken } from "./runtime/google.js";
 export { composeNodeRuntime, createNodeClock, createNodeConfiguration, createNodeFilesystem, createNodeHttp, createNodeOpenFiles, createNodeProcess, createNodeRuntime, createNodeSecrets, createNodeWatch } from "./runtime/node.js";
 export { FileRegistry, SqliteRegistry } from "./storage/registry.js";
-export { configuredWireRoot, discoverWireRoot, initializeWire, loadWireConfig, openWireRegistry, switchWireBackend, wireRelativePath } from "./storage/workspace.js";
+export { configuredWireRoot, defaultWireBackend, defaultWireRegistryPath, discoverWireRoot, initializeWire, loadWireConfig, openWireRegistry, registryPathForBackend, switchWireBackend, wireRelativePath } from "./storage/workspace.js";
 export * from "./operations.js";
 //# sourceMappingURL=index.js.map

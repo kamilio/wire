@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { runCLI } from "toolcraft/cli";
 let brokenPipeHandlerInstalled = false;
 function installBrokenPipeHandler() {
@@ -135,8 +136,8 @@ const removedCommandNames = Object.freeze({
 const outputFormatNames = new Set(["rich", "md", "markdown", "json"]);
 const outputFormatList = "md, markdown, json, rich";
 const debugModeNames = new Set(["raw"]);
-const backendNames = new Set(["sqlite", "files"]);
-const backendList = "sqlite, files";
+const backendNames = new Set(["files", "sqlite"]);
+const backendList = "files, sqlite";
 function isSourceUrl(value) {
     return /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(value);
 }
@@ -521,6 +522,7 @@ export async function runWireCli(root, argv, currentDirectory) {
     if (!version && renderExcessPositionals(normalized)) {
         return;
     }
-    await runCLI(typeof root === "function" ? root(currentDirectory) : root, { version: "0.1.0", rootUsageName: "wire", presets: false, approvals: false, controls: { output: true, debug: true }, argv: normalized });
+    const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    await runCLI(typeof root === "function" ? root(currentDirectory) : root, { version: packageJson.version, rootUsageName: "wire", presets: false, approvals: false, controls: { output: true, debug: true }, argv: normalized });
 }
 //# sourceMappingURL=cli.js.map

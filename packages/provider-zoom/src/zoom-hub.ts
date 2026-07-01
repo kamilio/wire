@@ -195,9 +195,14 @@ export const zoomHubService = defineService<RuntimeCapabilities>({
     const document = files[0]!;
     const notes = document["meetingNotes"] as JsonObject;
     const meetingId = notes["meetingId"] as string;
+    const base = { recording_id: source.identifier, title: document["title"] as string, source_url: document["fileLink"] as string, meeting_id: meetingId, main_meeting_id: notes["mainMeetingId"] as string, owner: (document["owner"] as JsonObject)["ownerName"] as string, created_at: (document["createdInfo"] as JsonObject)["time"] as string, updated_at: (document["updatedInfo"] as JsonObject)["time"] as string };
+    if (meetingId === "") {
+      const result = { ...base, transcript: "", state: "missing" };
+      const markdown = [`# ${result.title}`, "", `- Transcript state: ${result.state}`, `- Recording ID: ${result.recording_id}`, `- Meeting ID: ${result.meeting_id}`, `- Main meeting ID: ${result.main_meeting_id}`, `- Owner: ${result.owner}`, `- Zoom document: ${result.source_url}`].join("\n");
+      return Object.freeze({ title: transcriptTitle(result.title, result.created_at, runtime.clock.localTimezone()), markdown, data: result });
+    }
     const statusResponse = await zoomRequest(runtime, jar, metadata, `https://us01docs.zoom.us/api/meeting/transcript_status?meetingId=${encodeURIComponent(meetingId)}`, { headers: hubHeaders(jwt) });
     const status = (await zoomJson(statusResponse, "transcript status"))["aicTranscript"] as JsonObject;
-    const base = { recording_id: source.identifier, title: document["title"] as string, source_url: document["fileLink"] as string, meeting_id: meetingId, main_meeting_id: notes["mainMeetingId"] as string, owner: (document["owner"] as JsonObject)["ownerName"] as string, created_at: (document["createdInfo"] as JsonObject)["time"] as string, updated_at: (document["updatedInfo"] as JsonObject)["time"] as string };
     if (!(status["exist"] as boolean) || !(status["canAccess"] as boolean)) {
       const result = { ...base, transcript: "", state: status["exist"] as boolean ? "denied" : "missing" };
       const markdown = [`# ${result.title}`, "", `- Transcript state: ${result.state}`, `- Recording ID: ${result.recording_id}`, `- Meeting ID: ${result.meeting_id}`, `- Main meeting ID: ${result.main_meeting_id}`, `- Owner: ${result.owner}`, `- Zoom document: ${result.source_url}`].join("\n");

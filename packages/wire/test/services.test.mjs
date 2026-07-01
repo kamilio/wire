@@ -15,6 +15,59 @@ function exportResponseWithDisposition(disposition, text) {
   return new Response(text, { headers: { "content-disposition": disposition } });
 }
 
+function zip(entries) {
+  const files = [];
+  const central = [];
+  let offset = 0;
+  for (const [name, text] of Object.entries(entries)) {
+    const nameBytes = Buffer.from(name);
+    const data = Buffer.from(text);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(nameBytes.length, 26);
+    files.push(local, nameBytes, data);
+    const header = Buffer.alloc(46);
+    header.writeUInt32LE(0x02014b50, 0);
+    header.writeUInt16LE(20, 6);
+    header.writeUInt16LE(0, 10);
+    header.writeUInt32LE(data.length, 20);
+    header.writeUInt32LE(data.length, 24);
+    header.writeUInt16LE(nameBytes.length, 28);
+    header.writeUInt32LE(offset, 42);
+    central.push(header, nameBytes);
+    offset += local.length + nameBytes.length + data.length;
+  }
+  const centralOffset = offset;
+  const centralSize = central.reduce((sum, item) => sum + item.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(Object.keys(entries).length, 8);
+  end.writeUInt16LE(Object.keys(entries).length, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(centralOffset, 16);
+  return Buffer.concat([...files, ...central, end]);
+}
+
+function pptxResponse(title, entries) {
+  return new Response(zip(entries), { headers: { "content-disposition": `attachment; filename="${title}.pptx"` } });
+}
+
+function pptxEntries(slides, rels = {}) {
+  const entries = {
+    "ppt/presentation.xml": `<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst>${slides.map((_slide, index) => `<p:sldId id="${256 + index}" r:id="rId${index + 1}"/>`).join("")}</p:sldIdLst></p:presentation>`,
+    "ppt/_rels/presentation.xml.rels": `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${slides.map((_slide, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${index + 1}.xml"/>`).join("")}</Relationships>`,
+  };
+  for (const [index, slide] of slides.entries()) {
+    entries[`ppt/slides/slide${index + 1}.xml`] = slide;
+    entries[`ppt/slides/_rels/slide${index + 1}.xml.rels`] = `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${Object.entries(rels[index + 1] ?? {}).map(([id, target]) => `<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${target}" TargetMode="External"/>`).join("")}</Relationships>`;
+  }
+  return entries;
+}
+
 function testCookie(name, value, domain) {
   return { domain, includeSubdomains: domain.startsWith("."), path: "/", secure: true, expires: 0, name, value, httpOnly: true };
 }
@@ -617,6 +670,36 @@ test("google docs adapter preserves resource keys in export URLs", async () => {
   }), "https://docs.google.com/document/d/doc/edit?resourcekey=doc-key", serviceCatalog);
   assert.equal(document.markdown, "Hello\n");
   assert.deepEqual(requests, ["https://docs.google.com/document/d/doc/export?format=md&resourcekey=doc-key"]);
+});
+
+test("google slides adapter exports PPTX slides as presentation markdown", async () => {
+  const requests = [];
+  const headers = [];
+  const document = await fetchSource(runtime(async (input, init) => {
+    requests.push(String(input));
+    headers.push(init.headers);
+    return pptxResponse("Deck Title", pptxEntries([
+      `<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:pPr><a:buNone/></a:pPr><a:r><a:t>First Slide</a:t></a:r></a:p></p:txBody></p:sp><p:sp><p:txBody><a:p><a:pPr lvl="0"><a:buChar char="•"/></a:pPr><a:r><a:rPr><a:hlinkClick r:id="rIdLink"/></a:rPr><a:t>Linked doc</a:t></a:r><a:r><a:t> and </a:t></a:r><a:r><a:rPr b="1"/><a:t>bold</a:t></a:r><a:r><a:t> plus </a:t></a:r><a:r><a:rPr i="1"/><a:t>italic</a:t></a:r><a:r><a:t> plus </a:t></a:r><a:r><a:rPr u="sng"/><a:t>underlined</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`,
+      `<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:pPr><a:buNone/></a:pPr><a:r><a:t>Second Slide</a:t></a:r></a:p><a:p><a:pPr><a:buNone/></a:pPr><a:r><a:t>Plain body</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`,
+    ], { 1: { rIdLink: "https://example.com/doc" }, 2: {} }));
+  }), "https://docs.google.com/presentation/d/deck/edit", serviceCatalog);
+  assert.equal(document.title, "Deck Title");
+  assert.equal(document.markdown, "## First Slide\n- [Linked doc](https://example.com/doc) and **bold** plus _italic_ plus <u>underlined</u>\n\n---\n\n## Second Slide\nPlain body\n");
+  assert.equal(document.data.presentation, true);
+  assert.deepEqual(requests, ["https://docs.google.com/presentation/d/deck/export?format=pptx"]);
+  assert.equal(headers[0].Cookie, "SID=google-session");
+});
+
+test("google slides adapter preserves resource keys in export URLs", async () => {
+  const requests = [];
+  const document = await fetchSource(runtime(async (input) => {
+    requests.push(String(input));
+    return pptxResponse("Deck Title", pptxEntries([
+      `<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:pPr><a:buNone/></a:pPr><a:r><a:t>Hello</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`,
+    ], { 1: {} }));
+  }), "https://docs.google.com/presentation/u/0/d/deck/edit?resourcekey=deck-key", serviceCatalog);
+  assert.equal(document.markdown, "## Hello\n");
+  assert.deepEqual(requests, ["https://docs.google.com/presentation/d/deck/export?format=pptx&resourcekey=deck-key"]);
 });
 
 test("google docs adapter preserves non-default document tabs in export URLs", async () => {
@@ -1466,6 +1549,15 @@ test("google docs synchronization rejects local and remote conflicts", async () 
   );
 });
 
+test("google slides synchronization is download-only for local edits", async () => {
+  await assert.rejects(
+    () => synchronizeSource(runtime(async () => pptxResponse("Deck Title", pptxEntries([
+      `<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:pPr><a:buNone/></a:pPr><a:r><a:t>Base</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`,
+    ], { 1: {} }))), "https://docs.google.com/presentation/d/deck/edit", serviceCatalog, { markdown: "## Base\n" }, "local\n", "/workspace/deck.md"),
+    /Google Slides sync is download-only/,
+  );
+});
+
 test("google sheets synchronization uploads local-only table edits", async () => {
   const requests = [];
   let csv = "id,name\nold,Name\n";
@@ -2045,5 +2137,6 @@ test("notion fetch renders canonical advanced Markdown", async () => {
 
 test("catalog source values remain registry-compatible", () => {
   assert.deepEqual(parseSourceUrl("https://docs.google.com/spreadsheets/d/id/edit#gid=1", serviceCatalog), { service: "google-docs", identifier: "id#gid=1", type: "spreadsheet", document_id: "id", sheet_gid: "1" });
+  assert.deepEqual(parseSourceUrl("https://docs.google.com/presentation/d/id/edit", serviceCatalog), { service: "google-docs", identifier: "id", type: "presentation" });
   for (const service of serviceCatalog) assert.equal(Object.isFrozen(service), true);
 });
