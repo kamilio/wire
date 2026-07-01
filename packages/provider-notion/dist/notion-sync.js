@@ -20,7 +20,7 @@ function inlineCode(value) {
     return `${ticks}${value}${ticks}`;
 }
 function escapeInlineMarkdown(value) {
-    return value.replace(/\\/g, "\\\\").replace(/\*/g, "\\*").replace(/~/g, "\\~").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
+    return value.replace(/\\/g, "\\\\").replace(/\*/g, "\\*").replace(/~/g, "\\~").replace(/`/g, "\\`").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
 }
 function unescapeInlineMarkdown(value) {
     return value.replace(/\\([\\*~[\]()])/g, "$1");
@@ -277,6 +277,9 @@ function isTableSeparator(row) {
 function markdownBlockStart(stripped) {
     return /^(#{1,6})\s+|^[-*]\s+|^\d+\.\s+|^-\s+\[[ xX]\]\s+|^```|^---$|^!\[|^>|^\||^:::/.test(stripped);
 }
+function escapeBlockMarkdownLine(line) {
+    return markdownBlockStart(line) ? `\\${line}` : line;
+}
 function colonFenceBody(lines, index) {
     const body = [];
     let depth = 0;
@@ -373,8 +376,13 @@ function parseLines(lines, baseIndent = 0) {
             continue;
         }
         if (stripped.startsWith("> ")) {
-            blocks.push({ type: "quote", content: stripped.slice(2), properties: {}, rich_text: parseInline(stripped.slice(2)), indent });
+            const content = [stripped.slice(2)];
             index += 1;
+            while (index < lines.length && lines[index].trim() !== "" && baseIndent + lineIndent(lines[index]) === indent && stripIndent(lines[index]).startsWith("> ")) {
+                content.push(stripIndent(lines[index]).slice(2));
+                index += 1;
+            }
+            blocks.push({ type: "quote", content: content.join("\n"), properties: {}, rich_text: parseInline(content.join("\n")), indent });
             continue;
         }
         if (stripped.startsWith("|")) {
@@ -784,21 +792,21 @@ function renderNode(tree, indent, parentType = "") {
     }
     if (type === "bulleted_list") {
         const lines = title.split("\n");
-        return [`${prefix}- ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${line}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
+        return [`${prefix}- ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${escapeBlockMarkdownLine(line)}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
     }
     if (type === "numbered_list") {
         const lines = title.split("\n");
-        return [`${prefix}1. ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}   ${line}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
+        return [`${prefix}1. ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}   ${escapeBlockMarkdownLine(line)}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
     }
     if (type === "to_do") {
         const checked = richTextText(properties["checked"] ?? [["No"]]) === "Yes";
         if (title === "")
             return [`${prefix}:::to-do`, `${prefix}:::checked ${JSON.stringify(checked)}`, prefix, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type)), `${prefix}:::`];
         const lines = title.split("\n");
-        return [`${prefix}- [${checked ? "x" : " "}] ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${line}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
+        return [`${prefix}- [${checked ? "x" : " "}] ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${escapeBlockMarkdownLine(line)}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
     }
     if (type === "quote")
-        return [`${prefix}> ${title}`, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
+        return [...title.split("\n").map((line) => `${prefix}> ${escapeBlockMarkdownLine(line)}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
     if (type === "divider")
         return [`${prefix}---`];
     if (type === "code") {
@@ -837,7 +845,7 @@ function renderNode(tree, indent, parentType = "") {
         return [`${prefix}:::text`, `${prefix}:::`];
     if (["bulleted_list", "numbered_list", "to_do"].includes(parentType))
         return [`${prefix}:::text`, ...title.split("\n").map((line) => `${prefix}${line}`), `${prefix}:::`];
-    return [`${prefix}${title}`];
+    return title.split("\n").map((line) => `${prefix}${escapeBlockMarkdownLine(line)}`);
 }
 export function renderNotionTreeToMarkdown(tree, mentions) {
     const title = renderRichText(object(tree.block["properties"])["title"]);

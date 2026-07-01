@@ -156,6 +156,23 @@ test("notion multiline list titles round-trip without child text splits", () => 
   assert.equal(notionBlockContentHash(todo), notionBlockContentHash(parsed[2]));
 });
 
+test("notion text syntax literals and multiline quotes round-trip without rewritten blocks", () => {
+  const remote = { id: "page", block: { type: "page", properties: { title: [["Root"]] }, alive: true }, children: [
+    { id: "hash", block: { type: "text", properties: { title: [["# literal heading"]] }, alive: true }, children: [] },
+    { id: "dash", block: { type: "text", properties: { title: [["- literal bullet"]] }, alive: true }, children: [] },
+    { id: "number", block: { type: "text", properties: { title: [["1. literal number"]] }, alive: true }, children: [] },
+    { id: "code", block: { type: "text", properties: { title: [["literal `backticks`"]] }, alive: true }, children: [] },
+    { id: "quote", block: { type: "quote", properties: { title: [["first line\n# not heading\n- not bullet"]] }, alive: true }, children: [] },
+  ] };
+  const markdown = renderNotionTreeToMarkdown(remote);
+  const local = parseNotionMarkdown(body(markdown));
+  assert.match(markdown, /\\# literal heading/);
+  assert.match(markdown, /\\- literal bullet/);
+  assert.match(markdown, /literal \\`backticks\\`/);
+  assert.match(markdown, /> \\# not heading/);
+  assert.deepEqual(diffNotionBlockTrees(remote, local, sidecarBlocksFromNotionTree(remote), { spaceId: "space", userId: "user", currentTime: 1700000000000 }), { operations: [], summary: { inserted: 0, updated: 0, deleted: 0, moved: 0 } });
+});
+
 test("notion nested text under lists round-trips as a child block", () => {
   const remote = { id: "page", block: { type: "page", properties: { title: [["Root"]] }, alive: true }, children: [
     { id: "bullet", block: { type: "bulleted_list", properties: { title: [["Parent"]] }, alive: true }, children: [
