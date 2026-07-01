@@ -471,18 +471,24 @@ test("CLI bin watch exits when SIGINT is sent to the no-warning wrapper", async 
   assert.doesNotMatch(stderr, /Error|TypeError|SyntaxError/);
 });
 
-test("CLI watch JSON output hides runtime handles", async () => {
-  const execution = await execFileAsync(process.execPath, [fixture, "watch", resource.filesystem_links[0].path, "--output", "json"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.deepEqual(JSON.parse(execution.stdout), { resource_id: "notion:page-1", title: "Document", remote: "https://www.notion.so/page-1", local: "Document.md", path: "/workspace/Document.md", mode: "two-way", debounceMs: 1000, pollMs: 60000 });
+test("CLI watch JSON output is rejected", async () => {
+  await assert.rejects(
+    () => execFileAsync(process.execPath, [fixture, "watch", resource.filesystem_links[0].path, "--output", "json"], { env: { ...process.env, NO_COLOR: "1" } }),
+    (error) => {
+      assert.match(error.stdout, /wire watch --json is not supported/);
+      assert.equal(error.stderr, "");
+      return true;
+    },
+  );
 });
 
-test("watch JSON rendering closes runtime handles", async () => {
+test("watch JSON rejection closes runtime handles", async () => {
   let closed = false;
   let resolveClosed;
   const pendingRoot = createRoot(Object.freeze({ ...createFakeWire(), watch: async () => ({ resource, path: "/workspace/Document.md", mode: "two-way", debounceMs: 1000, pollMs: 60000, closed: new Promise((resolve) => { resolveClosed = resolve; }), close: () => { closed = true; resolveClosed(); } }) }), "/workspace", auth);
   const pendingCommands = new Map(pendingRoot.children.map((command) => [command.name, command]));
   const value = await pendingCommands.get("watch").handler(context({ file: "Document.md" }));
-  assert.deepEqual(pendingCommands.get("watch").render.json(value), { resource_id: "notion:page-1", title: "Document", remote: "https://www.notion.so/page-1", local: "Document.md", path: "/workspace/Document.md", mode: "two-way", debounceMs: 1000, pollMs: 60000 });
+  assert.throws(() => pendingCommands.get("watch").render.json(value), /wire watch --json is not supported/);
   assert.equal(closed, true);
   await value.closed;
 });

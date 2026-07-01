@@ -192,7 +192,7 @@ function formatInitializedWire(value: InitializedWire): string {
 
 function watchSessionJson(value: WireWatchSession) {
   value.close();
-  return { resource_id: value.resource.id, title: wireTitle(value.resource), remote: value.resource.urls[0], local: primaryFilesystemLink(value.resource).path, path: value.path, mode: value.mode, debounceMs: value.debounceMs, pollMs: value.pollMs };
+  throw new UserError("wire watch --json is not supported. Use markdown output for watch.");
 }
 
 function wireUserErrorMessage(message: string): boolean {
