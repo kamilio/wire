@@ -34,7 +34,7 @@ export type NotionDiffSummary = Readonly<{
 }>;
 type UserMentions = Readonly<Record<string, string>>;
 export declare function parseNotionMarkdown(markdown: string): readonly NotionBlock[];
-export declare function buildNotionCreateOperations(blocks: readonly NotionBlock[], pageId: string, spaceId: string, userId: string, currentTime: number, createId?: () => string): Readonly<{
+export declare function buildNotionCreateOperations(blocks: readonly NotionBlock[], pageId: string, spaceId: string, userId: string, currentTime: number, createId?: () => string, initialTableColumnOrder?: readonly string[]): Readonly<{
     operations: readonly NotionOperation[];
     topLevelIds: readonly string[];
 }>;

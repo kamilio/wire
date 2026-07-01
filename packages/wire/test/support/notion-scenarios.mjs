@@ -243,7 +243,7 @@ export const notionSyncScenarios = [
   ["remote only body", "# Page\n\nbase", "# Page\n\nbase", "# Page\n\nremote", "# Page\n\nremote", 0, false],
   ["local only body", "# Page\n\nbase", "# Page\n\nlocal", "# Page\n\nbase", "# Page\n\nlocal", 1, false],
   ["same local and remote body", "# Page\n\nbase", "# Page\n\nshared", "# Page\n\nshared", "# Page\n\nshared", 0, false],
-  ["conflicting body", "# Page\n\nbase", "# Page\n\nlocal", "# Page\n\nremote", "", 0, true],
+  ["conflicting body", "# Page\n\nbase", "# Page\n\nlocal", "# Page\n\nremote", "# Page\n\nlocal", 1, false],
   ["local only title", "# Page\n\nbody", "# New Page\n\nbody", "# Page\n\nbody", "# New Page\n\nbody", 1, false],
   ["remote only title", "# Page\n\nbody", "# Page\n\nbody", "# Remote Page\n\nbody", "# Remote Page\n\nbody", 0, false],
   ["conflicting title", "# Page\n\nbody", "# Local Page\n\nbody", "# Remote Page\n\nbody", "", 0, true],

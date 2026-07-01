@@ -21,7 +21,7 @@ import {
   wireRelativePath,
 } from "../dist/index.js";
 
-const repositoryRoot = resolve(import.meta.dirname, "../../../..");
+const repositoryRoot = resolve(import.meta.dirname, "../../..");
 const testRoot = join(repositoryRoot, "out", "wire-ts-storage");
 const execFileAsync = promisify(execFile);
 
@@ -261,14 +261,17 @@ test("workspace discovery chooses the nearest workspace inside and outside home"
   const home = join(testRoot, "discovery-home");
   const homeProject = join(home, "project");
   const nestedProject = join(homeProject, "nested");
-  const outside = join(testRoot, "outside", "project");
+  const outsideRoot = join(testRoot, "outside");
+  const outside = join(outsideRoot, "project");
   await mkdir(join(home, ".wire"), { recursive: true });
   await writeFile(join(home, ".wire", "config.json"), '{"backend":"files","path":"records"}\n');
   await mkdir(join(homeProject, ".wire"), { recursive: true });
   await mkdir(join(nestedProject, "folder"), { recursive: true });
+  await mkdir(join(outsideRoot, ".wire"), { recursive: true });
+  await writeFile(join(outsideRoot, ".wire", "config.json"), '{"backend":"files","path":"records"}\n');
   await mkdir(outside, { recursive: true });
   assert.equal(await discoverWireRoot(join(nestedProject, "folder", "missing.md"), home), join(homeProject, ".wire"));
-  assert.equal(await discoverWireRoot(join(outside, "missing.md"), home), join(home, ".wire"));
+  assert.equal(await discoverWireRoot(join(outside, "missing.md"), home), join(outsideRoot, ".wire"));
 });
 
 test("initialization writes exact config bytes for both backends", async () => {

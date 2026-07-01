@@ -55,6 +55,10 @@ export type WireWatchSession = Readonly<{
   close(): void;
 }>;
 
+export type WireWatchSyncCommand = "sync" | "download";
+export type WireWatchSyncHook = (command: WireWatchSyncCommand, result: WireResult) => Promise<WireResult>;
+export const wireWatchHooks = Symbol("wireWatchHooks");
+
 export type Wire = Readonly<{
   attach(url: string, path: string): Promise<WireResult>;
   create(url: string, path: string): Promise<WireResult>;
@@ -71,6 +75,10 @@ export type Wire = Readonly<{
   showResource(value: string, path: string): Promise<Resource>;
   init(path: string, backend: WireBackend, registryPath: string): Promise<InitializedWire>;
   switchBackend(path: string): Promise<SwitchedWireBackend>;
+}>;
+
+type WireInternal = Wire & Readonly<{
+  [wireWatchHooks](value: string, path: string, hooks: readonly WireWatchSyncHook[]): Promise<WireWatchSession>;
 }>;
 
 async function wireRoot<FetchInput>(dependencies: WireDependencies<FetchInput>, path: string): Promise<string> {
@@ -330,21 +338,27 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
   };
   const unlink = detach;
 
-  const watch = async (value: string, path: string): Promise<WireWatchSession> => {
+  const runWatchHooks = async (hooks: readonly WireWatchSyncHook[], command: WireWatchSyncCommand, result: WireResult): Promise<WireResult> => {
+    let current = result;
+    for (const hook of hooks) current = await hook(command, current);
+    return current;
+  };
+
+  const watchWithHooks = async (value: string, path: string, hooks: readonly WireWatchSyncHook[]): Promise<WireWatchSession> => {
     const candidatePath = resolve(path, value);
     const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const config = watchConfig(await dependencies.workspace.loadConfig!(root));
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
     const outputPath = join(dirname(root), primaryLink(resource).path);
-    const initial = await dependencies.filesystem.exists(outputPath) ? null : await download(value, path);
+    const initial = await dependencies.filesystem.exists(outputPath) ? null : await runWatchHooks(hooks, "download", await download(value, path));
     let lastSyncedMarkdown = initial === null ? await dependencies.filesystem.readText(outputPath) : initial.markdown;
     let debounce: ReturnType<typeof setTimeout> | undefined;
     let resolveClosed!: () => void;
     const closed = new Promise<void>((resolveClosedPromise) => { resolveClosed = resolveClosedPromise; });
     const handles: WatchHandle[] = [];
     const synchronize = async () => {
-      const result = config.mode === "download" ? await download(value, path) : await sync(value, path);
+      const result = config.mode === "download" ? await runWatchHooks(hooks, "download", await download(value, path)) : await runWatchHooks(hooks, "sync", await sync(value, path));
       lastSyncedMarkdown = result.markdown;
     };
     const schedule = () => {
@@ -374,6 +388,8 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
       },
     });
   };
+
+  const watch = (value: string, path: string): Promise<WireWatchSession> => watchWithHooks(value, path, []);
 
   const openResource = async (value: string, path: string): Promise<Resource> => {
     const candidatePath = resolve(path, value);
@@ -431,5 +447,6 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     showResource,
     init: dependencies.workspace.initialize,
     switchBackend: (path: string) => dependencies.workspace.switchBackend!(path, dependencies.home),
-  });
+    [wireWatchHooks]: watchWithHooks,
+  }) as WireInternal;
 }

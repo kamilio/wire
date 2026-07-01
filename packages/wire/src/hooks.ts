@@ -4,8 +4,8 @@ import { readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
-import type { Resource, Wire, WireResult } from "wire-core";
-import { configuredWireRoot, openWireRegistry, wireRelativePath } from "wire-core";
+import type { Resource, Wire, WireResult, WireWatchSyncHook } from "wire-core";
+import { configuredWireRoot, openWireRegistry, wireRelativePath, wireWatchHooks } from "wire-core";
 
 const execFileAsync = promisify(execFile);
 
@@ -183,6 +183,7 @@ async function runBatchHooks(options: WireHookOptions, command: string, results:
 }
 
 export function withWireHooks(wire: Wire, options: WireHookOptions): Wire {
+  const watchSyncHook: WireWatchSyncHook = (command, result) => runSingleResultHooks(options, command, result);
   return Object.freeze({
     ...wire,
     attach: async (url, path) => runSingleResultHooks(options, "attach", await wire.attach(url, path)),
@@ -192,6 +193,7 @@ export function withWireHooks(wire: Wire, options: WireHookOptions): Wire {
     download: async (value, path) => runSingleResultHooks(options, "download", await wire.download(value, path)),
     detach: async (value, path) => runSingleResultHooks(options, "detach", await wire.detach(value, path)),
     unlink: async (value, path) => runSingleResultHooks(options, "detach", await wire.unlink(value, path)),
+    watch: async (value, path) => (wire as Wire & { [wireWatchHooks](value: string, path: string, hooks: readonly WireWatchSyncHook[]): ReturnType<Wire["watch"]> })[wireWatchHooks](value, path, [watchSyncHook]),
     syncAll: async (path) => runBatchHooks(options, "sync-all", await wire.syncAll(path)),
   });
 }

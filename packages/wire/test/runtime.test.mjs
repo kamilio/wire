@@ -383,6 +383,7 @@ test("Chrome launch arguments use the shared Wire browser profile", async () => 
     "--remote-debugging-port=0",
     "--no-first-run",
     "--no-default-browser-check",
+    "--restore-last-session",
     "https://app.asana.com/",
   ]);
 });

@@ -203,19 +203,14 @@ test("auth status rejects stale cookie credentials without opening login", async
   assert.equal(extracted, 0);
 });
 
-test("zoom auth status rejects malformed csrf without opening login", async () => {
+test("zoom auth status rejects malformed jwt without opening login", async () => {
   const files = {};
   let extracted = 0;
-  let csrfRequests = 0;
   const zoomRuntime = Object.freeze({
     ...runtime(files, [], []),
     http: Object.freeze({ request: async (input) => {
       const url = input.toString();
-      if (url === "https://zoom.us/csrf_js") {
-        csrfRequests += 1;
-        return text(csrfRequests === 1 ? "not-a-csrf-token" : "csrf: token");
-      }
-      if (url.includes("hub.zoom.us/nws/common")) return text("a.b.c");
+      if (url.includes("hub.zoom.us/nws/common")) return text("not-a-jwt");
       return runtime(files, [], []).http.request(input);
     } }),
   });
@@ -244,7 +239,6 @@ test("zoom auth status persists cookies refreshed by verification requests", asy
     }, () => "/home", () => "/repo"),
     http: Object.freeze({ request: async (input) => {
       const url = input.toString();
-      if (url === "https://zoom.us/csrf_js") return new Response("csrf: token", { headers: [["set-cookie", "csrf_refresh=csrf; Domain=.zoom.us; Path=/; Secure; HttpOnly"]] });
       if (url.includes("hub.zoom.us/nws/common")) return new Response("a.b.c", { headers: [["set-cookie", "_zm_docs_nak=jwt; Domain=.zoom.us; Path=/; Max-Age=600; Secure; HttpOnly"]] });
       throw new Error(url);
     } }),
@@ -253,7 +247,6 @@ test("zoom auth status persists cookies refreshed by verification requests", asy
   assert.deepEqual((await auth.status("zoom")).identity, { account_id: "account" });
   assert.equal(writes.length, 1);
   const saved = parseNetscapeCookies(writes[0][1]);
-  assert.equal(saved.find((value) => value.name === "csrf_refresh").value, "csrf");
   assert.equal(saved.find((value) => value.name === "_zm_docs_nak").value, "jwt");
 });
 

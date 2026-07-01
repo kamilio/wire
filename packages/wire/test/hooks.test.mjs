@@ -53,6 +53,52 @@ function createWire(project, environment = process.env) {
   return withWireHooks(wire, { currentDirectory: project, home: project, environment });
 }
 
+function createWatchedWire(project, watch, fetchDocument, environment = process.env) {
+  const wire = composeWire({
+    home: project,
+    fetchInput: {},
+    catalog: defineServiceCatalog([
+      defineService({
+        name: "notion",
+        matches: (url) => url.hostname === "notion.test",
+        parse: (url) => ({ service: "notion", identifier: url.pathname.slice(1), type: "document" }),
+        fetch: async (_input, _url, source) => ({ ...fetchDocument(), data: { id: source.identifier } }),
+      }),
+    ]),
+    filesystem: filesystem(),
+    workspace: { configuredRoot: configuredWireRoot, initialize: initializeWire, openRegistry: openWireRegistry, relativePath: wireRelativePath },
+    initialization: { backend: "sqlite", registryPath: "registry.sqlite3" },
+    watch,
+    now: () => new Date("2026-06-23T12:00:00.000Z"),
+    open: async () => {},
+  });
+  return withWireHooks(wire, { currentDirectory: project, home: project, environment });
+}
+
+function watchHarness() {
+  const intervals = [];
+  const fileWatchers = [];
+  return {
+    intervals,
+    fileWatchers,
+    capability: {
+      watchFile: (path, onChange) => {
+        const watcher = { path, onChange, closed: false };
+        fileWatchers.push(watcher);
+        return { close: () => { watcher.closed = true; } };
+      },
+      every: (milliseconds, onTick) => {
+        const interval = { milliseconds, onTick, closed: false };
+        intervals.push(interval);
+        return { close: () => { interval.closed = true; } };
+      },
+    },
+    tick: async () => {
+      await intervals[0].onTick();
+    },
+  };
+}
+
 async function writeExecutable(path, contents) {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, contents);
@@ -127,4 +173,34 @@ printf "%s\\n%s" "$WIRE_COMMAND" "$WIRE_RESULT_COUNT" > post-command.txt
   assert.equal(result.summary.action, "downloaded");
   assert.equal(await readFile(join(project, "post-resource.txt"), "utf8"), `download\ndownloaded\n${join(project, "first.md")}`);
   assert.equal(await readFile(join(project, "post-command.txt"), "utf8"), "download\n1");
+});
+
+test("watch download polling runs post-resource and post-command hooks", async () => {
+  const project = join(testRoot, "watch-download-hooks");
+  await mkdir(project, { recursive: true });
+  await initializeWire(project, "sqlite", "registry.sqlite3");
+  await writeFile(join(project, ".wire", "config.json"), `${JSON.stringify({ backend: "sqlite", path: "registry.sqlite3", watch: { mode: "download", debounceMs: 5, pollMs: 10 } }, null, 2)}\n`);
+  await writeExecutable(join(project, ".wire/hooks/post-resource"), `#!/bin/sh
+set -eu
+printf "%s\\n%s\\n%s" "$WIRE_COMMAND" "$WIRE_ACTION" "$WIRE_PATH" > post-resource.txt
+`);
+  await writeExecutable(join(project, ".wire/hooks/post-command"), `#!/bin/sh
+set -eu
+printf "%s\\n%s" "$WIRE_COMMAND" "$WIRE_RESULT_COUNT" > post-command.txt
+`);
+  let markdown = "# First\n";
+  const harness = watchHarness();
+  const wire = createWatchedWire(project, harness.capability, () => ({ title: "First", markdown }));
+  const result = await wire.attach("https://notion.test/page", project);
+  markdown = "# Second\n";
+  const session = await wire.watch(result.path, project);
+
+  await harness.tick();
+
+  assert.equal(await readFile(result.path, "utf8"), "# Second\n");
+  assert.equal(await readFile(join(project, "post-resource.txt"), "utf8"), `download\ndownloaded\n${result.path}`);
+  assert.equal(await readFile(join(project, "post-command.txt"), "utf8"), "download\n1");
+  session.close();
+  await session.closed;
+  assert.deepEqual(harness.intervals.map((interval) => interval.closed), [true]);
 });

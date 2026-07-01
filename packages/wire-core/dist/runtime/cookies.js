@@ -187,8 +187,13 @@ export function createCookiesCapability(filesystem, home, repositoryRoot, overri
         },
         save: async (service, cookies, metadata) => {
             const candidatePaths = paths(service);
-            const path = await existingCookiesFile(filesystem, candidatePaths) ?? candidatePaths[0];
-            await filesystem.writeText(path, serializeNetscapeCookies(cookies, metadata));
+            const contents = serializeNetscapeCookies(cookies, metadata);
+            const existingPaths = [];
+            for (const path of candidatePaths)
+                if (await filesystem.exists(path))
+                    existingPaths.push(path);
+            for (const path of existingPaths.length === 0 ? [candidatePaths[0]] : existingPaths)
+                await filesystem.writeText(path, contents);
         },
         delete: async (service) => {
             for (const path of paths(service))

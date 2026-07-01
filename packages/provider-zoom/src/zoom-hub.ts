@@ -44,14 +44,6 @@ async function zoomJson(response: Response, label: string): Promise<JsonObject> 
   return body;
 }
 
-function zoomCsrf(text: string): string {
-  const index = text.indexOf(":");
-  if (index === -1) throw zoomAuthError();
-  const token = text.slice(index + 1).trim();
-  if (token === "") throw zoomAuthError();
-  return token;
-}
-
 function zoomJwt(text: string): string {
   const token = text.trim();
   if (token.split(".").length !== 3) throw zoomAuthError();
@@ -59,7 +51,7 @@ function zoomJwt(text: string): string {
 }
 
 function cookieKey(cookie: Cookie): string {
-  return `${cookie.domain}\t${cookie.path}\t${cookie.name}`;
+  return `${cookie.domain.startsWith(".") ? cookie.domain.slice(1) : cookie.domain}\t${cookie.path}\t${cookie.name}`;
 }
 
 function cookieJar(cookies: readonly Cookie[]): CookieJar {
@@ -161,17 +153,6 @@ function pruneExpiredCookies(jar: CookieJar, now: Date): boolean {
   return changed;
 }
 
-async function saveZoomCookies(runtime: RuntimeCapabilities, jar: CookieJar, metadata: Readonly<Record<string, string>>): Promise<void> {
-  await runtime.cookies.save("zoom", Object.freeze([...jar.values()]), metadata);
-}
-
-async function zoomRequest(runtime: RuntimeCapabilities, jar: CookieJar, metadata: Readonly<Record<string, string>>, url: string, init: RequestInit & { headers: ZoomHeaders }): Promise<Response> {
-  const parsed = new URL(url);
-  const response = await runtime.http.request(url, { ...init, headers: { ...init.headers, cookie: requestCookies(jar, parsed, runtime.clock.now()) } });
-  if (applyResponseCookies(jar, parsed, response, runtime.clock.now())) await saveZoomCookies(runtime, jar, metadata);
-  return response;
-}
-
 export const zoomHubService = defineService<RuntimeCapabilities>({
   name: "zoom-hub",
   matches: (url) => url.hostname === "hub.zoom.us" && /^\/doc\/[^/]+\/?$/.test(url.pathname),
@@ -179,36 +160,55 @@ export const zoomHubService = defineService<RuntimeCapabilities>({
   fetch: async (runtime, _url, source) => {
     const cookies = await runtime.cookies.loadSaved("zoom");
     if (cookies === null) throw zoomAuthError();
-    const metadata = await runtime.cookies.metadata("zoom");
     const jar = cookieJar(cookies);
-    if (pruneExpiredCookies(jar, runtime.clock.now())) await saveZoomCookies(runtime, jar, metadata);
+    const state = { metadata: await runtime.cookies.metadata("zoom") };
+    const save = () => runtime.cookies.save("zoom", Object.freeze([...jar.values()]), state.metadata);
+    if (pruneExpiredCookies(jar, runtime.clock.now())) await save();
     const accountCookie = [...jar.values()].find((value) => value.name === "zm_aid");
     if (accountCookie === undefined) throw zoomAuthError();
     const accountId = accountCookie.value;
-    const csrfResponse = await zoomRequest(runtime, jar, metadata, "https://zoom.us/csrf_js", { method: "POST", headers: { "user-agent": userAgent, "fetch-csrf-token": "1", referer: "https://hub.zoom.us/" }, body: "" });
-    const csrf = zoomCsrf(await zoomText(csrfResponse, "CSRF"));
-    const jwtResponse = await zoomRequest(runtime, jar, metadata, "https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { "user-agent": userAgent, "zoom-csrftoken": csrf, "x-requested-with": "XMLHttpRequest", accept: "application/json, text/plain, */*", referer: "https://hub.zoom.us/" } });
-    const jwt = zoomJwt(await zoomText(jwtResponse, "JWT"));
-    const fileResponse = await zoomRequest(runtime, jar, metadata, "https://us01docs.zoom.us/api/file/files/action/batch_get", { method: "POST", headers: hubHeaders(jwt, "application/json"), body: JSON.stringify({ ids: [source.identifier], accountId }) });
+    const zoomRequest = async (url: string, init: RequestInit & { headers: ZoomHeaders }): Promise<Response> => {
+      const parsed = new URL(url);
+      const response = await runtime.http.request(url, { ...init, headers: { ...init.headers, cookie: requestCookies(jar, parsed, runtime.clock.now()) } });
+      if (applyResponseCookies(jar, parsed, response, runtime.clock.now())) await save();
+      return response;
+    };
+    const refreshJwt = async (): Promise<string> => {
+      const jwtResponse = await zoomRequest("https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { "user-agent": userAgent, "x-requested-with": "XMLHttpRequest", accept: "application/json, text/plain, */*", referer: "https://hub.zoom.us/" } });
+      const jwt = zoomJwt(await zoomText(jwtResponse, "JWT"));
+      state.metadata = Object.freeze({ ...state.metadata, hub_jwt: jwt, hub_jwt_expires: String(runtime.clock.now().getTime() + 1_800_000) });
+      await save();
+      return jwt;
+    };
+    const cachedJwt = state.metadata["hub_jwt"];
+    const cachedExpires = state.metadata["hub_jwt_expires"];
+    let cached = cachedJwt !== undefined && cachedExpires !== undefined && runtime.clock.now().getTime() < Number(cachedExpires);
+    let jwt = cached ? cachedJwt! : await refreshJwt();
+    const docsRequest = async (url: string, init: (token: string) => RequestInit & { headers: ZoomHeaders }): Promise<Response> => {
+      const response = await zoomRequest(url, init(jwt));
+      if (response.status !== 401 || !cached) return response;
+      cached = false;
+      jwt = await refreshJwt();
+      return zoomRequest(url, init(jwt));
+    };
+    const fileResponse = await docsRequest("https://us01docs.zoom.us/api/file/files/action/batch_get", (token) => ({ method: "POST", headers: hubHeaders(token, "application/json"), body: JSON.stringify({ ids: [source.identifier], accountId }) }));
     const files = (await zoomJson(fileResponse, "file batch_get"))["successItems"] as readonly JsonObject[];
     if (files.length === 0) throw new Error(`Zoom Hub file ${source.identifier} was not returned by batch_get`);
     const document = files[0]!;
     const notes = document["meetingNotes"] as JsonObject;
     const meetingId = notes["meetingId"] as string;
-    const base = { recording_id: source.identifier, title: document["title"] as string, source_url: document["fileLink"] as string, meeting_id: meetingId, main_meeting_id: notes["mainMeetingId"] as string, owner: (document["owner"] as JsonObject)["ownerName"] as string, created_at: (document["createdInfo"] as JsonObject)["time"] as string, updated_at: (document["updatedInfo"] as JsonObject)["time"] as string };
-    if (meetingId === "") {
-      const result = { ...base, transcript: "", state: "missing" };
-      const markdown = [`# ${result.title}`, "", `- Transcript state: ${result.state}`, `- Recording ID: ${result.recording_id}`, `- Meeting ID: ${result.meeting_id}`, `- Main meeting ID: ${result.main_meeting_id}`, `- Owner: ${result.owner}`, `- Zoom document: ${result.source_url}`].join("\n");
-      return Object.freeze({ title: transcriptTitle(result.title, result.created_at, runtime.clock.localTimezone()), markdown, data: result });
+    const mainMeetingId = notes["mainMeetingId"] as string;
+    const base = { recording_id: source.identifier, title: document["title"] as string, source_url: document["fileLink"] as string, meeting_id: meetingId, main_meeting_id: mainMeetingId, owner: (document["owner"] as JsonObject)["ownerName"] as string, created_at: (document["createdInfo"] as JsonObject)["time"] as string, updated_at: (document["updatedInfo"] as JsonObject)["time"] as string };
+    if (meetingId !== "") {
+      const statusResponse = await docsRequest(`https://us01docs.zoom.us/api/meeting/transcript_status?meetingId=${encodeURIComponent(meetingId)}`, (token) => ({ headers: hubHeaders(token) }));
+      const status = (await zoomJson(statusResponse, "transcript status"))["aicTranscript"] as JsonObject;
+      if (!(status["exist"] as boolean) || !(status["canAccess"] as boolean)) {
+        const result = { ...base, transcript: "", state: status["exist"] as boolean ? "denied" : "missing" };
+        const markdown = [`# ${result.title}`, "", `- Transcript state: ${result.state}`, `- Recording ID: ${result.recording_id}`, `- Meeting ID: ${result.meeting_id}`, `- Main meeting ID: ${result.main_meeting_id}`, `- Owner: ${result.owner}`, `- Zoom document: ${result.source_url}`].join("\n");
+        return Object.freeze({ title: result.title, markdown, data: result });
+      }
     }
-    const statusResponse = await zoomRequest(runtime, jar, metadata, `https://us01docs.zoom.us/api/meeting/transcript_status?meetingId=${encodeURIComponent(meetingId)}`, { headers: hubHeaders(jwt) });
-    const status = (await zoomJson(statusResponse, "transcript status"))["aicTranscript"] as JsonObject;
-    if (!(status["exist"] as boolean) || !(status["canAccess"] as boolean)) {
-      const result = { ...base, transcript: "", state: status["exist"] as boolean ? "denied" : "missing" };
-      const markdown = [`# ${result.title}`, "", `- Transcript state: ${result.state}`, `- Recording ID: ${result.recording_id}`, `- Meeting ID: ${result.meeting_id}`, `- Main meeting ID: ${result.main_meeting_id}`, `- Owner: ${result.owner}`, `- Zoom document: ${result.source_url}`].join("\n");
-      return Object.freeze({ title: result.title, markdown, data: result });
-    }
-    const transcriptResponse = await zoomRequest(runtime, jar, metadata, `https://us01docs.zoom.us/api/bridge/meeting/transcripts/v2?meetingId=${encodeURIComponent(meetingId)}&fileId=${encodeURIComponent(source.identifier)}`, { headers: hubHeaders(jwt) });
+    const transcriptResponse = await docsRequest(`https://us01docs.zoom.us/api/bridge/meeting/transcripts/v2?meetingId=${encodeURIComponent(meetingId)}&fileId=${encodeURIComponent(source.identifier)}`, (token) => ({ headers: hubHeaders(token) }));
     const raw = await zoomJson(transcriptResponse, "transcript");
     const speakers = raw["speakers"] as readonly JsonObject[];
     const speakerMap = new Map(speakers.map((speaker) => [speaker["userId"] as string, speaker["username"] as string]));

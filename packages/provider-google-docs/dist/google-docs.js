@@ -608,7 +608,7 @@ function textEdit(base, local) {
             const anchor = base.slice(baseEnd, baseEnd + window);
             const localEnd = local.indexOf(anchor, start);
             if (localEnd !== -1 && localEnd <= start + 2000)
-                return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), after: base.slice(baseEnd) });
+                return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), after: base.slice(baseEnd), localAfter: local.slice(localEnd) });
         }
     }
     let baseEnd = base.length;
@@ -617,7 +617,22 @@ function textEdit(base, local) {
         baseEnd -= 1;
         localEnd -= 1;
     }
-    return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), after: base.slice(baseEnd) });
+    return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), after: base.slice(baseEnd), localAfter: local.slice(localEnd) });
+}
+function textEdits(base, local) {
+    const edits = [];
+    let basePrefix = "";
+    let baseRest = base;
+    let localRest = local;
+    while (baseRest !== localRest) {
+        const edit = textEdit(baseRest, localRest);
+        const before = `${basePrefix}${edit.before}`;
+        edits.push(Object.freeze({ ...edit, before }));
+        basePrefix = base.slice(0, base.length - edit.after.length);
+        baseRest = edit.after;
+        localRest = edit.localAfter;
+    }
+    return edits;
 }
 function context(value, side, length) {
     return side === "before" ? value.slice(Math.max(0, value.length - length)) : value.slice(0, length);
@@ -692,15 +707,15 @@ function docTextRange(text, edit) {
     throw new Error("Google Docs local edit cannot be mapped to the live document text");
 }
 async function uploadDocText(runtime, documentId, key, tab, baseMarkdown, localMarkdown) {
-    const edit = textEdit(baseMarkdown, localMarkdown);
+    const edits = textEdits(baseMarkdown, localMarkdown);
     const editUrl = docEditUrl(documentId, key, tab);
     const session = docSession(await googleText(runtime, editUrl, "Docs editor"));
-    const range = docTextRange(session.text, edit);
+    const ranges = edits.map((edit) => ({ edit, range: docTextRange(session.text, edit) })).sort((left, right) => right.range.start - left.range.start);
     const sid = runtime.clock.now().getTime().toString(16).padStart(16, "0").slice(-16);
-    const commands = [
+    const commands = ranges.flatMap(({ edit, range }) => [
         ...(range.start === range.end ? [] : [{ ty: "ds", si: range.start + 1, ei: range.end }]),
         ...(edit.local === "" ? [] : [{ ty: "is", ibi: range.start + 1, s: markdownText(edit.local) }]),
-    ];
+    ]);
     const params = new URLSearchParams({ id: documentId, sid, vc: "1", c: "1", w: "1", flr: "0", smv: "2147483647", smb: "[2147483647, AAE=]", token: session.token, ouid: session.ouid, includes_info_params: "true", cros_files: "false", nded: "false", tab });
     const body = new URLSearchParams({ rev: String(session.revision), bundles: JSON.stringify([{ commands, sid, reqId: 0 }]) });
     const response = await runtime.http.request(`https://docs.google.com/document/d/${encodeURIComponent(documentId)}/save?${params}`, { method: "POST", headers: { Cookie: await cookieHeader(runtime), "content-type": "application/x-www-form-urlencoded;charset=UTF-8", origin: "https://docs.google.com", referer: editUrl }, body: body.toString() });

@@ -45,24 +45,19 @@ async function verifySlack(runtime: RuntimeCapabilities, cookies: readonly Cooki
 
 async function verifyZoom(runtime: RuntimeCapabilities, cookies: readonly Cookie[]): Promise<AuthResult | null> {
   const cookie = cookieHeader(cookies);
-  const csrfResponse = await runtime.http.request("https://zoom.us/csrf_js", { method: "POST", headers: { cookie, "user-agent": "Mozilla/5.0", "fetch-csrf-token": "1", referer: "https://hub.zoom.us/" }, body: "" });
-  if (!csrfResponse.ok) return null;
-  const csrfText = await csrfResponse.text();
-  const csrfIndex = csrfText.indexOf(":");
-  if (csrfIndex === -1) return null;
-  const csrf = csrfText.slice(csrfIndex + 1).trim();
-  if (csrf === "") return null;
-  const jwtResponse = await runtime.http.request("https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { cookie, "user-agent": "Mozilla/5.0", "zoom-csrftoken": csrf, "x-requested-with": "XMLHttpRequest", referer: "https://hub.zoom.us/" } });
+  const jwtResponse = await runtime.http.request("https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { cookie, "user-agent": zoomUserAgent, "x-requested-with": "XMLHttpRequest", referer: "https://hub.zoom.us/" } });
   const jwt = (await jwtResponse.text()).trim();
   const accountId = cookies.find((value) => value.name === "zm_aid")?.value;
-  if (jwt.split(".").length !== 3 || accountId === undefined) return null;
+  if (!jwtResponse.ok || jwt.split(".").length !== 3 || accountId === undefined) return null;
   return Object.freeze({ service: "zoom", identity: Object.freeze({ account_id: accountId }) });
 }
 
 type CookieJar = Map<string, Cookie>;
 
+const zoomUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
+
 function zoomCookieKey(cookie: Cookie): string {
-  return `${cookie.domain}\t${cookie.path}\t${cookie.name}`;
+  return `${cookie.domain.startsWith(".") ? cookie.domain.slice(1) : cookie.domain}\t${cookie.path}\t${cookie.name}`;
 }
 
 function zoomCookieJar(cookies: readonly Cookie[]): CookieJar {
@@ -173,15 +168,7 @@ async function zoomAuthRequest(runtime: RuntimeCapabilities, jar: CookieJar, url
 async function verifyZoomCookieState(runtime: RuntimeCapabilities, cookies: readonly Cookie[], metadata: Readonly<Record<string, string>>): Promise<Readonly<{ result: AuthResult | null; cookies: readonly Cookie[]; metadata: Readonly<Record<string, string>>; changed: boolean }>> {
   const jar = zoomCookieJar(cookies);
   let changed = zoomPruneExpiredCookies(jar, runtime.clock.now());
-  const csrf = await zoomAuthRequest(runtime, jar, "https://zoom.us/csrf_js", { method: "POST", headers: { "user-agent": "Mozilla/5.0", "fetch-csrf-token": "1", referer: "https://hub.zoom.us/" }, body: "" });
-  changed = csrf.changed || changed;
-  if (!csrf.response.ok) return Object.freeze({ result: null, cookies: Object.freeze([...jar.values()]), metadata, changed });
-  const csrfText = await csrf.response.text();
-  const csrfIndex = csrfText.indexOf(":");
-  if (csrfIndex === -1) return Object.freeze({ result: null, cookies: Object.freeze([...jar.values()]), metadata, changed });
-  const token = csrfText.slice(csrfIndex + 1).trim();
-  if (token === "") return Object.freeze({ result: null, cookies: Object.freeze([...jar.values()]), metadata, changed });
-  const jwt = await zoomAuthRequest(runtime, jar, "https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { "user-agent": "Mozilla/5.0", "zoom-csrftoken": token, "x-requested-with": "XMLHttpRequest", referer: "https://hub.zoom.us/" } });
+  const jwt = await zoomAuthRequest(runtime, jar, "https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { "user-agent": zoomUserAgent, "x-requested-with": "XMLHttpRequest", referer: "https://hub.zoom.us/" } });
   changed = jwt.changed || changed;
   const jwtText = (await jwt.response.text()).trim();
   const accountId = [...jar.values()].find((value) => value.name === "zm_aid")?.value;
@@ -264,7 +251,7 @@ export function composeAuth(runtime: RuntimeCapabilities, environment: NodeEnvir
   const status = async (service: AuthService) => {
     const cookies = await runtime.cookies.loadSaved(service);
     if (cookies === null) throw cookieAuthError(service);
-    const state = await verifyCookieState(service, cookies, service === "slack" ? await runtime.cookies.metadata(service) : Object.freeze({}));
+    const state = await verifyCookieState(service, cookies, await runtime.cookies.metadata(service));
     if (state.changed) await saveCookies(service, state.cookies, state.metadata);
     if (state.result !== null) return state.result;
     throw cookieAuthError(service);

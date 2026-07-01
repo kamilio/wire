@@ -191,8 +191,10 @@ export function createCookiesCapability(filesystem: FilesystemCapability, home: 
     },
     save: async (service: string, cookies: readonly Cookie[], metadata: Readonly<Record<string, string>>) => {
       const candidatePaths = paths(service);
-      const path = await existingCookiesFile(filesystem, candidatePaths) ?? candidatePaths[0]!;
-      await filesystem.writeText(path, serializeNetscapeCookies(cookies, metadata));
+      const contents = serializeNetscapeCookies(cookies, metadata);
+      const existingPaths = [];
+      for (const path of candidatePaths) if (await filesystem.exists(path)) existingPaths.push(path);
+      for (const path of existingPaths.length === 0 ? [candidatePaths[0]!] : existingPaths) await filesystem.writeText(path, contents);
     },
     delete: async (service: string) => {
       for (const path of paths(service)) if (await filesystem.exists(path)) await filesystem.delete(path);

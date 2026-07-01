@@ -1005,6 +1005,27 @@ test("google docs synchronization uploads local-only text edits", async () => {
   assert.deepEqual(requests.map((request) => request.url.pathname), ["/document/d/doc/export", "/document/d/doc/edit", "/document/d/doc/save", "/document/d/doc/export"]);
 });
 
+test("google docs synchronization uploads multiple local edit regions in one save", async () => {
+  let markdown = "Alpha old\nMiddle\nOmega old\n";
+  const document = await synchronizeSource(runtime(async (input, init = {}) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/edit")) return docsHtml(markdown);
+    if (url.pathname.endsWith("/save")) {
+      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
+      assert.deepEqual(bundles, [{ commands: [
+        { ty: "ds", si: 24, ei: 26 },
+        { ty: "is", ibi: 24, s: "new" },
+        { ty: "ds", si: 7, ei: 9 },
+        { ty: "is", ibi: 7, s: "new" },
+      ], sid: "0000019eb1675600", reqId: 0 }]);
+      markdown = "Alpha new\nMiddle\nOmega new\n";
+      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
+    }
+    return exportResponse("Doc Title", "md", markdown);
+  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Alpha old\nMiddle\nOmega old\n" }, "Alpha new\nMiddle\nOmega new\n", "/workspace/doc.md");
+  assert.equal(document.markdown, "Alpha new\nMiddle\nOmega new\n");
+});
+
 test("google docs synchronization preserves non-default tabs while saving", async () => {
   const requests = [];
   let markdown = "Hello old world\n";
@@ -1626,6 +1647,17 @@ test("google docs synchronization rejects formatting-only local Markdown edits b
     if (url.pathname.endsWith("/edit") || url.pathname.endsWith("/save")) throw new Error("unexpected write");
     return exportResponse("Doc Title", "md", "Hello\n");
   }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Hello\n" }, "**Hello**\n", "/workspace/doc.md"), /Google Docs sync cannot upload formatting-only Markdown edits/);
+  assert.deepEqual(requests, ["/document/d/doc/export"]);
+});
+
+test("google docs synchronization rejects edits inside formatted markdown before saving", async () => {
+  const requests = [];
+  await assert.rejects(() => synchronizeSource(runtime(async (input) => {
+    const url = new URL(String(input));
+    requests.push(url.pathname);
+    if (url.pathname.endsWith("/edit") || url.pathname.endsWith("/save")) throw new Error("unexpected write");
+    return exportResponse("Doc Title", "md", "See [old](https://example.test)\n");
+  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "See [old](https://example.test)\n" }, "See [new](https://example.test)\n", "/workspace/doc.md"), /Google Docs sync cannot preserve formatting in edited text/);
   assert.deepEqual(requests, ["/document/d/doc/export"]);
 });
 

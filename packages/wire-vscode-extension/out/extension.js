@@ -27,7 +27,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// packages/wire-vscode-extension/src/extension.ts
+// src/extension.ts
 var extension_exports = {};
 __export(extension_exports, {
   activate: () => activate,
@@ -41,7 +41,7 @@ var import_node_path4 = require("node:path");
 var import_node_util = require("node:util");
 var vscode = __toESM(require("vscode"));
 
-// packages/wire-core/src/core/json.ts
+// ../wire-core/src/core/json.ts
 function compareStrings(left, right) {
   const leftCodePoints = Array.from(left, (character) => character.codePointAt(0));
   const rightCodePoints = Array.from(right, (character) => character.codePointAt(0));
@@ -113,7 +113,7 @@ function stableJsonPretty(value) {
   return serialize(value, 2, 0);
 }
 
-// packages/wire-core/src/core/resource.ts
+// ../wire-core/src/core/resource.ts
 function compareStrings2(left, right) {
   const leftCodePoints = Array.from(left, (character) => character.codePointAt(0));
   const rightCodePoints = Array.from(right, (character) => character.codePointAt(0));
@@ -163,7 +163,7 @@ function normalizeResource(resource) {
   });
 }
 
-// packages/wire-core/src/core/source.ts
+// ../wire-core/src/core/source.ts
 function serviceForUrl(url, catalog) {
   const service = catalog.find((item) => item.matches(url));
   if (service === void 0) throw new Error(`Unsupported source URL: ${url}`);
@@ -207,7 +207,7 @@ function uploadSource(input, catalog, markdown, markdownPath) {
   return service.upload(input, markdown, markdownPath);
 }
 
-// packages/wire-core/src/core/transform.ts
+// ../wire-core/src/core/transform.ts
 function markdownFilename(title2) {
   const visible = title2.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
   return `${visible === "" ? "untitled" : visible}.md`;
@@ -231,7 +231,7 @@ function extractRelationships(markdown, currentId, catalog) {
   return Object.freeze([...relationships.values()]);
 }
 
-// packages/wire-core/src/runtime/cookies.ts
+// ../wire-core/src/runtime/cookies.ts
 function frozenCookie(cookie) {
   return Object.freeze(cookie);
 }
@@ -412,7 +412,7 @@ function createCookiesCapability(filesystem, home, repositoryRoot2, overrideFile
   });
 }
 
-// packages/wire-core/src/runtime/chrome.ts
+// ../wire-core/src/runtime/chrome.ts
 var import_node_child_process = require("node:child_process");
 var import_node_process = require("node:process");
 var import_promises = require("node:readline/promises");
@@ -707,7 +707,7 @@ async function extractChromeCookies(environment2, extraction) {
   }
 }
 
-// packages/wire-core/src/runtime/google.ts
+// ../wire-core/src/runtime/google.ts
 function parseGoogleCredentials(contents) {
   const document = JSON.parse(contents);
   return Object.freeze(document.installed);
@@ -764,7 +764,7 @@ function createGoogleTokensCapability(filesystem, http, clock, credentialsPath, 
   });
 }
 
-// packages/wire-core/src/storage/registry.ts
+// ../wire-core/src/storage/registry.ts
 var import_node_crypto = require("node:crypto");
 var import_node_fs = require("node:fs");
 var import_promises3 = require("node:fs/promises");
@@ -1055,7 +1055,7 @@ function realpathSyncDirectory(path) {
   return (0, import_node_fs.realpathSync)(path);
 }
 
-// packages/wire-core/src/storage/workspace.ts
+// ../wire-core/src/storage/workspace.ts
 var import_node_fs2 = require("node:fs");
 var import_promises4 = require("node:fs/promises");
 var import_node_path2 = require("node:path");
@@ -1116,7 +1116,7 @@ async function initializeWire(path, backend, registryPath) {
   return { root: wireRoot2, backend, path: fullRegistryPath, created: true };
 }
 
-// packages/wire-core/src/operations.ts
+// ../wire-core/src/operations.ts
 var import_node_crypto2 = require("node:crypto");
 var import_node_path3 = require("node:path");
 async function wireRoot(dependencies, path) {
@@ -1451,7 +1451,7 @@ function composeWire(dependencies) {
   });
 }
 
-// packages/wire/src/auth.ts
+// ../wire/src/auth.ts
 function cookieHeader(cookies) {
   return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
 }
@@ -1705,7 +1705,7 @@ function composeAuth(runtime2, environment2, extractCookies) {
   return auth2;
 }
 
-// packages/provider-asana/src/asana-sync.ts
+// ../provider-asana/src/asana-sync.ts
 function gidFromUrl(value) {
   const parts = new URL(value).pathname.split("/").filter(Boolean);
   const task = parts.indexOf("task");
@@ -1882,7 +1882,7 @@ function asanaSnapshot(document) {
   return document;
 }
 
-// packages/provider-asana/src/asana-project.ts
+// ../provider-asana/src/asana-project.ts
 var projectViews = /* @__PURE__ */ new Set(["board", "calendar", "files", "forms", "gantt", "list", "overview", "timeline", "workflow"]);
 function object(value) {
   return value;
@@ -2062,7 +2062,7 @@ var asanaProjectService = defineService({
   }
 });
 
-// packages/provider-asana/src/asana-task.ts
+// ../provider-asana/src/asana-task.ts
 function object2(value) {
   return value;
 }
@@ -2146,12 +2146,12 @@ var asanaTaskService = defineService({
   }
 });
 
-// packages/provider-asana/src/index.ts
+// ../provider-asana/src/index.ts
 var asanaProvider = Object.freeze({
   services: [asanaProjectService, asanaTaskService]
 });
 
-// packages/provider-chatgpt/src/chatgpt.ts
+// ../provider-chatgpt/src/chatgpt.ts
 function chatgptAuthError() {
   return new Error("ChatGPT authentication is missing or expired. Run `wire chatgpt login` once; other commands reuse saved cookies.");
 }
@@ -2285,6 +2285,7 @@ var chatgptService = defineService({
     if (!sessionText.startsWith("{")) throw chatgptAuthError();
     const session = JSON.parse(sessionText);
     if ("error" in session) throw chatgptAuthError();
+    if (session["account"] === void 0 || session["accessToken"] === void 0) throw chatgptAuthError();
     const account = session["account"];
     const conversationHeaders = {
       ...sessionHeaders,
@@ -2298,12 +2299,12 @@ var chatgptService = defineService({
   }
 });
 
-// packages/provider-chatgpt/src/index.ts
+// ../provider-chatgpt/src/index.ts
 var chatgptProvider = Object.freeze({
   services: [chatgptService]
 });
 
-// packages/provider-gmail/src/gmail.ts
+// ../provider-gmail/src/gmail.ts
 function decode(data) {
   return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
 }
@@ -2316,11 +2317,15 @@ function stripTags(html) {
 function htmlText(html) {
   return entities(html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<a\b[^>]*\bhref=(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi, (_match, _quote, href, label) => `[${entities(stripTags(label)).trim()}](${entities(href)})`).replace(/<(?:br|\/p|\/div|\/li|\/tr|\/h[1-6])\b[^>]*>/gi, "\n").replace(/<[^>]+>/g, "")).split("\n").map((line) => line.trim()).filter((line) => line !== "").join("\n");
 }
+function attachmentLine(payload) {
+  const body2 = payload["body"];
+  return `- Attachment: ${payload["filename"]} (${payload["mimeType"]}, ${body2["size"]} bytes)`;
+}
 function body(payload) {
   const mimeType = payload["mimeType"];
   if (mimeType === "text/plain") return decode(payload["body"]["data"]);
   if (mimeType === "text/html") return htmlText(decode(payload["body"]["data"]));
-  if (payload["parts"] === void 0) return "";
+  if (payload["parts"] === void 0) return attachmentLine(payload);
   const parts = payload["parts"];
   if (mimeType === "multipart/alternative") {
     const plain = parts.find((part) => part["mimeType"] === "text/plain");
@@ -2329,7 +2334,7 @@ function body(payload) {
     if (html !== void 0) return body(html);
     if (plain !== void 0) return body(plain);
   }
-  return parts.filter((part) => part["mimeType"] !== "application/octet-stream").map(body).join("\n");
+  return parts.map(body).filter((value) => value !== "").join("\n");
 }
 function threadIdentifier(url) {
   const fragmentPath = url.hash.slice(1).split("?")[0];
@@ -2378,12 +2383,12 @@ var gmailService = defineService({
   }
 });
 
-// packages/provider-gmail/src/index.ts
+// ../provider-gmail/src/index.ts
 var gmailProvider = Object.freeze({
   services: [gmailService]
 });
 
-// packages/provider-google-docs/src/google-docs.ts
+// ../provider-google-docs/src/google-docs.ts
 var import_node_zlib = require("node:zlib");
 async function cookieHeader3(runtime2) {
   const cookies = await runtime2.cookies.loadSaved("google-docs");
@@ -2892,7 +2897,7 @@ function textEdit(base, local) {
     for (let baseEnd2 = start; baseEnd2 <= Math.min(base.length - window2, start + 2e3); baseEnd2 += 1) {
       const anchor = base.slice(baseEnd2, baseEnd2 + window2);
       const localEnd2 = local.indexOf(anchor, start);
-      if (localEnd2 !== -1 && localEnd2 <= start + 2e3) return Object.freeze({ base: base.slice(start, baseEnd2), local: local.slice(start, localEnd2), before: base.slice(0, start), after: base.slice(baseEnd2) });
+      if (localEnd2 !== -1 && localEnd2 <= start + 2e3) return Object.freeze({ base: base.slice(start, baseEnd2), local: local.slice(start, localEnd2), before: base.slice(0, start), after: base.slice(baseEnd2), localAfter: local.slice(localEnd2) });
     }
   }
   let baseEnd = base.length;
@@ -2901,7 +2906,22 @@ function textEdit(base, local) {
     baseEnd -= 1;
     localEnd -= 1;
   }
-  return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), after: base.slice(baseEnd) });
+  return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), after: base.slice(baseEnd), localAfter: local.slice(localEnd) });
+}
+function textEdits(base, local) {
+  const edits = [];
+  let basePrefix = "";
+  let baseRest = base;
+  let localRest = local;
+  while (baseRest !== localRest) {
+    const edit = textEdit(baseRest, localRest);
+    const before = `${basePrefix}${edit.before}`;
+    edits.push(Object.freeze({ ...edit, before }));
+    basePrefix = base.slice(0, base.length - edit.after.length);
+    baseRest = edit.after;
+    localRest = edit.localAfter;
+  }
+  return edits;
 }
 function context(value, side, length) {
   return side === "before" ? value.slice(Math.max(0, value.length - length)) : value.slice(0, length);
@@ -2968,15 +2988,15 @@ function docTextRange(text2, edit) {
   throw new Error("Google Docs local edit cannot be mapped to the live document text");
 }
 async function uploadDocText(runtime2, documentId, key2, tab, baseMarkdown, localMarkdown) {
-  const edit = textEdit(baseMarkdown, localMarkdown);
+  const edits = textEdits(baseMarkdown, localMarkdown);
   const editUrl = docEditUrl(documentId, key2, tab);
   const session = docSession(await googleText(runtime2, editUrl, "Docs editor"));
-  const range = docTextRange(session.text, edit);
+  const ranges = edits.map((edit) => ({ edit, range: docTextRange(session.text, edit) })).sort((left, right) => right.range.start - left.range.start);
   const sid = runtime2.clock.now().getTime().toString(16).padStart(16, "0").slice(-16);
-  const commands2 = [
+  const commands2 = ranges.flatMap(({ edit, range }) => [
     ...range.start === range.end ? [] : [{ ty: "ds", si: range.start + 1, ei: range.end }],
     ...edit.local === "" ? [] : [{ ty: "is", ibi: range.start + 1, s: markdownText(edit.local) }]
-  ];
+  ]);
   const params = new URLSearchParams({ id: documentId, sid, vc: "1", c: "1", w: "1", flr: "0", smv: "2147483647", smb: "[2147483647, AAE=]", token: session.token, ouid: session.ouid, includes_info_params: "true", cros_files: "false", nded: "false", tab });
   const body2 = new URLSearchParams({ rev: String(session.revision), bundles: JSON.stringify([{ commands: commands2, sid, reqId: 0 }]) });
   const response = await runtime2.http.request(`https://docs.google.com/document/d/${encodeURIComponent(documentId)}/save?${params}`, { method: "POST", headers: { Cookie: await cookieHeader3(runtime2), "content-type": "application/x-www-form-urlencoded;charset=UTF-8", origin: "https://docs.google.com", referer: editUrl }, body: body2.toString() });
@@ -3085,7 +3105,7 @@ var googleDocsService = defineService({
   synchronize: (runtime2, url, source, base, markdown) => synchronizeGoogleDocument(runtime2, url, source, base, markdown)
 });
 
-// packages/provider-google-docs/src/google-forms.ts
+// ../provider-google-docs/src/google-forms.ts
 function formId(url) {
   return /^\/forms(?:\/u\/\d+)?\/d\/([^/]+)(?:\/.*)?$/.exec(url.pathname)[1];
 }
@@ -3248,12 +3268,12 @@ var googleFormsService = defineService({
   }
 });
 
-// packages/provider-google-docs/src/index.ts
+// ../provider-google-docs/src/index.ts
 var googleDocsProvider = Object.freeze({
   services: [googleFormsService, googleDocsService]
 });
 
-// packages/provider-notion/src/notion-sync.ts
+// ../provider-notion/src/notion-sync.ts
 var import_node_crypto3 = require("node:crypto");
 function object3(value) {
   return value;
@@ -4221,7 +4241,7 @@ ${split.body}`;
   return { title: output.split("\n")[0].replace(/^# */, ""), markdown: output, data: notionData(remote.tree.id, output, outputTree, mentions) };
 }
 
-// packages/provider-notion/src/notion.ts
+// ../provider-notion/src/notion.ts
 var notionPageId = /[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i;
 var notionService = defineService({
   name: "notion",
@@ -4232,12 +4252,12 @@ var notionService = defineService({
   upload: uploadNotionDocument
 });
 
-// packages/provider-notion/src/index.ts
+// ../provider-notion/src/index.ts
 var notionProvider = Object.freeze({
   services: [notionService]
 });
 
-// packages/provider-slack/src/slack.ts
+// ../provider-slack/src/slack.ts
 function slackAuthError() {
   return new Error("slack cookie authentication is missing or expired. Run `wire slack login` once; other commands reuse saved cookies.");
 }
@@ -4292,7 +4312,13 @@ var slackService = defineService({
     const metadata = await runtime2.cookies.metadata("slack");
     const origin = new URL(url).hostname === "app.slack.com" ? metadata["origin"] : new URL(url).origin;
     const token = metadata["token"];
-    const response = await api(runtime2, origin, token, cookie, "conversations.replies", { channel: source["channel_id"], ts: source["thread_timestamp"], limit: "999" });
+    const replies = [];
+    let cursor;
+    do {
+      const response = await api(runtime2, origin, token, cookie, "conversations.replies", { channel: source["channel_id"], ts: source["thread_timestamp"], limit: "999", ...cursor === void 0 ? {} : { cursor } });
+      replies.push(...response["messages"]);
+      cursor = response["response_metadata"]?.["next_cursor"];
+    } while (cursor !== void 0 && cursor !== "");
     const userCache = /* @__PURE__ */ new Map();
     const botCache = /* @__PURE__ */ new Map();
     const resolveUser = async (id) => {
@@ -4307,7 +4333,7 @@ var slackService = defineService({
       return userCache.get(id);
     };
     const messages = [];
-    for (const raw of response["messages"]) {
+    for (const raw of replies) {
       const userId = raw["user"];
       let userName;
       if (userId !== void 0) userName = await resolveUser(userId);
@@ -4318,14 +4344,19 @@ var slackService = defineService({
         if (!botCache.has(botId)) botCache.set(botId, (await api(runtime2, origin, token, cookie, "bots.info", { bot: botId }))["bot"]["name"]);
         userName = botCache.get(botId);
       } else userName = "unknown";
-      let text2 = raw["text"];
+      const text2 = raw["text"];
       const files = raw["files"] === void 0 ? [] : raw["files"].map((file) => Object.freeze({ name: file["name"], url: file["url_private"] }));
-      if (text2.trim() === "" && files.length > 0) text2 = files.map((file) => `- [${markdownLinkLabel(file.name)}](${file.url})`).join("\n");
       messages.push({ ts: raw["ts"], user_id: userId ?? "unknown", user_name: userName, text: text2, files });
     }
     const mentioned = new Set(messages.flatMap((message) => [...message.text.matchAll(/<@([A-Z0-9]+)(?:\|[^>]+)?>/g)].map((match) => match[1])));
     for (const id of mentioned) await resolveUser(id);
-    for (const message of messages) message.text = cleanText(message.text.replace(/<@([A-Z0-9]+)(?:\|[^>]+)?>/g, (_match, id) => `@${userCache.get(id)}`)).replace(/```([^\n])/g, "```\n$1").replace(/([^\n])```/g, "$1\n```");
+    for (const message of messages) {
+      const cleaned = cleanText(message.text.replace(/<@([A-Z0-9]+)(?:\|[^>]+)?>/g, (_match, id) => `@${userCache.get(id)}`)).replace(/```([^\n])/g, "```\n$1").replace(/([^\n])```/g, "$1\n```");
+      const fileLines = message.files.map((file) => `- [${markdownLinkLabel(file.name)}](${file.url})`).join("\n");
+      message.text = cleaned.trim() === "" ? fileLines : fileLines === "" ? cleaned : `${cleaned}
+
+${fileLines}`;
+    }
     const timezone = runtime2.clock.localTimezone();
     const date = formatTimestamp(messages[0].ts, timezone).slice(0, 10);
     const titleText = messages[0].text.replace(/https?:\/\/\S+/g, "").slice(0, 30).replace(/[^\p{L}\p{N}_\s-]/gu, "").replace(/[\s-]+/g, "_").replace(/^_+|_+$/g, "");
@@ -4336,12 +4367,12 @@ var slackService = defineService({
   }
 });
 
-// packages/provider-slack/src/index.ts
+// ../provider-slack/src/index.ts
 var slackProvider = Object.freeze({
   services: [slackService]
 });
 
-// packages/provider-zoom/src/zoom-hub.ts
+// ../provider-zoom/src/zoom-hub.ts
 var userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 function zoomAuthError() {
   return new Error("Zoom authentication is missing or expired. Run `wire zoom login` once; other commands reuse saved cookies.");
@@ -4537,15 +4568,15 @@ var zoomHubService = defineService({
   }
 });
 
-// packages/provider-zoom/src/index.ts
+// ../provider-zoom/src/index.ts
 var zoomProvider = Object.freeze({
   services: [zoomHubService]
 });
 
-// packages/wire-vscode-extension/src/service-catalog.ts
+// src/service-catalog.ts
 var serviceCatalog = createServiceRegistry().use(zoomProvider).use(notionProvider).use(slackProvider).use(chatgptProvider).use(googleDocsProvider).use(gmailProvider).use(asanaProvider).catalog();
 
-// packages/wire-vscode-extension/src/extension.ts
+// src/extension.ts
 var execFileAsync = (0, import_node_util.promisify)(import_node_child_process2.execFile);
 var authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"];
 var wireStatus;
