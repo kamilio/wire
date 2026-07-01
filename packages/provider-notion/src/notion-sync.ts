@@ -480,7 +480,14 @@ export function parseNotionMarkdown(markdown: string): readonly NotionBlock[] {
   return parseLines(markdown.replace(/^\ufeff/, "").split("\n"));
 }
 
-function parserBlockToNotionBlock(block: NotionBlock, id: string, parentId: string, parentTable: string, spaceId: string, userId: string, currentTime: number): JsonObject {
+function tableRowCells(block: NotionBlock, columnOrder?: readonly string[]): JsonObject {
+  const cells = object(block.properties["cells"]!);
+  if (columnOrder === undefined) return cells;
+  const localColumns = Object.keys(cells);
+  return Object.fromEntries(columnOrder.map((column, index) => [column, cells[localColumns[index]!]!]));
+}
+
+function parserBlockToNotionBlock(block: NotionBlock, id: string, parentId: string, parentTable: string, spaceId: string, userId: string, currentTime: number, columnOrder?: readonly string[]): JsonObject {
   const base: Record<string, JsonValue> = { id, type: block.type, space_id: spaceId, parent_id: parentId, parent_table: parentTable, alive: true, created_time: currentTime, created_by_table: "notion_user", created_by_id: userId, last_edited_time: currentTime, last_edited_by_table: "notion_user", last_edited_by_id: userId };
   if (block.properties["notion_opaque"] !== undefined) return { ...object(block.properties["notion_opaque"]!), ...base };
   if (block.type === "divider") return base;
@@ -489,7 +496,7 @@ function parserBlockToNotionBlock(block: NotionBlock, id: string, parentId: stri
   if (block.type === "to_do") return { ...base, properties: { title: block.rich_text, checked: [[block.properties["checked"] === true ? "Yes" : "No"]] } };
   if (block.type === "image") return { ...base, properties: { source: [[block.properties["source"]!]], alt_text: [[block.properties["alt_text"]!]], ...(block.properties["caption"] === undefined ? {} : { caption: block.properties["caption"]! }) } };
   if (block.type === "table") return { ...base, properties: {}, format: { table_block_column_order: block.properties["column_ids"]!, table_block_column_header: block.properties["has_header"]!, table_block_row_header: block.properties["has_row_header"]! } };
-  if (block.type === "table_row") return { ...base, properties: block.properties["cells"]! };
+  if (block.type === "table_row") return { ...base, properties: tableRowCells(block, columnOrder) };
   if (block.type === "column_list" || block.type === "transclusion_container") return { ...base, properties: {} };
   if (block.type === "column") return { ...base, properties: {}, ...(block.properties["format"] === undefined ? {} : { format: block.properties["format"]! }) };
   if (block.type === "callout") return { ...base, properties: { title: block.rich_text }, ...(block.properties["format"] === undefined ? {} : { format: block.properties["format"]! }) };
@@ -497,12 +504,13 @@ function parserBlockToNotionBlock(block: NotionBlock, id: string, parentId: stri
   return { ...base, properties: { title: block.rich_text } };
 }
 
-export function buildNotionCreateOperations(blocks: readonly NotionBlock[], pageId: string, spaceId: string, userId: string, currentTime: number, createId: () => string = () => randomUUID()): Readonly<{ operations: readonly NotionOperation[]; topLevelIds: readonly string[] }> {
+export function buildNotionCreateOperations(blocks: readonly NotionBlock[], pageId: string, spaceId: string, userId: string, currentTime: number, createId: () => string = () => randomUUID(), initialTableColumnOrder?: readonly string[]): Readonly<{ operations: readonly NotionOperation[]; topLevelIds: readonly string[] }> {
   const operations: NotionOperation[] = [];
   const topLevelIds: string[] = [];
   const lastAtIndent = new Map<number, string>();
   const lastChildByParent = new Map<string, string>();
   let lastTableId: string | null = null;
+  let tableColumnOrder: readonly string[] | undefined = initialTableColumnOrder;
   for (const block of blocks) {
     const blockId = formatBlockId(createId().replaceAll("-", ""));
     let parentId = pageId;
@@ -514,12 +522,15 @@ export function buildNotionCreateOperations(blocks: readonly NotionBlock[], page
     }
     if (block.type !== "table_row" && block.indent === 0) topLevelIds.push(blockId);
     const parentTable = "block";
-    operations.push({ pointer: pointer(blockId, spaceId), path: [], command: "set", args: parserBlockToNotionBlock(block, blockId, parentId, parentTable, spaceId, userId, currentTime) });
+    operations.push({ pointer: pointer(blockId, spaceId), path: [], command: "set", args: parserBlockToNotionBlock(block, blockId, parentId, parentTable, spaceId, userId, currentTime, block.type === "table_row" ? tableColumnOrder : undefined) });
     const after = lastChildByParent.get(parentId);
     operations.push({ pointer: pointer(parentId, spaceId), path: ["content"], command: after === undefined ? "listBefore" : "listAfter", args: after === undefined ? { id: blockId } : { id: blockId, after } });
     lastChildByParent.set(parentId, blockId);
     if (["bulleted_list", "numbered_list", "to_do", "quote", "callout", "toggle", "header", "sub_header", "sub_sub_header", "table", "page", "column_list", "column", "transclusion_container"].includes(block.type)) lastAtIndent.set(block.indent, blockId);
-    if (block.type === "table") lastTableId = blockId;
+    if (block.type === "table") {
+      lastTableId = blockId;
+      tableColumnOrder = block.properties["column_ids"] as readonly string[];
+    }
   }
   if (operations.length > 0) operations.push({ pointer: pointer(pageId, spaceId), path: ["last_edited_time"], command: "set", args: currentTime });
   return { operations, topLevelIds };
@@ -546,7 +557,10 @@ function canonicalParserBlock(block: NotionBlock, columnOrder?: readonly string[
   if (block.type === "code") return { type: "code", title: normalizeRichText([[block.content]]), language: [[block.properties["language"]!]] };
   if (block.type === "to_do") return { type: "to_do", title: normalizeRichText(block.rich_text), checked: [[block.properties["checked"] === true ? "Yes" : "No"]] };
   if (block.type === "table") return { type: "table", column_count: (block.properties["column_ids"] as JsonValue[]).length };
-  if (block.type === "table_row") return { type: "table_row", cells: columnOrder!.map((column) => normalizeRichText(object(block.properties["cells"]!)[column]!)) };
+  if (block.type === "table_row") {
+    const cells = tableRowCells(block, columnOrder);
+    return { type: "table_row", cells: columnOrder!.map((column) => normalizeRichText(cells[column]!)) };
+  }
   if (block.type === "image") return { type: "image", source: [[block.properties["source"]!]], alt_text: [[block.properties["alt_text"]!]], caption: block.properties["caption"] ?? null };
   if (block.type === "column") return { type: "column", column_ratio: object(block.properties["format"] ?? {})["column_ratio"] ?? null };
   if (block.type === "column_list" || block.type === "transclusion_container") return { type: block.type };
@@ -583,18 +597,20 @@ function localTree(blocks: readonly NotionBlock[]): LocalNotionNode[] {
   return roots;
 }
 
-function outputNode(node: LocalNotionNode, remoteNode: NotionTree | undefined, parentId: string, remote: Readonly<{ spaceId: string; userId: string }>, currentTime: number): NotionTree {
+function outputNode(node: LocalNotionNode, remoteNode: NotionTree | undefined, parentId: string, remote: Readonly<{ spaceId: string; userId: string }>, currentTime: number, columnOrder?: readonly string[]): NotionTree {
   const id = remoteNode?.id ?? formatBlockId(randomUUID().replaceAll("-", ""));
-  return { id, block: parserBlockToNotionBlock(node.block, id, parentId, "block", remote.spaceId, remote.userId, currentTime), children: node.children.map((child, index) => outputNode(child, remoteNode?.children[index], id, remote, currentTime)) };
+  const block = parserBlockToNotionBlock(node.block, id, parentId, "block", remote.spaceId, remote.userId, currentTime, node.block.type === "table_row" ? columnOrder : undefined);
+  const nextColumnOrder = block["type"] === "table" ? object(block["format"]!)["table_block_column_order"] as readonly string[] : columnOrder;
+  return { id, block, children: node.children.map((child, index) => outputNode(child, remoteNode?.children[index], id, remote, currentTime, nextColumnOrder)) };
 }
 
-function emitUpdates(remote: JsonObject, local: NotionBlock, blockId: string, spaceId: string): NotionOperation[] {
+function emitUpdates(remote: JsonObject, local: NotionBlock, blockId: string, spaceId: string, columnOrder?: readonly string[]): NotionOperation[] {
   const operations: NotionOperation[] = [];
   const remoteType = remote["type"] === "text" && object(remote["format"] ?? {})["toggleable"] === true ? "toggle" : remote["type"] as string;
   const localType = local.type === "toggle" ? "text" : local.type;
   const typeChanged = remoteType !== local.type;
   if (typeChanged) operations.push({ pointer: pointer(blockId, spaceId), path: ["type"], command: "set", args: localType });
-  const args = parserBlockToNotionBlock(local, blockId, remote["parent_id"] as string ?? "", "block", spaceId, "", 0);
+  const args = parserBlockToNotionBlock(local, blockId, remote["parent_id"] as string ?? "", "block", spaceId, "", 0, local.type === "table_row" ? columnOrder : undefined);
   const remoteProperties = object(remote["properties"] ?? {});
   const nextProperties = object(args["properties"] ?? {});
   if (typeChanged) {
@@ -617,8 +633,8 @@ function flattenLocalSubtree(node: LocalNotionNode): readonly NotionBlock[] {
   return blocks;
 }
 
-function buildNotionCreateSubtreeOperations(node: LocalNotionNode, parentId: string, ambient: Readonly<{ spaceId: string; userId: string; currentTime: number }>): Readonly<{ operations: readonly NotionOperation[]; topLevelIds: readonly string[] }> {
-  return buildNotionCreateOperations(flattenLocalSubtree(node), parentId, ambient.spaceId, ambient.userId, ambient.currentTime);
+function buildNotionCreateSubtreeOperations(node: LocalNotionNode, parentId: string, ambient: Readonly<{ spaceId: string; userId: string; currentTime: number }>, columnOrder?: readonly string[]): Readonly<{ operations: readonly NotionOperation[]; topLevelIds: readonly string[] }> {
+  return buildNotionCreateOperations(flattenLocalSubtree(node), parentId, ambient.spaceId, ambient.userId, ambient.currentTime, undefined, columnOrder);
 }
 
 function positionRootCreateOperations(operations: readonly NotionOperation[], parentId: string, spaceId: string, previousId: string | undefined): readonly NotionOperation[] {
@@ -674,7 +690,7 @@ function diffNotionChildLists(remoteParent: NotionTree, localChildren: readonly 
       continue;
     }
     if (localIndex + 1 < localChildren.length && remoteHash(remoteIndex) === localHash(localIndex + 1)) {
-      const built = buildNotionCreateSubtreeOperations(localNode, remoteParent.id, ambient);
+      const built = buildNotionCreateSubtreeOperations(localNode, remoteParent.id, ambient, nextColumnOrder);
       operations.push(...positionRootCreateOperations(built.operations, remoteParent.id, ambient.spaceId, previousId));
       summary.inserted += localSubtreeSize(localNode);
       previousId = built.topLevelIds[0]!;
@@ -688,7 +704,7 @@ function diffNotionChildLists(remoteParent: NotionTree, localChildren: readonly 
       continue;
     }
     const before = operations.length;
-    operations.push(...emitUpdates(remoteNode.block, localNode.block, remoteNode.id, ambient.spaceId));
+    operations.push(...emitUpdates(remoteNode.block, localNode.block, remoteNode.id, ambient.spaceId, nextColumnOrder));
     operations.push(...diffNotionChildLists(remoteNode, localNode.children, ambient, summary, nextColumnOrder));
     if (operations.length > before) summary.updated += 1;
     previousId = remoteNode.id;
@@ -697,7 +713,7 @@ function diffNotionChildLists(remoteParent: NotionTree, localChildren: readonly 
   }
   while (localIndex < localChildren.length) {
     const localNode = localChildren[localIndex]!;
-    const built = buildNotionCreateSubtreeOperations(localNode, remoteParent.id, ambient);
+    const built = buildNotionCreateSubtreeOperations(localNode, remoteParent.id, ambient, nextColumnOrder);
     operations.push(...positionRootCreateOperations(built.operations, remoteParent.id, ambient.spaceId, previousId ?? remoteChildren[remoteChildren.length - 1]?.id));
     summary.inserted += localSubtreeSize(localNode);
     previousId = built.topLevelIds[0]!;
@@ -924,8 +940,6 @@ export async function synchronizeNotionDocument(runtime: RuntimeCapabilities, ur
     const remoteTitleChanged = baseSplit.title !== currentSplit.title;
     const localBodyChanged = baseSplit.body !== split.body;
     const remoteBodyChanged = baseSplit.body !== currentSplit.body;
-    if (localTitleChanged && remoteTitleChanged && split.title !== currentSplit.title) throw new Error("Markdown and Notion changed since last sync");
-    if (localBodyChanged && remoteBodyChanged && split.body !== currentSplit.body) throw new Error("Markdown and Notion changed since last sync");
     if ((localTitleChanged || localBodyChanged) && (remoteTitleChanged || remoteBodyChanged)) {
       split = { title: localTitleChanged ? split.title : currentSplit.title, body: localBodyChanged ? split.body : currentSplit.body };
       fieldMerged = true;

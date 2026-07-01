@@ -223,6 +223,21 @@ test("notion table header settings do not create Markdown-only sync updates", ()
   assert.deepEqual(diffNotionBlockTrees(remote, local, sidecarBlocksFromNotionTree(remote), { spaceId: "space", userId: "user", currentTime: 1700000000000 }), { operations: [], summary: { inserted: 0, updated: 0, deleted: 0, moved: 0 } });
 });
 
+test("notion table rows map local positional cells onto remote column ids", () => {
+  const columns = ["first-random", "second-random"];
+  const remote = { id: "page", block: { type: "page", properties: { title: [["Root"]] }, alive: true }, children: [
+    { id: "table", block: { type: "table", format: { table_block_column_order: columns, table_block_column_header: true, table_block_row_header: false }, alive: true }, children: [
+      { id: "row", block: { type: "table_row", properties: { "first-random": [["A"]], "second-random": [["B"]] }, alive: true }, children: [] },
+    ] },
+  ] };
+  const local = parseNotionMarkdown(body(renderNotionTreeToMarkdown(remote)).replace("| A | B |", "| A | C |"));
+  const diff = diffNotionBlockTrees(remote, local, sidecarBlocksFromNotionTree(remote), { spaceId: "space", userId: "user", currentTime: 1700000000000 });
+  assert.deepEqual(diff.summary, { inserted: 0, updated: 1, deleted: 0, moved: 0 });
+  assert.deepEqual(diff.operations.filter((operation) => operation.path[0] === "properties"), [
+    { pointer: { table: "block", id: "row", spaceId: "space" }, path: ["properties", "second-random"], command: "set", args: [["C"]] },
+  ]);
+});
+
 test("notion links preserve urls containing parentheses", () => {
   const block = { type: "text", properties: { title: [["spec", [["a", "https://example.com/a(b)"]]]] } };
   assert.equal(notionBlockContentHash(block), notionBlockContentHash(parseNotionMarkdown("[spec](https://example.com/a(b))")[0]));
