@@ -155,6 +155,11 @@ function markdownSnapshot(snapshot: JsonValue): string | null {
   return typeof markdown === "string" ? markdown : null;
 }
 
+function storedSnapshot(fetched: FetchedDocument): JsonValue {
+  if (!jsonObject(fetched.data)) return fetched.data;
+  return { ...fetched.data, markdown: fetched.markdown };
+}
+
 function pathLikeResourceValue(value: string): boolean {
   return value === "." || value === ".." || value.startsWith("./") || value.startsWith("../") || value.startsWith("/") || value.includes("/") || value.includes("\\") || value.endsWith(".md");
 }
@@ -217,7 +222,7 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
         ...(current?.data.filter((item) => item.namespace !== "wire" && !(item.namespace === source.service && item.key === "snapshot")) ?? []),
         { namespace: "wire", key: "title", value: fetched.title },
         { namespace: "wire", key: "synced_at", value: dependencies.now().toISOString() },
-        { namespace: source.service, key: "snapshot", value: fetched.data },
+        { namespace: source.service, key: "snapshot", value: storedSnapshot(fetched) },
       ],
       relationships: extractRelationships(fetched.markdown, id, dependencies.catalog),
     };
@@ -241,11 +246,8 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     const cleanPath = join(resolve(path), markdownFilename(fetched.title));
     let outputPath = cleanPath;
     if (await dependencies.filesystem.exists(cleanPath)) {
-      const root = await dependencies.workspace.configuredRoot(cleanPath, dependencies.home);
-      const current = root === null ? null : await existingResource(await dependencies.workspace.openRegistry(root, dependencies.home), source.service, source.identifier);
-      const currentPrimaryPath = current === null ? null : join(dirname(root!), primaryLink(current).path);
       const existingMarkdown = await dependencies.filesystem.readText(cleanPath);
-      if (currentPrimaryPath !== cleanPath && existingMarkdown !== fetched.markdown) outputPath = join(resolve(path), collisionFilename(fetched.title, source.service, source.identifier));
+      if (existingMarkdown !== fetched.markdown) outputPath = join(resolve(path), collisionFilename(fetched.title, source.service, source.identifier));
     }
     const previous = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
     await dependencies.filesystem.writeText(outputPath, fetched.markdown);
@@ -259,7 +261,7 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
       data: [
         { namespace: "wire", key: "title", value: fetched.title },
         { namespace: "wire", key: "synced_at", value: dependencies.now().toISOString() },
-        { namespace: source.service, key: "snapshot", value: fetched.data },
+        { namespace: source.service, key: "snapshot", value: storedSnapshot(fetched) },
       ],
       relationships: extractRelationships(fetched.markdown, id, dependencies.catalog),
     };

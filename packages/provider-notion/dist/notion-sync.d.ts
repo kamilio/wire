@@ -51,6 +51,6 @@ export declare function diffNotionBlockTrees(remoteTree: NotionTree, localBlocks
 export declare function renderNotionTreeToMarkdown(tree: NotionTree, mentions?: UserMentions): string;
 export declare function fetchNotionDocument(runtime: RuntimeCapabilities, url: string, source: Source): Promise<FetchedDocument>;
 export declare function uploadNotionDocument(runtime: RuntimeCapabilities, markdown: string, _markdownPath: string): Promise<UploadedDocument>;
-export declare function synchronizeNotionDocument(runtime: RuntimeCapabilities, url: string, base: JsonValue, markdown: string, _markdownPath: string): Promise<FetchedDocument>;
+export declare function synchronizeNotionDocument(runtime: RuntimeCapabilities, url: string, source: Source, base: JsonValue, markdown: string, _markdownPath: string): Promise<FetchedDocument>;
 export {};
 //# sourceMappingURL=notion-sync.d.ts.map

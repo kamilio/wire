@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { createRoot } from "./adapters/root.js";
 import { composeAuth } from "./auth.js";
 import { serviceCatalog } from "./adapters/services/catalog.js";
@@ -50,15 +50,21 @@ function loadConfiguredEnvironment(environment, currentDirectory) {
     const config = JSON.parse(readFileSync(join(wireRoot, "config.json"), "utf8"));
     return config.env === undefined ? environment : Object.freeze({ ...environment, ...config.env });
 }
+function operationPath(value, path) {
+    if (value.startsWith("http://") || value.startsWith("https://"))
+        return path;
+    return isAbsolute(value) ? value : resolve(path, value);
+}
 export function createExecutableRoot(environment, currentDirectory, options = { allowPaste: true }) {
     const repositoryRoot = environment["WIRE_REPOSITORY_ROOT"] ?? discoverRepositoryRoot(currentDirectory);
     const baseEnvironment = repositoryRoot === undefined ? environment : Object.freeze({ ...environment, WIRE_REPOSITORY_ROOT: repositoryRoot });
-    const resolvedEnvironment = loadConfiguredEnvironment(baseEnvironment, currentDirectory);
+    let activeConfigurationPath = currentDirectory;
+    const configuredEnvironment = () => loadConfiguredEnvironment(baseEnvironment, activeConfigurationPath);
     const http = createNodeHttp();
     const filesystem = createNodeFilesystem();
     const processCapability = createNodeProcess();
     const clock = createNodeClock();
-    const configuration = createNodeConfiguration(resolvedEnvironment);
+    const configuration = Object.freeze({ get: (name) => createNodeConfiguration(configuredEnvironment()).get(name) });
     const home = configuration.get("HOME");
     const runtimeBase = {
         http,
@@ -67,14 +73,14 @@ export function createExecutableRoot(environment, currentDirectory, options = { 
         clock,
         openFiles: createNodeOpenFiles(processCapability),
         configuration,
-        secrets: createNodeSecrets(filesystem, resolvedEnvironment),
+        secrets: createNodeSecrets(filesystem, configuredEnvironment()),
         gmailTokens: Object.freeze({ load: () => createGoogleTokensCapability(filesystem, http, clock, configuration.get("GOOGLE_CREDENTIALS_FILE"), configuration.get("GOOGLE_TOKEN_FILE")).load(), refresh: () => createGoogleTokensCapability(filesystem, http, clock, configuration.get("GOOGLE_CREDENTIALS_FILE"), configuration.get("GOOGLE_TOKEN_FILE")).refresh() }),
         googleFormsTokens: Object.freeze({ load: () => createGoogleTokensCapability(filesystem, http, clock, configuration.get("GOOGLE_CREDENTIALS_FILE"), configuration.get("GOOGLE_FORMS_TOKEN_FILE")).load(), refresh: () => createGoogleTokensCapability(filesystem, http, clock, configuration.get("GOOGLE_CREDENTIALS_FILE"), configuration.get("GOOGLE_FORMS_TOKEN_FILE")).refresh() }),
     };
     let auth;
-    const runtime = Object.freeze({ ...runtimeBase, cookies: createCookiesCapability(filesystem, () => home, () => resolvedEnvironment["WIRE_REPOSITORY_ROOT"]) });
-    auth = composeAuth(runtime, resolvedEnvironment, extractChromeCookies);
-    const wire = withWireHooks(composeWire({
+    const runtime = Object.freeze({ ...runtimeBase, cookies: createCookiesCapability(filesystem, () => home, () => configuredEnvironment()["WIRE_REPOSITORY_ROOT"]) });
+    auth = composeAuth(runtime, configuredEnvironment(), extractChromeCookies);
+    const baseWire = composeWire({
         home,
         fetchInput: runtime,
         catalog: serviceCatalog,
@@ -96,7 +102,26 @@ export function createExecutableRoot(environment, currentDirectory, options = { 
         watch: createNodeWatch(),
         now: runtime.clock.now,
         open: runtime.openFiles.open,
-    }), { currentDirectory, home, environment: resolvedEnvironment });
+    });
+    const configuredWire = Object.freeze({
+        ...baseWire,
+        attach: async (url, path) => { activeConfigurationPath = path; return baseWire.attach(url, path); },
+        create: async (url, path) => { activeConfigurationPath = path; return baseWire.create(url, path); },
+        view: async (url) => { activeConfigurationPath = currentDirectory; return baseWire.view(url); },
+        downloadSource: async (url, path) => { activeConfigurationPath = path; return baseWire.downloadSource(url, path); },
+        sync: async (value, path) => { activeConfigurationPath = operationPath(value, path); return baseWire.sync(value, path); },
+        download: async (value, path) => { activeConfigurationPath = operationPath(value, path); return baseWire.download(value, path); },
+        detach: async (value, path) => { activeConfigurationPath = operationPath(value, path); return baseWire.detach(value, path); },
+        unlink: async (value, path) => { activeConfigurationPath = operationPath(value, path); return baseWire.unlink(value, path); },
+        watch: async (value, path) => { activeConfigurationPath = operationPath(value, path); return baseWire.watch(value, path); },
+        openResource: async (value, path) => { activeConfigurationPath = operationPath(value, path); return baseWire.openResource(value, path); },
+        syncAll: async (path) => { activeConfigurationPath = path; return baseWire.syncAll(path); },
+        listResources: async (path) => { activeConfigurationPath = path; return baseWire.listResources(path); },
+        showResource: async (value, path) => { activeConfigurationPath = operationPath(value, path); return baseWire.showResource(value, path); },
+        init: baseWire.init,
+        switchBackend: baseWire.switchBackend,
+    });
+    const wire = withWireHooks(configuredWire, { currentDirectory, home, environment: configuredEnvironment() });
     return createRoot(wire, currentDirectory, auth, readStandardInput, options);
 }
 //# sourceMappingURL=executable.js.map

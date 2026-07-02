@@ -78,6 +78,9 @@ function htmlText(html) {
     return values.join("\n");
 }
 export function gmailMessageBody(payload) {
+    if (payload.body?.attachmentId !== undefined) {
+        return "";
+    }
     if (payload.mimeType === "text/plain") {
         return decodeBase64Url(payload.body.data);
     }
@@ -90,6 +93,7 @@ export function gmailMessageBody(payload) {
     return payload.parts
         .filter((part) => part.mimeType !== "application/octet-stream")
         .map(gmailMessageBody)
+        .filter((value) => value !== "")
         .join("\n");
 }
 export function formatAsanaTask(task, stories) {

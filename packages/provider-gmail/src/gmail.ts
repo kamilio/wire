@@ -25,6 +25,7 @@ function attachmentLine(payload: JsonObject): string {
 
 function body(payload: JsonObject): string {
   const mimeType = payload["mimeType"] as string;
+  if (payload["body"] !== undefined && (payload["body"] as JsonObject)["attachmentId"] !== undefined) return attachmentLine(payload);
   if (mimeType === "text/plain") return decode((payload["body"] as JsonObject)["data"] as string);
   if (mimeType === "text/html") return htmlText(decode((payload["body"] as JsonObject)["data"] as string));
   if (payload["parts"] === undefined) return attachmentLine(payload);

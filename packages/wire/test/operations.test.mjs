@@ -159,7 +159,7 @@ for (const backend of ["sqlite", "files"]) {
     ]);
     assert.deepEqual(second.resource.relationships, []);
     assert.deepEqual(second.resource.data, [
-      { namespace: "notion", key: "snapshot", value: { revision: 2 } },
+      { namespace: "notion", key: "snapshot", value: { revision: 2, markdown: "# Revision 2\n" } },
       { namespace: "wire", key: "synced_at", value: "2026-06-10T12:00:00.000Z" },
       { namespace: "wire", key: "title", value: "Renamed" },
     ]);
@@ -186,6 +186,27 @@ test("downloadSource writes Markdown without creating a registry entry", async (
   assert.equal(await readFile(result.path, "utf8"), "# Downloaded\n");
   assert.deepEqual(result.summary, { action: "downloaded", added: 1, modified: 0, removed: 0, remote: "https://notion.test/page", local: result.path });
   assert.deepEqual(await (await openWireRegistry(project, project)).listResources(), []);
+});
+
+test("downloadSource preserves tracked local files and snapshots", async () => {
+  const project = join(testRoot, "download-source-tracked-collision");
+  await mkdir(project);
+  await initializeWire(project, "sqlite", "registry.sqlite3");
+  let revision = 0;
+  const wire = createWire(project, async () => {
+    revision += 1;
+    return { title: "Document", markdown: `# Revision ${revision}\n`, data: { revision } };
+  });
+  const attached = await wire.attach("https://notion.test/page", project);
+  const downloaded = await wire.downloadSource("https://notion.test/page", project);
+  const registry = await openWireRegistry(project, project);
+  const resource = await registry.get(attached.resource.id);
+
+  assert.equal(attached.path, join(project, "document.md"));
+  assert.equal(downloaded.path, join(project, "document-notion-page.md"));
+  assert.equal(await readFile(attached.path, "utf8"), "# Revision 1\n");
+  assert.equal(await readFile(downloaded.path, "utf8"), "# Revision 2\n");
+  assert.deepEqual(resource.data.find((item) => item.namespace === "notion" && item.key === "snapshot").value, { revision: 1, markdown: "# Revision 1\n" });
 });
 
 test("registered-resource operations require an initialized workspace without creating one", async () => {
@@ -338,10 +359,10 @@ test("sync passes stored snapshot and edited Markdown into service synchronizati
   const created = await wire.attach("https://sync.test/project", project);
   await writeFile(created.path, "# Local edit\n");
   const synced = await wire.sync(created.path, project);
-  assert.deepEqual(calls, [{ url: "https://sync.test/project", source: { service: "sync", identifier: "project", type: "project" }, base: { revision: 1 }, markdown: "# Local edit\n", markdownPath: created.path }]);
+  assert.deepEqual(calls, [{ url: "https://sync.test/project", source: { service: "sync", identifier: "project", type: "project" }, base: { revision: 1, markdown: "# Remote\n" }, markdown: "# Local edit\n", markdownPath: created.path }]);
   assert.equal(await readFile(created.path, "utf8"), "# Merged\n");
-  assert.deepEqual(synced.resource.data.find((item) => item.namespace === "sync" && item.key === "snapshot").value, { revision: 2 });
-  assert.deepEqual(synced.summary, { action: "downloaded", added: 0, modified: 1, removed: 0, remote: "https://sync.test/project", local: created.path });
+  assert.deepEqual(synced.resource.data.find((item) => item.namespace === "sync" && item.key === "snapshot").value, { revision: 2, markdown: "# Merged\n" });
+  assert.deepEqual(synced.summary, { action: "uploaded", added: 0, modified: 1, removed: 0, remote: "https://sync.test/project", local: created.path });
 });
 
 test("sync rejects local edits for download-only providers", async () => {
@@ -363,7 +384,7 @@ test("sync summary counts same-line replacements as modified", async () => {
   const created = await wire.attach("https://sync.test/project", project);
   await writeFile(created.path, "| id | old |\n");
   const synced = await wire.sync(created.path, project);
-  assert.deepEqual(synced.summary, { action: "downloaded", added: 0, modified: 1, removed: 0, remote: "https://sync.test/project", local: created.path });
+  assert.deepEqual(synced.summary, { action: "uploaded", added: 0, modified: 1, removed: 0, remote: "https://sync.test/project", local: created.path });
 });
 
 test("sync marks registered snapshot edits as uploaded and summarizes the base-to-upload diff", async () => {
@@ -584,7 +605,7 @@ test("sync conflict leaves edited Markdown and stored snapshot unchanged", async
   await assert.rejects(() => wire.sync(created.path, project), /Conflicting edits/);
   assert.equal(await readFile(created.path, "utf8"), "# Local edit\n");
   const stored = await wire.showResource(created.path, project);
-  assert.deepEqual(stored.data.find((item) => item.namespace === "sync" && item.key === "snapshot").value, { revision: 1 });
+  assert.deepEqual(stored.data.find((item) => item.namespace === "sync" && item.key === "snapshot").value, { revision: 1, markdown: "# Remote\n" });
 });
 
 test("sync-all invokes service synchronization for every registered resource", async () => {
@@ -678,7 +699,7 @@ test("watch two-way syncs debounced file changes and polls", async () => {
   await writeFile(created.path, "# Local edit\n");
   await harness.triggerFile(created.path);
   await waitUntil(() => calls.length === 1);
-  assert.deepEqual(calls[0], { base: { revision: 1 }, markdown: "# Local edit\n", markdownPath: created.path });
+  assert.deepEqual(calls[0], { base: { revision: 1, markdown: "# Remote\n" }, markdown: "# Local edit\n", markdownPath: created.path });
   await waitUntil(async () => await readFile(created.path, "utf8") === "# Merged 1\n");
   await harness.triggerFile(created.path);
   await new Promise((resolveWait) => setTimeout(resolveWait, 20));

@@ -175,6 +175,35 @@ printf "%s\\n%s" "$WIRE_COMMAND" "$WIRE_RESULT_COUNT" > post-command.txt
   assert.equal(await readFile(join(project, "post-command.txt"), "utf8"), "download\n1");
 });
 
+test("downloadSource without a workspace skips hooks and writes markdown", async () => {
+  const project = join(testRoot, "download-source-no-workspace");
+  await mkdir(project, { recursive: true });
+
+  const result = await createWire(project).downloadSource("https://notion.test/page", project);
+
+  assert.equal(result.path, join(project, "first.md"));
+  assert.equal(await readFile(result.path, "utf8"), "# First\n");
+  await assert.rejects(() => access(join(project, ".wire")));
+});
+
+test("post-resource hooks do not register moved untracked downloads", async () => {
+  const project = join(testRoot, "download-source-moved-untracked");
+  await mkdir(project, { recursive: true });
+  await initializeWire(project, "sqlite", "registry.sqlite3");
+  await writeExecutable(join(project, ".wire/hooks/post-resource"), `#!/bin/sh
+set -eu
+mkdir -p downloads
+mv "$WIRE_PATH" downloads/first.md
+echo "WIRE_PATH=downloads/first.md"
+`);
+
+  const result = await createWire(project).downloadSource("https://notion.test/page", project);
+
+  assert.equal(result.path, join(project, "downloads/first.md"));
+  assert.equal(await readFile(result.path, "utf8"), "# First\n");
+  assert.deepEqual(await (await openWireRegistry(project, project)).listResources(), []);
+});
+
 test("watch download polling runs post-resource and post-command hooks", async () => {
   const project = join(testRoot, "watch-download-hooks");
   await mkdir(project, { recursive: true });

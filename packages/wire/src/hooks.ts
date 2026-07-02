@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import type { Resource, Wire, WireResult } from "wire-core";
-import { configuredWireRoot, openWireRegistry, wireRelativePath } from "wire-core";
+import { configuredWireRoot, loadWireConfig, openWireRegistry, wireRelativePath } from "wire-core";
 import type { WireWatchSyncHook } from "wire-core/internal/operations";
 import { wireWatchHooks } from "wire-core/internal/operations";
 
@@ -118,8 +118,16 @@ async function updateMovedResult(options: WireHookOptions, wireRoot: string, res
       { ...primary, path: relativePath },
     ],
   };
-  if (result.summary.action !== "detached") await (await openWireRegistry(wireRoot, options.home)).put(resource);
+  if (result.summary.action !== "detached") {
+    const registry = await openWireRegistry(wireRoot, options.home);
+    if ((await registry.listResources()).some((item) => item.id === result.resource.id)) await registry.put(resource);
+  }
   return { ...result, resource, path: outputPath, summary: { ...result.summary, local: outputPath } };
+}
+
+async function hookEnvironment(options: WireHookOptions, wireRoot: string): Promise<Record<string, string>> {
+  const config = await loadWireConfig(wireRoot);
+  return stringEnvironment({ ...options.environment, ...config.env });
 }
 
 async function runHookCommands(wireRoot: string, event: WireHookEvent, environment: Readonly<Record<string, string>>): Promise<Record<string, string>> {
@@ -132,10 +140,11 @@ async function runHookCommands(wireRoot: string, event: WireHookEvent, environme
 }
 
 async function runResourceHooks(options: WireHookOptions, command: string, result: WireResult): Promise<HookState> {
-  const wireRoot = (await configuredWireRoot(result.path, options.home))!;
+  const wireRoot = await configuredWireRoot(result.path, options.home);
+  if (wireRoot === null) return { result, environment: {} };
   let currentResult = result;
   let environment = {
-    ...stringEnvironment(options.environment),
+    ...await hookEnvironment(options, wireRoot),
     ...resourceEnvironment(command, options.currentDirectory, wireRoot, currentResult),
   };
   for (const path of await hookCommandPaths(wireRoot, "post-resource")) {
@@ -152,9 +161,10 @@ async function runResourceHooks(options: WireHookOptions, command: string, resul
 }
 
 async function runSummaryHooks(options: WireHookOptions, event: WireHookEvent, command: string, rootPath: string, results: readonly WireResult[], environment: Readonly<Record<string, string>>): Promise<Record<string, string>> {
-  const wireRoot = (await configuredWireRoot(rootPath, options.home))!;
+  const wireRoot = await configuredWireRoot(rootPath, options.home);
+  if (wireRoot === null) return {};
   return runHookCommands(wireRoot, event, {
-    ...stringEnvironment(options.environment),
+    ...await hookEnvironment(options, wireRoot),
     ...environment,
     ...summaryEnvironment(event, command, options.currentDirectory, wireRoot, results),
   });

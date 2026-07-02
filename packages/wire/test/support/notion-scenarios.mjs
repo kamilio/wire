@@ -108,12 +108,13 @@ export function assertDiffScenario(scenario) {
 export async function assertSyncScenario(scenario) {
   const remote = notionTreeFromMarkdown(bodyMarkdown(scenario.remote), scenario.remote.split("\n")[0].replace(/^# /, ""));
   const { runtime, submitted } = createNotionScenarioRuntime(remote);
+  const source = { service: "notion", identifier: "34e199a9a61f8012acf4f79101bae370", type: "document" };
   if (scenario.throws === true) {
-    await assert.rejects(synchronizeNotionDocument(runtime, "https://app.notion.com/p/quora/Test-page-34e199a9a61f8012acf4f79101bae370", { markdown: scenario.base }, scenario.local, "/workspace/page.md"));
+    await assert.rejects(synchronizeNotionDocument(runtime, "https://app.notion.com/p/quora/Test-page-34e199a9a61f8012acf4f79101bae370", source, { markdown: scenario.base }, scenario.local, "/workspace/page.md"));
     assert.equal(submitted.length, 0);
     return;
   }
-  const result = await synchronizeNotionDocument(runtime, "https://app.notion.com/p/quora/Test-page-34e199a9a61f8012acf4f79101bae370", { markdown: scenario.base }, scenario.local, "/workspace/page.md");
+  const result = await synchronizeNotionDocument(runtime, "https://app.notion.com/p/quora/Test-page-34e199a9a61f8012acf4f79101bae370", source, { markdown: scenario.base }, scenario.local, "/workspace/page.md");
   assert.equal(result.markdown, scenario.expectedMarkdown);
   assert.equal(submitted.length, scenario.writes);
 }

@@ -3,7 +3,7 @@ import { existsSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { configuredWireRoot, openWireRegistry, wireRelativePath } from "wire-core";
+import { configuredWireRoot, loadWireConfig, openWireRegistry, wireRelativePath } from "wire-core";
 import { wireWatchHooks } from "wire-core/internal/operations";
 const execFileAsync = promisify(execFile);
 function primaryFilesystemLink(resource) {
@@ -100,9 +100,16 @@ async function updateMovedResult(options, wireRoot, result, movedPath) {
             { ...primary, path: relativePath },
         ],
     };
-    if (result.summary.action !== "detached")
-        await (await openWireRegistry(wireRoot, options.home)).put(resource);
+    if (result.summary.action !== "detached") {
+        const registry = await openWireRegistry(wireRoot, options.home);
+        if ((await registry.listResources()).some((item) => item.id === result.resource.id))
+            await registry.put(resource);
+    }
     return { ...result, resource, path: outputPath, summary: { ...result.summary, local: outputPath } };
+}
+async function hookEnvironment(options, wireRoot) {
+    const config = await loadWireConfig(wireRoot);
+    return stringEnvironment({ ...options.environment, ...config.env });
 }
 async function runHookCommands(wireRoot, event, environment) {
     let current = { ...environment };
@@ -113,10 +120,12 @@ async function runHookCommands(wireRoot, event, environment) {
     return current;
 }
 async function runResourceHooks(options, command, result) {
-    const wireRoot = (await configuredWireRoot(result.path, options.home));
+    const wireRoot = await configuredWireRoot(result.path, options.home);
+    if (wireRoot === null)
+        return { result, environment: {} };
     let currentResult = result;
     let environment = {
-        ...stringEnvironment(options.environment),
+        ...await hookEnvironment(options, wireRoot),
         ...resourceEnvironment(command, options.currentDirectory, wireRoot, currentResult),
     };
     for (const path of await hookCommandPaths(wireRoot, "post-resource")) {
@@ -132,9 +141,11 @@ async function runResourceHooks(options, command, result) {
     return { result: currentResult, environment };
 }
 async function runSummaryHooks(options, event, command, rootPath, results, environment) {
-    const wireRoot = (await configuredWireRoot(rootPath, options.home));
+    const wireRoot = await configuredWireRoot(rootPath, options.home);
+    if (wireRoot === null)
+        return {};
     return runHookCommands(wireRoot, event, {
-        ...stringEnvironment(options.environment),
+        ...await hookEnvironment(options, wireRoot),
         ...environment,
         ...summaryEnvironment(event, command, options.currentDirectory, wireRoot, results),
     });

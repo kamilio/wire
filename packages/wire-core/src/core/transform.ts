@@ -5,7 +5,7 @@ import { parseSourceUrl } from "./source.js";
 export type SlackMessage = Readonly<{ ts: string; text: string }>;
 export type GmailMimePart = Readonly<{
   mimeType: string;
-  body?: Readonly<{ data: string }>;
+  body?: Readonly<{ data: string; attachmentId?: string }>;
   parts?: readonly GmailMimePart[];
 }>;
 export type AsanaTask = Readonly<{
@@ -102,6 +102,9 @@ function htmlText(html: string): string {
 }
 
 export function gmailMessageBody(payload: GmailMimePart): string {
+  if (payload.body?.attachmentId !== undefined) {
+    return "";
+  }
   if (payload.mimeType === "text/plain") {
     return decodeBase64Url(payload.body!.data);
   }
@@ -114,6 +117,7 @@ export function gmailMessageBody(payload: GmailMimePart): string {
   return payload.parts!
     .filter((part) => part.mimeType !== "application/octet-stream")
     .map(gmailMessageBody)
+    .filter((value) => value !== "")
     .join("\n");
 }
 

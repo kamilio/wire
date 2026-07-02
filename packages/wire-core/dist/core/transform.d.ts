@@ -7,6 +7,7 @@ export type GmailMimePart = Readonly<{
     mimeType: string;
     body?: Readonly<{
         data: string;
+        attachmentId?: string;
     }>;
     parts?: readonly GmailMimePart[];
 }>;

@@ -71,6 +71,11 @@ function normalizeMarks(marks: readonly JsonValue[]): JsonValue[] {
   return marks.filter((mark) => Array.isArray(mark) && mark.length > 0 && array(mark)[0] !== "m").map((mark) => clone(mark)).sort((left, right) => compact(left).localeCompare(compact(right)));
 }
 
+function renderMarks(marks: readonly JsonValue[]): JsonValue[] {
+  const priority = new Map<string, number>([["c", 0], ["_", 1], ["h", 2], ["e", 3], ["p", 4], ["u", 5], ["d", 6], ["s", 7], ["i", 8], ["b", 9], ["a", 10]]);
+  return [...marks].sort((left, right) => priority.get(array(left)[0] as string)! - priority.get(array(right)[0] as string)! || compact(left).localeCompare(compact(right)));
+}
+
 function normalizeRichText(value: JsonValue): JsonValue {
   const output: JsonValue[][] = [];
   for (const raw of value as JsonValue[][]) {
@@ -133,6 +138,17 @@ function parseInline(value: string): NotionRichText {
       rest = rest.slice(mentionSpan[0].length);
       continue;
     }
+    if (rest.startsWith("***")) {
+      const end = closingDelimiter(rest, 3, "***");
+      if (end !== -1) {
+        for (const segment of parseInline(rest.slice(3, end))) {
+          const marks = normalizeMarks([...((segment[1] as JsonValue[] | undefined) ?? []), ["b"], ["i"]]);
+          push(segment[0] as string, marks);
+        }
+        rest = rest.slice(end + 3);
+        continue;
+      }
+    }
     if (rest.startsWith("**")) {
       const end = closingDelimiter(rest, 2, "**");
       if (end !== -1) {
@@ -194,7 +210,7 @@ function parseInline(value: string): NotionRichText {
 function renderSegment(content: string, marks: readonly JsonValue[]): string {
   let rendered = marks.some((raw) => (raw as JsonValue[])[0] === "c") ? content : escapeInlineMarkdown(content);
   let link: string | null = null;
-  for (const raw of marks) {
+  for (const raw of renderMarks(marks)) {
     const mark = raw as JsonValue[];
     if (mark[0] === "c") rendered = inlineCode(rendered);
     else if (mark[0] === "s") rendered = `~~${rendered}~~`;
@@ -496,6 +512,18 @@ function tableRowCells(block: NotionBlock, columnOrder?: readonly string[]): Jso
   return Object.fromEntries(columnOrder.map((column, index) => [column, cells[localColumns[index]!]!]));
 }
 
+function tableColumnOrder(remote: JsonObject | undefined, local: NotionBlock): readonly string[] {
+  const localColumns = local.properties["column_ids"] as readonly string[];
+  if (remote === undefined) return localColumns;
+  const remoteColumns = object(remote["format"]!)["table_block_column_order"] as readonly string[];
+  const used = new Set<string>();
+  return localColumns.map((column, index) => {
+    const value = index < remoteColumns.length ? remoteColumns[index]! : used.has(column) ? `column_${index}_${randomUUID().replaceAll("-", "")}` : column;
+    used.add(value);
+    return value;
+  });
+}
+
 function parserBlockToNotionBlock(block: NotionBlock, id: string, parentId: string, parentTable: string, spaceId: string, userId: string, currentTime: number, columnOrder?: readonly string[]): JsonObject {
   const base: Record<string, JsonValue> = { id, type: block.type, space_id: spaceId, parent_id: parentId, parent_table: parentTable, alive: true, created_time: currentTime, created_by_table: "notion_user", created_by_id: userId, last_edited_time: currentTime, last_edited_by_table: "notion_user", last_edited_by_id: userId };
   if (block.properties["notion_opaque"] !== undefined) return { ...object(block.properties["notion_opaque"]!), ...base };
@@ -504,7 +532,7 @@ function parserBlockToNotionBlock(block: NotionBlock, id: string, parentId: stri
   if (block.type === "code") return { ...base, properties: { title: [[block.content]], language: [[block.properties["language"]!]] } };
   if (block.type === "to_do") return { ...base, properties: { title: block.rich_text, checked: [[block.properties["checked"] === true ? "Yes" : "No"]] } };
   if (block.type === "image") return { ...base, properties: { source: [[block.properties["source"]!]], alt_text: [[block.properties["alt_text"]!]], ...(block.properties["caption"] === undefined ? {} : { caption: block.properties["caption"]! }) } };
-  if (block.type === "table") return { ...base, properties: {}, format: { table_block_column_order: block.properties["column_ids"]!, table_block_column_header: block.properties["has_header"]!, table_block_row_header: block.properties["has_row_header"]! } };
+  if (block.type === "table") return { ...base, properties: {}, format: { table_block_column_order: columnOrder ?? block.properties["column_ids"]!, table_block_column_header: block.properties["has_header"]!, table_block_row_header: block.properties["has_row_header"]! } };
   if (block.type === "table_row") return { ...base, properties: tableRowCells(block, columnOrder) };
   if (block.type === "column_list" || block.type === "transclusion_container") return { ...base, properties: {} };
   if (block.type === "column") return { ...base, properties: {}, ...(block.properties["format"] === undefined ? {} : { format: block.properties["format"]! }) };
@@ -551,7 +579,7 @@ function canonicalBlock(value: JsonObject, columnOrder?: readonly string[]): Jso
   if (type === "code") return { type, title: normalizeRichText(object(value["properties"]!)["title"]!), language: object(value["properties"]!)["language"]! };
   if (type === "to_do") return { type, title: normalizeRichText(object(value["properties"]!)["title"]!), checked: object(value["properties"]!)["checked"] ?? [["No"]] };
   if (type === "table") return { type, column_count: (object(value["format"]!)["table_block_column_order"] as JsonValue[]).length };
-  if (type === "table_row") return { type, cells: columnOrder!.map((column) => normalizeRichText(object(value["properties"]!)[column]!)) };
+  if (type === "table_row") return { type, cells: columnOrder!.map((column) => normalizeRichText(object(value["properties"]!)[column] ?? [])) };
   if (type === "image") return { type, source: object(value["properties"]!)["source"]!, alt_text: object(value["properties"]!)["alt_text"]!, caption: object(value["properties"]!)["caption"] ?? null };
   if (["divider", "column_list", "transclusion_container"].includes(type)) return { type };
   if (type === "column") return { type, column_ratio: object(value["format"] ?? {})["column_ratio"] ?? null };
@@ -568,9 +596,10 @@ function canonicalParserBlock(block: NotionBlock, columnOrder?: readonly string[
   if (block.type === "table") return { type: "table", column_count: (block.properties["column_ids"] as JsonValue[]).length };
   if (block.type === "table_row") {
     const cells = tableRowCells(block, columnOrder);
-    return { type: "table_row", cells: columnOrder!.map((column) => normalizeRichText(cells[column]!)) };
+    return { type: "table_row", cells: columnOrder!.map((column) => normalizeRichText(cells[column] ?? [])) };
   }
   if (block.type === "image") return { type: "image", source: [[block.properties["source"]!]], alt_text: [[block.properties["alt_text"]!]], caption: block.properties["caption"] ?? null };
+  if (block.type === "page" || block.type === "equation") return { type: block.type, title: normalizeRichText(block.rich_text) };
   if (block.type === "column") return { type: "column", column_ratio: object(block.properties["format"] ?? {})["column_ratio"] ?? null };
   if (block.type === "column_list" || block.type === "transclusion_container") return { type: block.type };
   return { type: block.type };
@@ -608,7 +637,7 @@ function localTree(blocks: readonly NotionBlock[]): LocalNotionNode[] {
 
 function outputNode(node: LocalNotionNode, remoteNode: NotionTree | undefined, parentId: string, remote: Readonly<{ spaceId: string; userId: string }>, currentTime: number, columnOrder?: readonly string[]): NotionTree {
   const id = remoteNode?.id ?? formatBlockId(randomUUID().replaceAll("-", ""));
-  const block = parserBlockToNotionBlock(node.block, id, parentId, "block", remote.spaceId, remote.userId, currentTime, node.block.type === "table_row" ? columnOrder : undefined);
+  const block = parserBlockToNotionBlock(node.block, id, parentId, "block", remote.spaceId, remote.userId, currentTime, node.block.type === "table" ? tableColumnOrder(remoteNode?.block, node.block) : node.block.type === "table_row" ? columnOrder : undefined);
   const nextColumnOrder = block["type"] === "table" ? object(block["format"]!)["table_block_column_order"] as readonly string[] : columnOrder;
   return { id, block, children: node.children.map((child, index) => outputNode(child, remoteNode?.children[index], id, remote, currentTime, nextColumnOrder)) };
 }
@@ -619,7 +648,8 @@ function emitUpdates(remote: JsonObject, local: NotionBlock, blockId: string, sp
   const localType = local.type === "toggle" ? "text" : local.type;
   const typeChanged = remoteType !== local.type;
   if (typeChanged) operations.push({ pointer: pointer(blockId, spaceId), path: ["type"], command: "set", args: localType });
-  const args = parserBlockToNotionBlock(local, blockId, remote["parent_id"] as string ?? "", "block", spaceId, "", 0, local.type === "table_row" ? columnOrder : undefined);
+  const effectiveColumnOrder = local.type === "table" ? tableColumnOrder(remote, local) : columnOrder;
+  const args = parserBlockToNotionBlock(local, blockId, remote["parent_id"] as string ?? "", "block", spaceId, "", 0, local.type === "table" || local.type === "table_row" ? effectiveColumnOrder : undefined);
   const remoteProperties = object(remote["properties"] ?? {});
   const nextProperties = object(args["properties"] ?? {});
   if (typeChanged) {
@@ -669,10 +699,10 @@ function deleteRemoteSubtreeOperations(node: NotionTree, parentId: string, space
   ];
 }
 
-function diffNotionChildLists(remoteParent: NotionTree, localChildren: readonly LocalNotionNode[], ambient: Readonly<{ spaceId: string; userId: string; currentTime: number }>, summary: { inserted: number; updated: number; deleted: number; moved: number }, columnOrder?: readonly string[]): NotionOperation[] {
+function diffNotionChildLists(remoteParent: NotionTree, localChildren: readonly LocalNotionNode[], ambient: Readonly<{ spaceId: string; userId: string; currentTime: number }>, summary: { inserted: number; updated: number; deleted: number; moved: number }, columnOrder?: readonly string[], localParent?: NotionBlock): NotionOperation[] {
   const operations: NotionOperation[] = [];
   const remoteChildren = [...remoteParent.children];
-  const nextColumnOrder = remoteParent.block["type"] === "table" ? object(remoteParent.block["format"]!)["table_block_column_order"] as readonly string[] : columnOrder;
+  const nextColumnOrder = remoteParent.block["type"] === "table" ? tableColumnOrder(remoteParent.block, localParent!) : columnOrder;
   const remoteHash = (index: number) => notionBlockContentHash(remoteChildren[index]!.block, nextColumnOrder);
   const localHash = (index: number) => notionBlockContentHash(localChildren[index]!.block, nextColumnOrder);
   let remoteIndex = 0;
@@ -682,7 +712,7 @@ function diffNotionChildLists(remoteParent: NotionTree, localChildren: readonly 
     const remoteNode = remoteChildren[remoteIndex]!;
     const localNode = localChildren[localIndex]!;
     if (remoteHash(remoteIndex) === localHash(localIndex)) {
-      operations.push(...diffNotionChildLists(remoteNode, localNode.children, ambient, summary, nextColumnOrder));
+      operations.push(...diffNotionChildLists(remoteNode, localNode.children, ambient, summary, nextColumnOrder, localNode.block));
       previousId = remoteNode.id;
       remoteIndex += 1;
       localIndex += 1;
@@ -714,7 +744,7 @@ function diffNotionChildLists(remoteParent: NotionTree, localChildren: readonly 
     }
     const before = operations.length;
     operations.push(...emitUpdates(remoteNode.block, localNode.block, remoteNode.id, ambient.spaceId, nextColumnOrder));
-    operations.push(...diffNotionChildLists(remoteNode, localNode.children, ambient, summary, nextColumnOrder));
+    operations.push(...diffNotionChildLists(remoteNode, localNode.children, ambient, summary, nextColumnOrder, localNode.block));
     if (operations.length > before) summary.updated += 1;
     previousId = remoteNode.id;
     remoteIndex += 1;
@@ -936,8 +966,7 @@ function splitTitle(markdown: string): Readonly<{ title: string; body: string }>
   return { title: "", body: markdown };
 }
 
-export async function synchronizeNotionDocument(runtime: RuntimeCapabilities, url: string, base: JsonValue, markdown: string, _markdownPath: string): Promise<FetchedDocument> {
-  const source: Source = { service: "notion", identifier: /([a-f0-9]{32})/.exec(url)![1]!, type: "document" };
+export async function synchronizeNotionDocument(runtime: RuntimeCapabilities, url: string, source: Source, base: JsonValue, markdown: string, _markdownPath: string): Promise<FetchedDocument> {
   const remote = await fetchTree(runtime, url, source);
   const baseObject = object(base);
   const mentions = baseUserMentions(baseObject);

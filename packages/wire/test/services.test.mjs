@@ -438,6 +438,14 @@ test("gmail adapter renders non-text MIME leaves as attachments", async () => {
   assert.equal(document.markdown, "# Subject\n\n- Source: https://mail.google.com/mail/u/0/#inbox/thread\n- Thread ID: thread\n\n## A — Today\n\n**To:** B\n\nHello\n- Attachment: image.png (image/png, 1234 bytes)\n");
 });
 
+test("gmail adapter renders text MIME leaves with attachment ids as attachments", async () => {
+  const html = Buffer.from("<p>Hello</p>").toString("base64url");
+  const document = await fetchSource(runtime(async () => response({ messages: [
+    { id: "1", payload: { headers: [{ name: "From", value: "A" }, { name: "To", value: "B" }, { name: "Date", value: "Today" }, { name: "Subject", value: "Subject" }], mimeType: "multipart/mixed", parts: [{ mimeType: "text/html", body: { data: html } }, { filename: "notes.txt", mimeType: "text/plain", body: { attachmentId: "attachment", size: 12 } }] } },
+  ] })), "https://mail.google.com/mail/u/0/#inbox/thread", serviceCatalog);
+  assert.equal(document.markdown, "# Subject\n\n- Source: https://mail.google.com/mail/u/0/#inbox/thread\n- Thread ID: thread\n\n## A — Today\n\n**To:** B\n\nHello\n- Attachment: notes.txt (text/plain, 12 bytes)\n");
+});
+
 test("gmail adapter reports API errors before reading thread messages", async () => {
   await assert.rejects(
     () => fetchSource(runtime(async () => new Response(JSON.stringify({ error: { code: 404, message: "Requested entity was not found." } }), { status: 404, headers: { "content-type": "application/json" } })), "https://mail.google.com/mail/u/0/#inbox/thread", serviceCatalog),

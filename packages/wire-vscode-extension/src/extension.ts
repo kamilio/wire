@@ -1,18 +1,32 @@
 import { execFile } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
 import * as vscode from "vscode";
-import { composeAuth, composeWire, configuredWireRoot, createCookiesCapability, createGoogleTokensCapability, defaultWireBackend, defaultWireRegistryPath, extractChromeCookies, initializeWire, loadWireConfig, openWireRegistry, wireRelativePath, type AuthResult, type AuthService, type RuntimeCapabilities, type WireResult } from "wire-core";
+import { composeAuth, composeWire, configuredWireRoot, createCookiesCapability, createGoogleTokensCapability, defaultWireBackend, defaultWireRegistryPath, extractChromeCookies, initializeWire, loadWireConfig, openWireRegistry, wireRelativePath, withWireHooks, type AuthResult, type AuthService, type RuntimeCapabilities, type WireResult } from "wire-core";
 import { serviceCatalog } from "./service-catalog.js";
 
 const execFileAsync = promisify(execFile);
 const authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
 let wireStatus: vscode.StatusBarItem;
 
-function environment(name: string): string {
-  const value = process.env[name];
+function operationPath(value: string, path: string): string {
+  if (value.startsWith("http://") || value.startsWith("https://")) return path;
+  return isAbsolute(value) ? value : resolve(path, value);
+}
+
+async function commandEnvironment(path: string): Promise<NodeJS.ProcessEnv> {
+  const home = process.env["HOME"];
+  if (home === undefined || home.trim() === "") throw new Error("Missing environment variable: HOME");
+  const wireRoot = await configuredWireRoot(path, home);
+  if (wireRoot === null) return process.env;
+  const config = await loadWireConfig(wireRoot);
+  return { ...process.env, ...config.env };
+}
+
+function environment(values: NodeJS.ProcessEnv, name: string): string {
+  const value = values[name];
   if (value === undefined || value.trim() === "") throw new Error(`Missing environment variable: ${name}`);
   return value;
 }
@@ -21,7 +35,7 @@ function repositoryRoot(): string | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 
-function runtime(): RuntimeCapabilities {
+function runtime(values: NodeJS.ProcessEnv): RuntimeCapabilities {
   const filesystem = {
     exists: async (path: string) => existsSync(path),
     readText: (path: string) => readFile(path, "utf8"),
@@ -45,24 +59,25 @@ function runtime(): RuntimeCapabilities {
     } },
     clock,
     openFiles: { open: async (path: string) => { await vscode.env.openExternal(vscode.Uri.parse(path)); } },
-    configuration: { get: environment },
+    configuration: { get: (name: string) => environment(values, name) },
     secrets: { get: async (reference: string) => { throw new Error(`Missing secret provider for ${reference}`); } },
-    cookies: createCookiesCapability(filesystem, () => environment("HOME"), repositoryRoot),
+    cookies: createCookiesCapability(filesystem, () => environment(values, "HOME"), repositoryRoot),
     gmailTokens: {
-      load: () => createGoogleTokensCapability(filesystem, { request: (input: string | URL | Request, init?: RequestInit) => fetch(input, init) }, clock, environment("GOOGLE_CREDENTIALS_FILE"), environment("GOOGLE_TOKEN_FILE")).load(),
-      refresh: () => createGoogleTokensCapability(filesystem, { request: (input: string | URL | Request, init?: RequestInit) => fetch(input, init) }, clock, environment("GOOGLE_CREDENTIALS_FILE"), environment("GOOGLE_TOKEN_FILE")).refresh()
+      load: () => createGoogleTokensCapability(filesystem, { request: (input: string | URL | Request, init?: RequestInit) => fetch(input, init) }, clock, environment(values, "GOOGLE_CREDENTIALS_FILE"), environment(values, "GOOGLE_TOKEN_FILE")).load(),
+      refresh: () => createGoogleTokensCapability(filesystem, { request: (input: string | URL | Request, init?: RequestInit) => fetch(input, init) }, clock, environment(values, "GOOGLE_CREDENTIALS_FILE"), environment(values, "GOOGLE_TOKEN_FILE")).refresh()
     },
     googleFormsTokens: {
-      load: () => createGoogleTokensCapability(filesystem, { request: (input: string | URL | Request, init?: RequestInit) => fetch(input, init) }, clock, environment("GOOGLE_CREDENTIALS_FILE"), environment("GOOGLE_FORMS_TOKEN_FILE")).load(),
-      refresh: () => createGoogleTokensCapability(filesystem, { request: (input: string | URL | Request, init?: RequestInit) => fetch(input, init) }, clock, environment("GOOGLE_CREDENTIALS_FILE"), environment("GOOGLE_FORMS_TOKEN_FILE")).refresh()
+      load: () => createGoogleTokensCapability(filesystem, { request: (input: string | URL | Request, init?: RequestInit) => fetch(input, init) }, clock, environment(values, "GOOGLE_CREDENTIALS_FILE"), environment(values, "GOOGLE_FORMS_TOKEN_FILE")).load(),
+      refresh: () => createGoogleTokensCapability(filesystem, { request: (input: string | URL | Request, init?: RequestInit) => fetch(input, init) }, clock, environment(values, "GOOGLE_CREDENTIALS_FILE"), environment(values, "GOOGLE_FORMS_TOKEN_FILE")).refresh()
     }
   };
 }
 
-function wire() {
-  const capabilities = runtime();
-  return composeWire({
-    home: environment("HOME"),
+async function wire(path: string) {
+  const values = await commandEnvironment(path);
+  const capabilities = runtime(values);
+  const baseWire = composeWire({
+    home: environment(values, "HOME"),
     fetchInput: capabilities,
     catalog: serviceCatalog,
     filesystem: {
@@ -82,10 +97,12 @@ function wire() {
     now: capabilities.clock.now,
     open: capabilities.openFiles.open
   });
+  return withWireHooks(baseWire, { currentDirectory: projectDirectory(), home: environment(values, "HOME"), environment: values });
 }
 
-function auth() {
-  return composeAuth(runtime(), process.env, extractChromeCookies);
+async function auth() {
+  const values = await commandEnvironment(projectDirectory());
+  return composeAuth(runtime(values), values, extractChromeCookies);
 }
 
 function setWireStatus(message: string): void {
@@ -108,8 +125,6 @@ type WireDisplayError = Readonly<{ message: string; command?: string }>;
 
 function wireError(error: unknown): WireDisplayError | null {
   if (!(error instanceof Error)) return null;
-  const login = /Run `([^`]+)`/.exec(error.message);
-  if (login !== null) return { message: `Wire - Login required. Run in terminal: ${login[1]!}`, command: login[1]! };
   const missingGoogle = /^Missing environment variable: (GOOGLE_CREDENTIALS_FILE|GOOGLE_TOKEN_FILE|GOOGLE_FORMS_TOKEN_FILE)$/.exec(error.message);
   if (missingGoogle !== null) return { message: "Wire - Google login required. Run in terminal: wire google-docs login", command: "wire google-docs login" };
   const unregisteredPath = /^Resource path is not registered: ([\s\S]+)$/.exec(error.message);
@@ -120,6 +135,8 @@ function wireError(error: unknown): WireDisplayError | null {
   if (missingWorkspace !== null) return { message: "Wire - Workspace is not initialized. Use Wire - Attach to start tracking a source URL." };
   const unsupportedSource = /^Unsupported source URL: ([\s\S]+)$/.exec(error.message);
   if (unsupportedSource !== null) return { message: `Wire - Unsupported source URL: ${unsupportedSource[1]}. Supported sources: Asana, ChatGPT, Gmail, Google Docs/Sheets/Slides/Forms, Notion, Slack, Zoom.` };
+  const login = /authentication (?:is missing or expired|is missing|failed|expired).*Run `([^`]+)`/i.exec(error.message);
+  if (login !== null) return { message: `Wire - Login required. Run in terminal: ${login[1]!}`, command: login[1]! };
   return null;
 }
 
@@ -210,14 +227,15 @@ async function attachHere(uri: vscode.Uri | undefined): Promise<void> {
   const directory = selectedDirectory(uri);
   const url = await vscode.window.showInputBox({ prompt: "Source URL" });
   if (url === undefined || url.trim() === "") throw new Error("Source URL required");
-  const result = await wireProgress("Attaching", () => wire().attach(url, directory));
+  const result = await wireProgress("Attaching", async () => (await wire(directory)).attach(url, directory));
   await vscode.window.showTextDocument(vscode.Uri.file(result.path));
   await showWireResultStatus(result);
 }
 
 async function initProject(): Promise<void> {
   const directory = projectDirectory();
-  const existingRoot = await configuredWireRoot(directory, environment("HOME"));
+  const values = await commandEnvironment(directory);
+  const existingRoot = await configuredWireRoot(directory, environment(values, "HOME"));
   if (existingRoot !== null) {
     const config = await loadWireConfig(existingRoot);
     showWireStatus(`Wire - Project ready: ${config.backend}`);
@@ -231,7 +249,7 @@ async function downloadHere(uri: vscode.Uri | undefined): Promise<void> {
   const directory = selectedDirectory(uri);
   const url = await vscode.window.showInputBox({ prompt: "Source URL" });
   if (url === undefined || url.trim() === "") throw new Error("Source URL required");
-  const result = await wireProgress("Downloading", () => wire().downloadSource(url, directory));
+  const result = await wireProgress("Downloading", async () => (await wire(directory)).downloadSource(url, directory));
   await vscode.window.showTextDocument(vscode.Uri.file(result.path));
   await showWireResultStatus(result);
 }
@@ -239,7 +257,7 @@ async function downloadHere(uri: vscode.Uri | undefined): Promise<void> {
 async function previewUrl(): Promise<void> {
   const url = await vscode.window.showInputBox({ prompt: "Source URL" });
   if (url === undefined || url.trim() === "") throw new Error("Source URL required");
-  const result = await wireProgress("Previewing", () => wire().view(url));
+  const result = await wireProgress("Previewing", async () => (await wire(projectDirectory())).view(url));
   const document = await vscode.workspace.openTextDocument({ language: "markdown", content: result.markdown });
   await vscode.window.showTextDocument(document);
   showWireStatus(`Wire - Previewed: ${result.title}`);
@@ -248,26 +266,26 @@ async function previewUrl(): Promise<void> {
 async function syncFile(uri: vscode.Uri | undefined): Promise<void> {
   const path = resourceFile(uri);
   await saveDocument(path);
-  const result = await wireProgress("Syncing", () => wire().sync(path, dirname(path)));
+  const result = await wireProgress("Syncing", async () => (await wire(operationPath(path, dirname(path)))).sync(path, dirname(path)));
   await showWireResultStatus(result);
 }
 
 async function detachFile(uri: vscode.Uri | undefined): Promise<void> {
   const path = resourceFile(uri);
-  const result = await wireProgress("Detaching", () => wire().detach(path, dirname(path)));
+  const result = await wireProgress("Detaching", async () => (await wire(operationPath(path, dirname(path)))).detach(path, dirname(path)));
   await showWireResultStatus(result);
 }
 
 async function openResource(uri: vscode.Uri | undefined): Promise<void> {
   const path = resourceFile(uri);
-  const resource = await wireProgress("Opening", () => wire().openResource(path, dirname(path)));
+  const resource = await wireProgress("Opening", async () => (await wire(operationPath(path, dirname(path)))).openResource(path, dirname(path)));
   showWireStatus(`Wire - Opened: ${title(resource)}`);
 }
 
 async function syncDirectory(uri: vscode.Uri | undefined): Promise<void> {
   const directory = selectedDirectory(uri);
   await saveDirtyDocumentsInDirectory(directory);
-  const results = await wireProgress("Syncing all", () => wire().syncAll(directory));
+  const results = await wireProgress("Syncing all", async () => (await wire(directory)).syncAll(directory));
   const failures = results.filter((result) => result.summary.action === "failed");
   const synced = results.length - failures.length;
   if (failures.length === 0) {
@@ -289,13 +307,13 @@ async function selectedAuthService(): Promise<AuthService> {
 
 async function authStatus(): Promise<void> {
   const service = await selectedAuthService();
-  const result = await wireProgress("Checking login", () => auth().status(service));
+  const result = await wireProgress("Checking login", async () => (await auth()).status(service));
   showWireStatus(`Wire - Authenticated: ${identityText(result)}`);
 }
 
 async function authLogin(): Promise<void> {
   const service = await selectedAuthService();
-  const authClient = auth();
+  const authClient = await auth();
   const actions = {
     asana: authClient.extractAsana,
     chatgpt: authClient.extractChatgpt,
@@ -311,7 +329,7 @@ async function authLogin(): Promise<void> {
 
 async function authLogout(): Promise<void> {
   const service = await selectedAuthService();
-  await wireProgress("Logging out", () => auth().logout(service));
+	  await wireProgress("Logging out", async () => (await auth()).logout(service));
   showWireStatus(`Wire - Logged out: ${service}`);
 }
 

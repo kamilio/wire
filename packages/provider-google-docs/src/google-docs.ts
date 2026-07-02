@@ -556,7 +556,7 @@ function docMarkdownEqual(left: string, right: string): boolean {
   return comparableDocMarkdown(left) === comparableDocMarkdown(right);
 }
 
-type TextEdit = Readonly<{ base: string; local: string; before: string; after: string; localAfter: string }>;
+type TextEdit = Readonly<{ base: string; local: string; before: string; localBefore: string; after: string; localAfter: string }>;
 type MarkdownSpan = Readonly<{ start: number; end: number }>;
 
 function textEdit(base: string, local: string): TextEdit {
@@ -566,25 +566,28 @@ function textEdit(base: string, local: string): TextEdit {
     for (let baseEnd = start; baseEnd <= Math.min(base.length - window, start + 2000); baseEnd += 1) {
       const anchor = base.slice(baseEnd, baseEnd + window);
       const localEnd = local.indexOf(anchor, start);
-      if (localEnd !== -1 && localEnd <= start + 2000) return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), after: base.slice(baseEnd), localAfter: local.slice(localEnd) });
+      if (localEnd !== -1 && localEnd <= start + 2000) return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), localBefore: "", after: base.slice(baseEnd), localAfter: local.slice(localEnd) });
     }
   }
   let baseEnd = base.length;
   let localEnd = local.length;
   while (baseEnd > start && localEnd > start && base[baseEnd - 1] === local[localEnd - 1]) { baseEnd -= 1; localEnd -= 1; }
-  return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), after: base.slice(baseEnd), localAfter: local.slice(localEnd) });
+  return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), localBefore: "", after: base.slice(baseEnd), localAfter: local.slice(localEnd) });
 }
 
 function textEdits(base: string, local: string): readonly TextEdit[] {
   const edits: TextEdit[] = [];
   let basePrefix = "";
+  let localPrefix = "";
   let baseRest = base;
   let localRest = local;
   while (baseRest !== localRest) {
     const edit = textEdit(baseRest, localRest);
     const before = `${basePrefix}${edit.before}`;
-    edits.push(Object.freeze({ ...edit, before }));
+    const localBefore = `${localPrefix}${edit.before}`;
+    edits.push(Object.freeze({ ...edit, before, localBefore }));
     basePrefix = base.slice(0, base.length - edit.after.length);
+    localPrefix = local.slice(0, local.length - edit.localAfter.length);
     baseRest = edit.after;
     localRest = edit.localAfter;
   }
@@ -603,8 +606,8 @@ function inlineMarkdownSpans(value: string): readonly MarkdownSpan[] {
   return spans;
 }
 
-function editTouchesMarkdownSpan(edit: TextEdit, value: string, edited: string): boolean {
-  const start = edit.before.length;
+function editTouchesMarkdownSpan(before: string, value: string, edited: string): boolean {
+  const start = before.length;
   const end = start + edited.length;
   return inlineMarkdownSpans(value).some((span) => start === end ? start > span.start && start < span.end : start < span.end && end > span.start);
 }
@@ -678,7 +681,7 @@ function docTextRange(text: string, edit: Readonly<{ base: string; before: strin
 
 async function uploadDocText(runtime: RuntimeCapabilities, documentId: string, key: string | null, tab: string, baseMarkdown: string, localMarkdown: string): Promise<void> {
   const edits = textEdits(baseMarkdown, localMarkdown);
-  if (edits.some((edit) => editTouchesMarkdownSpan(edit, baseMarkdown, edit.base) || editTouchesMarkdownSpan(edit, localMarkdown, edit.local))) throw new Error("Google Docs sync cannot preserve formatting in edited text");
+  if (edits.some((edit) => editTouchesMarkdownSpan(edit.before, baseMarkdown, edit.base) || editTouchesMarkdownSpan(edit.localBefore, localMarkdown, edit.local))) throw new Error("Google Docs sync cannot preserve formatting in edited text");
   const editUrl = docEditUrl(documentId, key, tab);
   const session = docSession(await googleText(runtime, editUrl, "Docs editor"));
   const ranges = edits.map((edit) => ({ edit, range: docTextRange(session.text, edit) })).sort((left, right) => right.range.start - left.range.start);

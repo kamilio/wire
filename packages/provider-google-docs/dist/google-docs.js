@@ -608,7 +608,7 @@ function textEdit(base, local) {
             const anchor = base.slice(baseEnd, baseEnd + window);
             const localEnd = local.indexOf(anchor, start);
             if (localEnd !== -1 && localEnd <= start + 2000)
-                return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), after: base.slice(baseEnd), localAfter: local.slice(localEnd) });
+                return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), localBefore: "", after: base.slice(baseEnd), localAfter: local.slice(localEnd) });
         }
     }
     let baseEnd = base.length;
@@ -617,18 +617,21 @@ function textEdit(base, local) {
         baseEnd -= 1;
         localEnd -= 1;
     }
-    return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), after: base.slice(baseEnd), localAfter: local.slice(localEnd) });
+    return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), localBefore: "", after: base.slice(baseEnd), localAfter: local.slice(localEnd) });
 }
 function textEdits(base, local) {
     const edits = [];
     let basePrefix = "";
+    let localPrefix = "";
     let baseRest = base;
     let localRest = local;
     while (baseRest !== localRest) {
         const edit = textEdit(baseRest, localRest);
         const before = `${basePrefix}${edit.before}`;
-        edits.push(Object.freeze({ ...edit, before }));
+        const localBefore = `${localPrefix}${edit.before}`;
+        edits.push(Object.freeze({ ...edit, before, localBefore }));
         basePrefix = base.slice(0, base.length - edit.after.length);
+        localPrefix = local.slice(0, local.length - edit.localAfter.length);
         baseRest = edit.after;
         localRest = edit.localAfter;
     }
@@ -645,8 +648,8 @@ function inlineMarkdownSpans(value) {
     }
     return spans;
 }
-function editTouchesMarkdownSpan(edit, value, edited) {
-    const start = edit.before.length;
+function editTouchesMarkdownSpan(before, value, edited) {
+    const start = before.length;
     const end = start + edited.length;
     return inlineMarkdownSpans(value).some((span) => start === end ? start > span.start && start < span.end : start < span.end && end > span.start);
 }
@@ -724,7 +727,7 @@ function docTextRange(text, edit) {
 }
 async function uploadDocText(runtime, documentId, key, tab, baseMarkdown, localMarkdown) {
     const edits = textEdits(baseMarkdown, localMarkdown);
-    if (edits.some((edit) => editTouchesMarkdownSpan(edit, baseMarkdown, edit.base) || editTouchesMarkdownSpan(edit, localMarkdown, edit.local)))
+    if (edits.some((edit) => editTouchesMarkdownSpan(edit.before, baseMarkdown, edit.base) || editTouchesMarkdownSpan(edit.localBefore, localMarkdown, edit.local)))
         throw new Error("Google Docs sync cannot preserve formatting in edited text");
     const editUrl = docEditUrl(documentId, key, tab);
     const session = docSession(await googleText(runtime, editUrl, "Docs editor"));

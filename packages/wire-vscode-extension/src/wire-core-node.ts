@@ -17,3 +17,4 @@ export { composeWire } from "../../../packages/wire-core/src/operations.js";
 export type { Wire, WireAction, WireDependencies, WireFilesystem, WireResult, WireWatchSession } from "../../../packages/wire-core/src/operations.js";
 export { composeAuth } from "../../../packages/wire/src/auth.js";
 export type { Auth, AuthResult, AuthService, CookieAuthService, CookieExtractor } from "../../../packages/wire/src/auth.js";
+export { withWireHooks } from "../../../packages/wire/src/hooks.js";

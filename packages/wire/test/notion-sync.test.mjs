@@ -13,6 +13,7 @@ import {
 } from "../dist/index.js";
 
 let nextId = 1;
+const notionSource = { service: "notion", identifier: "34e199a9a61f8012acf4f79101bae370", type: "document" };
 
 function id() {
   const value = String(nextId).padStart(12, "0");
@@ -255,6 +256,24 @@ test("notion table rows map local positional cells onto remote column ids", () =
   ]);
 });
 
+test("notion table column growth preserves remote column ids", () => {
+  const columns = ["first-random", "second-random"];
+  const remote = { id: "page", block: { type: "page", properties: { title: [["Root"]] }, alive: true }, children: [
+    { id: "table", block: { type: "table", format: { table_block_column_order: columns, table_block_column_header: true, table_block_row_header: false }, alive: true }, children: [
+      { id: "row", block: { type: "table_row", properties: { "first-random": [["A"]], "second-random": [["B"]] }, alive: true }, children: [] },
+    ] },
+  ] };
+  const local = parseNotionMarkdown("| A | B | C |\n| --- | --- | --- |");
+  const diff = diffNotionBlockTrees(remote, local, sidecarBlocksFromNotionTree(remote), { spaceId: "space", userId: "user", currentTime: 1700000000000 });
+  const columnUpdate = diff.operations.find((operation) => operation.pointer.id === "table" && operation.path.join("/") === "format");
+  const cellUpdate = diff.operations.find((operation) => operation.pointer.id === "row" && operation.path[0] === "properties" && operation.path[1] !== "first-random" && operation.path[1] !== "second-random");
+
+  assert.deepEqual(diff.summary, { inserted: 0, updated: 2, deleted: 0, moved: 0 });
+  assert.deepEqual(columnUpdate.args.table_block_column_order.slice(0, 2), ["first-random", "second-random"]);
+  assert.deepEqual(cellUpdate.path, ["properties", columnUpdate.args.table_block_column_order[2]]);
+  assert.deepEqual(cellUpdate.args, [["C"]]);
+});
+
 test("notion links preserve urls containing parentheses", () => {
   const block = { type: "text", properties: { title: [["spec", [["a", "https://example.com/a(b)"]]]] } };
   assert.equal(notionBlockContentHash(block), notionBlockContentHash(parseNotionMarkdown("[spec](https://example.com/a(b))")[0]));
@@ -275,6 +294,18 @@ test("notion linked text preserves nested marks", () => {
     { id: "text", block, children: [] },
   ] });
   const parsed = parseNotionMarkdown(body(markdown))[0];
+  assert.equal(notionBlockContentHash(block), notionBlockContentHash(parsed));
+});
+
+test("notion combined inline marks round-trip through Markdown", () => {
+  const block = { type: "text", properties: { title: [["both", [["b"], ["i"]]], [" "], ["getUser", [["b"], ["c"]]]] } };
+  const markdown = renderNotionTreeToMarkdown({ id: "page", block: { type: "page", properties: { title: [["Root"]] } }, children: [
+    { id: "text", block, children: [] },
+  ] });
+  const parsed = parseNotionMarkdown(body(markdown))[0];
+
+  assert.match(markdown, /\*\*\*both\*\*\*/);
+  assert.match(markdown, /\*\*`getUser`\*\*/);
   assert.equal(notionBlockContentHash(block), notionBlockContentHash(parsed));
 });
 
@@ -344,6 +375,16 @@ test("notion diff operations preserve stable ids for local edits", () => {
   const todoBase = remoteTree("- [ ] task\n");
   const checked = diffNotionBlockTrees(todoBase, parseNotionMarkdown("- [x] task\n"), sidecarBlocksFromNotionTree(todoBase), ambient);
   assert.deepEqual(checked.operations.filter((operation) => operation.path.join("/") === "properties/checked")[0].args, [["Yes"]]);
+});
+
+test("notion diff aligns pages and equations by canonical content near insertions", () => {
+  const ambient = { spaceId: "space", userId: "user", currentTime: 1700000000000 };
+  const base = remoteTree(":::page\nChild page\n:::\n\n:::equation\nE=mc^2\n:::");
+  const local = parseNotionMarkdown("Inserted\n\n:::page\nChild page\n:::\n\n:::equation\nE=mc^2\n:::");
+  const diff = diffNotionBlockTrees(base, local, sidecarBlocksFromNotionTree(base), ambient);
+
+  assert.deepEqual(diff.summary, { inserted: 1, updated: 0, deleted: 0, moved: 0 });
+  assert.equal(diff.operations.some((operation) => [base.children[0].id, base.children[1].id].includes(operation.pointer.id) && operation.path.join("/") === "type"), false);
 });
 
 test("notion diff creates every block in inserted nested subtrees", () => {
@@ -441,7 +482,7 @@ test("notion document synchronization runs in TypeScript without process delegat
     cookies: { load: async () => [{ name: "notion_user_id", value: "user" }, { name: "token_v2", value: "token" }], loadSaved: async () => [{ name: "notion_user_id", value: "user" }, { name: "token_v2", value: "token" }], metadata: async () => ({}), delete: async () => {} },
     gmailTokens: { load: async () => ({}), refresh: async () => ({}) },
   };
-  const result = await synchronizeNotionDocument(runtime, "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", { page_id: page.id, blocks: sidecarBlocksFromNotionTree(page), markdown: "# Old title\n\nOld body" }, "# New title\n\nNew body\n", "/workspace/page.md");
+  const result = await synchronizeNotionDocument(runtime, "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", notionSource, { page_id: page.id, blocks: sidecarBlocksFromNotionTree(page), markdown: "# Old title\n\nOld body" }, "# New title\n\nNew body\n", "/workspace/page.md");
   assert.equal(result.title, "New title");
   assert.equal(result.markdown, "# New title\n\nNew body");
   assert.equal(submitted.length, 1);
@@ -476,7 +517,7 @@ test("notion synchronization uses the fetched page workspace for transactions", 
     clock: { now: () => new Date("2026-06-10T12:00:00.000Z"), timezone: (name) => new Intl.DateTimeFormat("en-US", { timeZone: name }) },
     cookies: { load: async () => [{ name: "notion_user_id", value: "user" }, { name: "token_v2", value: "token" }], loadSaved: async () => [{ name: "notion_user_id", value: "user" }, { name: "token_v2", value: "token" }], metadata: async () => ({}), delete: async () => {} },
   };
-  await synchronizeNotionDocument(runtime, "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", { markdown: "# Old title\n\nOld body" }, "# New title\n\nNew body", "/workspace/page.md");
+  await synchronizeNotionDocument(runtime, "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", notionSource, { markdown: "# Old title\n\nOld body" }, "# New title\n\nNew body", "/workspace/page.md");
   assert.equal(seenHeaders.find((headers) => headers["x-notion-space-id"] === "page-space")["x-notion-space-id"], "page-space");
   assert.equal(submitted[0].spaceId, "page-space");
   assert.equal(submitted[0].operations.every((operation) => operation.pointer.spaceId === "page-space"), true);
@@ -506,7 +547,7 @@ test("notion synchronization preserves remote title when local Markdown omits H1
     clock: { now: () => new Date("2026-06-10T12:00:00.000Z"), timezone: (name) => new Intl.DateTimeFormat("en-US", { timeZone: name }) },
     cookies: { load: async () => [{ name: "notion_user_id", value: "user" }, { name: "token_v2", value: "token" }], loadSaved: async () => [{ name: "notion_user_id", value: "user" }, { name: "token_v2", value: "token" }], metadata: async () => ({}), delete: async () => {} },
   };
-  const result = await synchronizeNotionDocument(runtime, "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", { page_id: page.id, blocks: sidecarBlocksFromNotionTree(page), markdown: "# Remote title\n\nOld body" }, "New body\n", "/workspace/page.md");
+  const result = await synchronizeNotionDocument(runtime, "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", notionSource, { page_id: page.id, blocks: sidecarBlocksFromNotionTree(page), markdown: "# Remote title\n\nOld body" }, "New body\n", "/workspace/page.md");
   assert.equal(result.title, "Remote title");
   assert.equal(result.markdown, "# Remote title\n\nNew body");
   assert.equal(submitted.length, 1);
@@ -517,7 +558,7 @@ test("notion synchronization preserves remote title when local Markdown omits H1
 test("notion synchronization merges remote title with local body edits", async () => {
   const page = remoteTree("Old body\n", "Remote title");
   const submitted = [];
-  const result = await synchronizeNotionDocument(notionRuntime(page, submitted), "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", { markdown: "# Old title\n\nOld body" }, "# Old title\n\nNew body", "/workspace/page.md");
+  const result = await synchronizeNotionDocument(notionRuntime(page, submitted), "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", notionSource, { markdown: "# Old title\n\nOld body" }, "# Old title\n\nNew body", "/workspace/page.md");
   assert.equal(result.title, "Remote title");
   assert.equal(result.markdown, "# Remote title\n\nNew body");
   assert.equal(submitted.length, 1);
@@ -528,7 +569,7 @@ test("notion synchronization merges remote title with local body edits", async (
 test("notion synchronization merges local title with remote body edits", async () => {
   const page = remoteTree("Remote body\n", "Old title");
   const submitted = [];
-  const result = await synchronizeNotionDocument(notionRuntime(page, submitted), "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", { markdown: "# Old title\n\nOld body" }, "# Local title\n\nOld body", "/workspace/page.md");
+  const result = await synchronizeNotionDocument(notionRuntime(page, submitted), "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", notionSource, { markdown: "# Old title\n\nOld body" }, "# Local title\n\nOld body", "/workspace/page.md");
   assert.equal(result.title, "Local title");
   assert.equal(result.markdown, "# Local title\n\nRemote body");
   assert.equal(submitted.length, 1);
@@ -542,6 +583,7 @@ test("notion synchronization hydrates stored user mention handles", async () => 
   const result = await synchronizeNotionDocument(
     notionRuntime(page, submitted),
     "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370",
+    notionSource,
     { markdown: "# Root\n\n- **Owner** @owner", user_mentions: { "user-id": "owner" } },
     "# Root\n\n- **Owner** @owner",
     "/workspace/page.md",
@@ -588,7 +630,7 @@ test("notion synchronization updates title without parsing unchanged opaque body
     gmailTokens: { load: async () => ({}), refresh: async () => ({}) },
   };
   const baseDocument = await fetchNotionDocument(runtime, "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", { service: "notion", identifier: pageId, type: "document" });
-  const result = await synchronizeNotionDocument(runtime, "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", { markdown: baseDocument.markdown }, baseDocument.markdown.replace("# Old", "# New"), "/workspace/page.md");
+  const result = await synchronizeNotionDocument(runtime, "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", notionSource, { markdown: baseDocument.markdown }, baseDocument.markdown.replace("# Old", "# New"), "/workspace/page.md");
   assert.equal(result.title, "New");
   assert.equal(result.markdown.includes(":::notion-opaque"), true);
   assert.equal(submitted.length, 1);

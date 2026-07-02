@@ -6,7 +6,7 @@ export const notionService = defineService({
     matches: (url) => (url.hostname === "www.notion.so" || url.hostname === "notion.so" || url.hostname === "app.notion.com" || url.hostname.endsWith(".notion.site")) && notionPageId.test(url.href),
     parse: (url) => Object.freeze({ service: "notion", identifier: notionPageId.exec(url.href)[0].replaceAll("-", "").toLowerCase(), type: "document" }),
     fetch: fetchNotionDocument,
-    synchronize: (runtime, url, _source, base, markdown, markdownPath) => synchronizeNotionDocument(runtime, url, base, markdown, markdownPath),
+    synchronize: (runtime, url, source, base, markdown, markdownPath) => synchronizeNotionDocument(runtime, url, source, base, markdown, markdownPath),
     upload: uploadNotionDocument,
 });
 //# sourceMappingURL=notion.js.map

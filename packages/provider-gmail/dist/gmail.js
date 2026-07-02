@@ -17,6 +17,8 @@ function attachmentLine(payload) {
 }
 function body(payload) {
     const mimeType = payload["mimeType"];
+    if (payload["body"] !== undefined && payload["body"]["attachmentId"] !== undefined)
+        return attachmentLine(payload);
     if (mimeType === "text/plain")
         return decode(payload["body"]["data"]);
     if (mimeType === "text/html")
