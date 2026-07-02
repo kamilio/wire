@@ -17,11 +17,12 @@ Requires Node 20+.
 ## Quick Start
 
 ```sh
-wire init                                  # initialize a workspace
 wire notion login                          # authenticate a service once
 wire https://www.notion.so/example/page    # attach a URL as tracked Markdown
 wire sync-all                              # refresh everything, push local edits back
 ```
+
+Tracking lives in `~/.wire` by default. Run `wire init` inside a project to track its resources locally in `.wire/` instead.
 
 ## Providers
 
@@ -31,7 +32,7 @@ wire sync-all                              # refresh everything, push local edit
 | Google Docs | Documents | Two-way |
 | Google Sheets | Spreadsheets | Two-way |
 | Google Slides | Presentations | One-way |
-| Google Forms | Forms | Two-way |
+| Google Forms | Forms and responses | One-way |
 | Asana | Projects | Two-way |
 | Asana | Tasks | One-way |
 | Slack | Messages and threads | One-way |
