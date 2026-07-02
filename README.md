@@ -1,83 +1,88 @@
 # Wire
 
-Wire syncs web resources into local Markdown files.
+[![npm](https://img.shields.io/npm/v/%40kamilio%2Fwire)](https://www.npmjs.com/package/@kamilio/wire)
 
-Use it when important working context lives in tools like Notion, Google Docs, Gmail, Slack, Asana, ChatGPT, or Zoom, but your codebase and agents need that context as normal files.
+Sync Notion, Google Docs, Slack, Gmail, Asana, ChatGPT, and Zoom into local Markdown.
 
-## Use Cases
+Wire turns web resources into files your editor, repo, and coding agents can use. Attach a URL once, edit it as Markdown, and sync — pulling remote changes down and pushing supported local edits back.
 
-- Commit notes, specs, meeting docs, and project plans into the codebase.
-- Give coding agents access to live product docs, task context, and decisions without copy-paste.
-- Attach local Markdown to the original source so updates can be pulled again later.
-- Edit supported Markdown files locally and sync changes back to the source.
-- Run local automation after syncs, such as moving files, indexing docs, or notifying another tool.
-
-## Basic Flow
-
-Initialize a workspace:
+## Install
 
 ```sh
-wire init
+npm install -g @kamilio/wire
 ```
 
-Attach a source URL as Markdown:
+Requires Node 20+.
+
+## Quick Start
 
 ```sh
-wire https://www.notion.so/example/page
+wire init                                  # initialize a workspace
+wire notion login                          # authenticate a service once
+wire https://www.notion.so/example/page    # attach a URL as tracked Markdown
+wire sync-all                              # refresh everything, push local edits back
 ```
 
-Download a source URL once without tracking it:
+## Providers
+
+| Provider | Resources | Sync |
+| --- | --- | --- |
+| Notion | Pages | Two-way |
+| Google Docs | Documents | Two-way |
+| Google Sheets | Spreadsheets | Two-way |
+| Google Slides | Presentations | One-way |
+| Google Forms | Forms | Two-way |
+| Asana | Projects | Two-way |
+| Asana | Tasks | One-way |
+| Slack | Messages and threads | One-way |
+| Gmail | Email threads | One-way |
+| ChatGPT | Conversations | One-way |
+| Zoom | Docs and meeting transcripts | One-way |
+
+Two-way syncs pull remote changes and push local Markdown edits back to the source. One-way syncs only refresh the local file.
+
+Each service authenticates separately with `wire <service> login`, `wire <service> status`, and `wire <service> logout`.
+
+## Commands
 
 ```sh
-wire download https://www.notion.so/example/page
+wire <url>               # attach a URL as tracked Markdown
+wire preview <url>       # inspect a resource without writing files
+wire download <url>      # save Markdown once without tracking it
+wire sync <file-or-url>  # sync one tracked resource
+wire sync-all            # sync the current directory tree
+wire open <resource>     # open the source and show local details
+wire detach <resource>   # download once, then stop tracking it
+wire watch <file>        # sync a file whenever it changes
 ```
 
-Refresh one file:
+Run `wire --help` for the full CLI.
 
-```sh
-wire sync docs/example.md
-```
+## MCP
 
-Detach one file after downloading the latest source copy:
+`wire-mcp` exposes the same tools to MCP clients over stdio:
 
-```sh
-wire detach docs/example.md
-```
-
-Preview a source URL without writing a file:
-
-```sh
-wire preview https://www.notion.so/example/page
-```
-
-Refresh the current directory tree:
-
-```sh
-wire sync-all
+```json
+{ "mcpServers": { "wire": { "command": "wire-mcp" } } }
 ```
 
 ## Hooks
 
-Wire follows Husky-style lifecycle hooks. Executable files in `.wire/hooks` run automatically and do not need enabling.
+Wire follows Husky-style lifecycle hooks: executable files in `.wire/hooks` run automatically, no enabling needed.
 
-Hooks:
+- `.wire/hooks/post-resource` and `.wire/hooks/post-resource.d/*` — after each synced resource
+- `.wire/hooks/post-batch` — after a batch of syncs
+- `.wire/hooks/post-command` — after every command
 
-- `.wire/hooks/post-resource`
-- `.wire/hooks/post-resource.d/*`
-- `.wire/hooks/post-batch`
-- `.wire/hooks/post-command`
-
-Hooks run from the workspace root with `WIRE_*` env vars like `WIRE_COMMAND`, `WIRE_ROOT`, `WIRE_SERVICE`, `WIRE_TITLE`, `WIRE_PATH`, and `WIRE_RESULT_COUNT`. Exit non-zero to fail Wire.
-
-Move a file and update the registry:
+Hooks run from the workspace root with `WIRE_*` env vars such as `WIRE_COMMAND`, `WIRE_ROOT`, `WIRE_SERVICE`, `WIRE_TITLE`, `WIRE_PATH`, and `WIRE_RESULT_COUNT`. Exit non-zero to fail Wire. Example `post-resource` hook that files docs by service:
 
 ```sh
 mkdir -p "docs/$WIRE_SERVICE" && dest="docs/$WIRE_SERVICE/$WIRE_TITLE.md" && mv "$WIRE_PATH" "$dest" && echo "WIRE_PATH=$dest"
 ```
 
-## Env
+## Configuration
 
-Shared env lives in `.wire/config.json` and applies to Wire plus hooks:
+Workspace config lives in `.wire/config.json` and applies to Wire plus hooks:
 
 ```json
 { "backend": "sqlite", "path": "registry.sqlite3", "env": { "WIRE_CUSTOM_VALUE": "example" } }
