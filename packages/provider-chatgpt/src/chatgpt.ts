@@ -67,8 +67,20 @@ function multimodalText(value: JsonObject): string {
   return parts.join("\n\n").trim();
 }
 
+function hiddenAssistantPayload(value: JsonObject): boolean {
+  const contentType = value["content_type"];
+  return contentType === "thoughts" || contentType === "reasoning_recap" || contentType === "model_editable_context" || contentType === "tool_call" || value["product_query"] !== undefined;
+}
+
+function assistantPayloadText(value: string): JsonObject | null {
+  const stripped = value.trim();
+  if (/^\{\s*"(?:content_type|product_query)"\s*:/.test(stripped)) return JSON.parse(stripped) as JsonObject;
+  return null;
+}
+
 function messageContent(message: JsonObject): string {
   const content = message["content"] as JsonObject;
+  const role = (message["author"] as JsonObject)["role"] as string;
   if (content["content_type"] === "text") {
     const parts: string[] = [];
     for (const part of content["parts"] as readonly JsonValue[]) {
@@ -76,8 +88,11 @@ function messageContent(message: JsonObject): string {
         const stripped = part.trim();
         if (stripped.startsWith('{"content_type":"multimodal_text"') || stripped.startsWith('{"content_type": "multimodal_text"')) {
           parts.push(multimodalText(JSON.parse(stripped) as JsonObject));
+        } else if (role === "assistant") {
+          const payload = assistantPayloadText(stripped);
+          if (payload === null || !hiddenAssistantPayload(payload)) parts.push(part);
         } else parts.push(part);
-      } else parts.push(JSON.stringify(part));
+      } else if (role !== "assistant" || !hiddenAssistantPayload(part as JsonObject)) parts.push(JSON.stringify(part));
     }
     return parts.join("\n\n").trim();
   }
@@ -88,12 +103,14 @@ function messageContent(message: JsonObject): string {
 
 function readableBody(message: JsonObject): string {
   const content = message["content"] as JsonObject;
-  if (content["content_type"] === "thoughts" || content["content_type"] === "reasoning_recap" || content["content_type"] === "model_editable_context") return "";
+  const recipient = message["recipient"];
+  if ((message["author"] as JsonObject)["role"] === "assistant" && recipient !== undefined && recipient !== "all") return "";
+  if (hiddenAssistantPayload(content)) return "";
   const body = messageContent(message).trim();
   const role = (message["author"] as JsonObject)["role"] as string;
   if (role === "assistant" && (body.startsWith('{"content_type"') || body.startsWith('{"content_type":'))) {
     const parsed = JSON.parse(body) as JsonObject;
-    if (parsed["content_type"] === "thoughts" || parsed["content_type"] === "reasoning_recap" || parsed["content_type"] === "model_editable_context") return "";
+    if (hiddenAssistantPayload(parsed)) return "";
   }
   return body.replace(/cite[^]+/g, "").split("\n").map((line) => line.trimEnd()).join("\n").trim();
 }

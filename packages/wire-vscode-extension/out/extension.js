@@ -436,6 +436,7 @@ async function chromeLaunchArguments(environment2, startUrl) {
     startUrl
   ]);
 }
+var chromeExecutable = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 var ChromeConnection = class {
   socket;
   pending = /* @__PURE__ */ new Map();
@@ -515,7 +516,7 @@ function devtoolsUrl(stderr2) {
       const match = /DevTools listening on (ws:\/\/[^\s]+)/.exec(contents);
       if (match !== null) resolve5(match[1]);
     });
-    stderr2.on("end", () => reject(new Error(contents)));
+    stderr2.on("end", () => reject(new Error(contents === "" ? "Chrome exited before DevTools started. A Wire Chrome window is already open from a previous login; close it and retry." : contents)));
   });
 }
 async function closeChrome(chrome, connection, pageConnection) {
@@ -533,54 +534,6 @@ async function pageDevtoolsUrl(browserUrl, domains) {
   endpoint.hash = "";
   const targets = await (await fetch(endpoint)).json();
   return targets.find((target) => target.type === "page" && domains.some((domain) => new URL(target.url).hostname === domain || new URL(target.url).hostname.endsWith(`.${domain}`))).webSocketDebuggerUrl;
-}
-async function chatgptBrowserMetadata(pageConnection) {
-  const evaluation = await pageConnection.request("Runtime.evaluate", {
-    expression: `new Promise((resolve) => {
-      (async () => {
-        if (location.hostname !== "chatgpt.com") {
-          resolve({ ok: false });
-          return;
-        }
-        const response = await fetch("/api/auth/session", { cache: "no-store" });
-        const text = await response.text();
-        if (!text.startsWith("{")) {
-          resolve({ ok: false });
-          return;
-        }
-        const session = JSON.parse(text);
-        if (!("account" in session) || !("id" in session.account) || !("accessToken" in session) || "error" in session) {
-          resolve({ ok: false });
-          return;
-        }
-        const backend = await fetch("/backend-api/conversations?offset=0&limit=1&order=updated&is_archived=false&is_starred=false", {
-          cache: "no-store",
-          headers: {
-            authorization: \`Bearer \${session.accessToken}\`,
-            "chatgpt-account-id": session.account.id
-          }
-        });
-        resolve({ ok: backend.ok, account_id: session.account.id });
-      })().catch(() => resolve({ ok: false }));
-    })`,
-    awaitPromise: true,
-    returnByValue: true
-  });
-  const value = evaluation.result.value;
-  if (value.ok !== true) return null;
-  return Object.freeze({ account_id: value.account_id });
-}
-async function chatgptChallengeUrl(pageConnection) {
-  const evaluation = await pageConnection.request("Runtime.evaluate", {
-    expression: `(() => ({ href: location.href, title: document.title, text: document.body.innerText }))()`,
-    returnByValue: true
-  });
-  const value = evaluation.result.value;
-  const pageText = `${value.href}
-${value.title}
-${value.text}`;
-  if (/cdn-cgi\/challenge-platform|cf_chl|Just a moment|Verify you are human|Cloudflare/i.test(pageText)) return value.href;
-  return null;
 }
 function chromeCookies(values2, domains) {
   return Object.freeze(values2.filter((cookie) => domains.some((domain) => cookie.domain === domain || cookie.domain.endsWith(`.${domain}`))).map((cookie) => Object.freeze({
@@ -603,10 +556,68 @@ async function confirmSaveLogin() {
 function sleep(milliseconds) {
   return new Promise((resolve5) => setTimeout(resolve5, milliseconds));
 }
+async function headlessChromeConnection(environment2) {
+  const chrome = (0, import_node_child_process.spawn)(chromeExecutable, [`--user-data-dir=${chromeUserDataDir(environment2)}`, "--remote-debugging-port=0", "--headless=new", "--no-first-run", "--no-default-browser-check", "about:blank"], { detached: true, stdio: ["ignore", "ignore", "pipe"] });
+  const connection = new ChromeConnection(await devtoolsUrl(chrome.stderr));
+  await connection.opened();
+  return Object.freeze({ chrome, connection });
+}
+async function expireServiceCookies(connection, domains) {
+  const serviceDomain = (domain) => {
+    const bare = domain.startsWith(".") ? domain.slice(1) : domain;
+    return domains.some((value) => bare === value || bare.endsWith(`.${value}`));
+  };
+  const stored = await connection.request("Storage.getCookies");
+  const expiredCopies = stored.cookies.filter((cookie) => serviceDomain(cookie.domain)).map((cookie) => ({
+    name: cookie.name,
+    value: "",
+    domain: cookie.domain,
+    path: cookie.path,
+    secure: cookie.secure,
+    httpOnly: cookie.httpOnly,
+    expires: 1,
+    ...cookie.sameSite === void 0 ? {} : { sameSite: cookie.sameSite },
+    ...cookie.sourceScheme === void 0 ? {} : { sourceScheme: cookie.sourceScheme },
+    ...cookie.sourcePort === void 0 ? {} : { sourcePort: cookie.sourcePort },
+    ...cookie.partitionKey === void 0 ? {} : { partitionKey: cookie.partitionKey }
+  }));
+  if (expiredCopies.length > 0) await connection.request("Storage.setCookies", { cookies: expiredCopies });
+}
+async function extractDetachedChromeCookies(environment2, extraction) {
+  await (0, import_promises2.mkdir)(chromeUserDataDir(environment2), { recursive: true });
+  const prep = await headlessChromeConnection(environment2);
+  await expireServiceCookies(prep.connection, extraction.domains);
+  await closeChrome(prep.chrome, prep.connection);
+  const chrome = (0, import_node_child_process.spawn)(chromeExecutable, [`--user-data-dir=${chromeUserDataDir(environment2)}`, "--no-first-run", "--no-default-browser-check", extraction.startUrl], { detached: true, stdio: ["ignore", "ignore", "ignore"] });
+  import_node_process.stderr.write(`
+Log in to ${extraction.service} in the opened Chrome window, then quit Chrome (Cmd+Q). Wire picks up the session after Chrome exits.
+`);
+  let interrupted = false;
+  const interrupt = () => {
+    interrupted = true;
+    process.kill(-chrome.pid, "SIGTERM");
+  };
+  process.on("SIGINT", interrupt);
+  await new Promise((resolve5) => chrome.once("exit", resolve5));
+  process.off("SIGINT", interrupt);
+  await sleep(500);
+  const harvest = await headlessChromeConnection(environment2);
+  const stored = await harvest.connection.request("Storage.getCookies");
+  await closeChrome(harvest.chrome, harvest.connection);
+  const cookies = chromeCookies(stored.cookies, extraction.domains);
+  if (interrupted) {
+    const save = await confirmSaveLogin();
+    if (!save) throw new Error("Login not saved");
+    return Object.freeze({ cookies, metadata: Object.freeze({}), manual: true });
+  }
+  if (!extraction.ready(cookies)) throw new Error(`${extraction.service} login did not complete: the Chrome window was quit before login finished.`);
+  return Object.freeze({ cookies, metadata: Object.freeze({}) });
+}
 async function extractChromeCookies(environment2, extraction) {
+  if (extraction.freshSession === true) return extractDetachedChromeCookies(environment2, extraction);
   const profile = chromeUserDataDir(environment2);
   await (0, import_promises2.mkdir)(profile, { recursive: true });
-  const chrome = (0, import_node_child_process.spawn)("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", [...await chromeLaunchArguments(environment2, extraction.startUrl)], { detached: true, stdio: ["ignore", "ignore", "pipe"] });
+  const chrome = (0, import_node_child_process.spawn)(chromeExecutable, [...await chromeLaunchArguments(environment2, extraction.startUrl)], { detached: true, stdio: ["ignore", "ignore", "pipe"] });
   let interrupted = false;
   let interrupting = false;
   let interruptResult;
@@ -632,7 +643,7 @@ async function extractChromeCookies(environment2, extraction) {
   const browserUrl = await devtoolsUrl(chrome.stderr);
   const connection = new ChromeConnection(browserUrl);
   await connection.opened();
-  const pageConnection = extraction.metadataExpression === void 0 && extraction.service !== "chatgpt" ? void 0 : new ChromeConnection(await pageDevtoolsUrl(browserUrl, extraction.domains));
+  const pageConnection = extraction.metadataExpression === void 0 ? void 0 : new ChromeConnection(await pageDevtoolsUrl(browserUrl, extraction.domains));
   if (pageConnection !== void 0) await pageConnection.opened();
   if (pageConnection !== void 0) await Promise.race([sleep(2e3), interruptPromise]);
   const currentResult = async () => {
@@ -655,33 +666,12 @@ async function extractChromeCookies(environment2, extraction) {
     return interruptResult;
   };
   for (; ; ) {
-    if (extraction.service === "chatgpt") {
-      const challengeUrl = await chatgptChallengeUrl(pageConnection);
-      const manualResult2 = await interruptedResult();
-      if (manualResult2 !== void 0) return manualResult2;
-      if (challengeUrl !== null) {
-        await closeChrome(chrome, connection, pageConnection);
-        process.off("SIGINT", interrupt);
-        throw new Error(`ChatGPT login is stuck on an HTML challenge: ${challengeUrl}`);
-      }
-    }
     const result = await currentResult();
     const manualResult = await interruptedResult();
     if (manualResult !== void 0) return manualResult;
     if (extraction.ready(result.cookies)) {
-      let metadata = result.metadata;
-      if (extraction.service === "chatgpt") {
-        const chatgptMetadata = await Promise.race([chatgptBrowserMetadata(pageConnection), interruptPromise.then(() => void 0)]);
-        const interruptedChatgptResult = await interruptedResult();
-        if (interruptedChatgptResult !== void 0) return interruptedChatgptResult;
-        if (chatgptMetadata === void 0) continue;
-        if (chatgptMetadata === null) {
-          await closeChrome(chrome, connection, pageConnection);
-          process.off("SIGINT", interrupt);
-          throw new Error("ChatGPT login is blocked by an HTML challenge. Complete `wire chatgpt login` in the opened Chrome window, then retry.");
-        }
-        metadata = chatgptMetadata;
-      } else if (extraction.metadataExpression !== void 0) {
+      const metadata = result.metadata;
+      if (extraction.metadataExpression !== void 0) {
         if (Object.keys(metadata).length === 0) {
           await Promise.race([sleep(1e3), interruptPromise]);
           const interruptedMetadataResult = await interruptedResult();
@@ -689,7 +679,7 @@ async function extractChromeCookies(environment2, extraction) {
           continue;
         }
       }
-      if (extraction.service !== "chatgpt" && !await Promise.race([extraction.verify(result.cookies, metadata), interruptPromise.then(() => false)])) {
+      if (!await Promise.race([extraction.verify(result.cookies, metadata), interruptPromise.then(() => false)])) {
         const interruptedVerifyResult = await interruptedResult();
         if (interruptedVerifyResult !== void 0) return interruptedVerifyResult;
         await Promise.race([sleep(1e3), interruptPromise]);
@@ -1678,18 +1668,12 @@ function composeAuth(runtime2, environment2, extractCookies) {
     await saveCookies(service, state.cookies, state.metadata);
     return state.result;
   };
-  const extract = async (service, startUrl, domains, ready, metadataExpression) => {
-    const extraction = { service, startUrl, domains, ready, verify: async (values2, metadata) => (await verifyCookieState(service, values2, metadata)).result !== null, ...metadataExpression === void 0 ? {} : { metadataExpression } };
+  const extract = async (service, startUrl, domains, ready, metadataExpression, freshSession) => {
+    const extraction = { service, startUrl, domains, ready, verify: async (values2, metadata) => (await verifyCookieState(service, values2, metadata)).result !== null, ...metadataExpression === void 0 ? {} : { metadataExpression }, ...freshSession === void 0 ? {} : { freshSession } };
     const result = await extractCookies(environment2, extraction);
     if (result.manual === true) {
       await saveCookies(service, result.cookies, result.metadata);
       return Object.freeze({ service, identity: Object.freeze({ saved: true }) });
-    }
-    if (service === "chatgpt") {
-      await saveCookies(service, result.cookies, result.metadata);
-      const accountId = result.metadata["account_id"];
-      if (accountId === void 0) throw new Error("chatgpt cookie authentication failed. Run `wire chatgpt login` once; other commands reuse saved cookies.");
-      return Object.freeze({ service, identity: Object.freeze({ account_id: accountId }) });
     }
     const verified = await verifyCookieState(service, result.cookies, result.metadata);
     if (verified.result === null) throw new Error(`${service} cookie authentication failed. Run \`wire ${service} login\` once; other commands reuse saved cookies.`);
@@ -1704,7 +1688,7 @@ function composeAuth(runtime2, environment2, extractCookies) {
       return Object.freeze({ service, deleted: true });
     },
     extractAsana: () => extract("asana", "https://app.asana.com/", ["asana.com"], (values2) => values2.some((cookie) => cookie.domain === ".asana.com" || cookie.domain.endsWith(".asana.com"))),
-    extractChatgpt: () => extract("chatgpt", "https://chatgpt.com/", ["chatgpt.com", "openai.com"], requiredReady(["oai-did", "__Secure-next-auth.session-token"])),
+    extractChatgpt: () => extract("chatgpt", "https://chatgpt.com/", ["chatgpt.com", "openai.com"], (values2) => values2.some((cookie) => cookie.name === "oai-did") && values2.some((cookie) => cookie.name === "__Secure-next-auth.session-token" || cookie.name === "__Secure-next-auth.session-token.0"), void 0, true),
     extractGmail: () => extract("gmail", "https://mail.google.com/mail/u/0/", ["google.com"], googleReady),
     extractGoogleDocs: () => extract("google-docs", "https://docs.google.com/", ["google.com"], googleReady),
     extractNotion: () => extract("notion", "https://www.notion.so/login", ["notion.so", "notion.com"], requiredReady(["token_v2", "notion_user_id", "notion_users"])),
@@ -2406,8 +2390,18 @@ function multimodalText(value) {
   }
   return parts.join("\n\n").trim();
 }
+function hiddenAssistantPayload(value) {
+  const contentType = value["content_type"];
+  return contentType === "thoughts" || contentType === "reasoning_recap" || contentType === "model_editable_context" || contentType === "tool_call" || value["product_query"] !== void 0;
+}
+function assistantPayloadText(value) {
+  const stripped = value.trim();
+  if (/^\{\s*"(?:content_type|product_query)"\s*:/.test(stripped)) return JSON.parse(stripped);
+  return null;
+}
 function messageContent(message) {
   const content = message["content"];
+  const role = message["author"]["role"];
   if (content["content_type"] === "text") {
     const parts = [];
     for (const part of content["parts"]) {
@@ -2415,8 +2409,11 @@ function messageContent(message) {
         const stripped = part.trim();
         if (stripped.startsWith('{"content_type":"multimodal_text"') || stripped.startsWith('{"content_type": "multimodal_text"')) {
           parts.push(multimodalText(JSON.parse(stripped)));
+        } else if (role === "assistant") {
+          const payload = assistantPayloadText(stripped);
+          if (payload === null || !hiddenAssistantPayload(payload)) parts.push(part);
         } else parts.push(part);
-      } else parts.push(JSON.stringify(part));
+      } else if (role !== "assistant" || !hiddenAssistantPayload(part)) parts.push(JSON.stringify(part));
     }
     return parts.join("\n\n").trim();
   }
@@ -2426,12 +2423,14 @@ function messageContent(message) {
 }
 function readableBody(message) {
   const content = message["content"];
-  if (content["content_type"] === "thoughts" || content["content_type"] === "reasoning_recap" || content["content_type"] === "model_editable_context") return "";
+  const recipient = message["recipient"];
+  if (message["author"]["role"] === "assistant" && recipient !== void 0 && recipient !== "all") return "";
+  if (hiddenAssistantPayload(content)) return "";
   const body2 = messageContent(message).trim();
   const role = message["author"]["role"];
   if (role === "assistant" && (body2.startsWith('{"content_type"') || body2.startsWith('{"content_type":'))) {
     const parsed = JSON.parse(body2);
-    if (parsed["content_type"] === "thoughts" || parsed["content_type"] === "reasoning_recap" || parsed["content_type"] === "model_editable_context") return "";
+    if (hiddenAssistantPayload(parsed)) return "";
   }
   return body2.replace(/cite[^]+/g, "").split("\n").map((line) => line.trimEnd()).join("\n").trim();
 }

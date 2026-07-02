@@ -65,8 +65,19 @@ function multimodalText(value) {
     }
     return parts.join("\n\n").trim();
 }
+function hiddenAssistantPayload(value) {
+    const contentType = value["content_type"];
+    return contentType === "thoughts" || contentType === "reasoning_recap" || contentType === "model_editable_context" || contentType === "tool_call" || value["product_query"] !== undefined;
+}
+function assistantPayloadText(value) {
+    const stripped = value.trim();
+    if (/^\{\s*"(?:content_type|product_query)"\s*:/.test(stripped))
+        return JSON.parse(stripped);
+    return null;
+}
 function messageContent(message) {
     const content = message["content"];
+    const role = message["author"]["role"];
     if (content["content_type"] === "text") {
         const parts = [];
         for (const part of content["parts"]) {
@@ -75,10 +86,15 @@ function messageContent(message) {
                 if (stripped.startsWith('{"content_type":"multimodal_text"') || stripped.startsWith('{"content_type": "multimodal_text"')) {
                     parts.push(multimodalText(JSON.parse(stripped)));
                 }
+                else if (role === "assistant") {
+                    const payload = assistantPayloadText(stripped);
+                    if (payload === null || !hiddenAssistantPayload(payload))
+                        parts.push(part);
+                }
                 else
                     parts.push(part);
             }
-            else
+            else if (role !== "assistant" || !hiddenAssistantPayload(part))
                 parts.push(JSON.stringify(part));
         }
         return parts.join("\n\n").trim();
@@ -91,13 +107,16 @@ function messageContent(message) {
 }
 function readableBody(message) {
     const content = message["content"];
-    if (content["content_type"] === "thoughts" || content["content_type"] === "reasoning_recap" || content["content_type"] === "model_editable_context")
+    const recipient = message["recipient"];
+    if (message["author"]["role"] === "assistant" && recipient !== undefined && recipient !== "all")
+        return "";
+    if (hiddenAssistantPayload(content))
         return "";
     const body = messageContent(message).trim();
     const role = message["author"]["role"];
     if (role === "assistant" && (body.startsWith('{"content_type"') || body.startsWith('{"content_type":'))) {
         const parsed = JSON.parse(body);
-        if (parsed["content_type"] === "thoughts" || parsed["content_type"] === "reasoning_recap" || parsed["content_type"] === "model_editable_context")
+        if (hiddenAssistantPayload(parsed))
             return "";
     }
     return body.replace(/cite[^]+/g, "").split("\n").map((line) => line.trimEnd()).join("\n").trim();

@@ -596,6 +596,46 @@ test("chatgpt adapter exports JSON-looking user text literally", async () => {
   assert.equal(document.markdown, "# JSON text\n\n[Open in ChatGPT](https://chatgpt.com/c/json-text)\n\n## You\n\n{\"content_type\": not valid json\n\n## ChatGPT\n\nDone\n");
 });
 
+test("chatgpt adapter hides shopping tool payloads from conversation markdown", async () => {
+  const document = await fetchSource(runtime(async (input) => {
+    const url = String(input);
+    if (url === "https://chatgpt.com/api/auth/session") return response({ accessToken: "token", account: { id: "account" } });
+    if (url === "https://chatgpt.com/backend-api/conversation/shopping") return response({
+      conversation_id: "shopping",
+      title: "Shopping",
+      update_time: 1781092800,
+      mapping: {
+        user: { message: { id: "1", create_time: 1, author: { role: "user" }, content: { content_type: "text", parts: ["Find headphones under $200"] } } },
+        assistant: { message: { id: "2", create_time: 2, author: { role: "assistant" }, content: { content_type: "text", parts: ["I’ll compare current options.", '{"product_query":"noise canceling headphones under $200","filters":{"category":"electronics"}}', "Best picks:\n\n- Sony WH-CH720N\n- Anker Soundcore Space One"] } } },
+        hidden: { message: { id: "3", create_time: 3, author: { role: "assistant" }, content: { content_type: "text", parts: [{ product_query: "headphones under $200", filters: { category: "electronics" } }] } } },
+      },
+    });
+    throw new Error(url);
+  }), "https://chatgpt.com/c/shopping", serviceCatalog);
+  assert.equal(document.markdown, "# Shopping\n\n[Open in ChatGPT](https://chatgpt.com/c/shopping)\n\n## You\n\nFind headphones under $200\n\n## ChatGPT\n\nI’ll compare current options.\n\nBest picks:\n\n- Sony WH-CH720N\n- Anker Soundcore Space One\n");
+  assert.equal(document.markdown.includes("product_query"), false);
+});
+
+test("chatgpt adapter hides tool-directed code calls from conversation markdown", async () => {
+  const document = await fetchSource(runtime(async (input) => {
+    const url = String(input);
+    if (url === "https://chatgpt.com/api/auth/session") return response({ accessToken: "token", account: { id: "account" } });
+    if (url === "https://chatgpt.com/backend-api/conversation/tools") return response({
+      conversation_id: "tools",
+      title: "Tools",
+      update_time: 1781092800,
+      mapping: {
+        user: { message: { id: "1", create_time: 1, author: { role: "user" }, content: { content_type: "text", parts: ["Where do they sell USA shirts"] } } },
+        call: { message: { id: "2", create_time: 2, recipient: "web.run", author: { role: "assistant" }, content: { content_type: "code", text: '{"product_query":{"search":["USA soccer shirt"]},"response_length":"medium"}' } } },
+        answer: { message: { id: "3", create_time: 3, recipient: "all", author: { role: "assistant" }, content: { content_type: "text", parts: ["Try the U.S. Soccer Store."] } } },
+      },
+    });
+    throw new Error(url);
+  }), "https://chatgpt.com/c/tools", serviceCatalog);
+  assert.equal(document.markdown, "# Tools\n\n[Open in ChatGPT](https://chatgpt.com/c/tools)\n\n## You\n\nWhere do they sell USA shirts\n\n## ChatGPT\n\nTry the U.S. Soccer Store.\n");
+  assert.equal(document.markdown.includes("product_query"), false);
+});
+
 test("chatgpt adapter exports only the active conversation branch", async () => {
   const document = await fetchSource(runtime(async (input) => {
     const url = String(input);

@@ -8,6 +8,7 @@ export interface ChromeCookieExtraction {
     readonly domains: readonly string[];
     readonly ready: (cookies: readonly Cookie[]) => boolean;
     readonly metadataExpression?: string;
+    readonly freshSession?: true;
     readonly verify: (cookies: readonly Cookie[], metadata: Readonly<Record<string, string>>) => Promise<boolean>;
 }
 export interface ChromeCookieResult {

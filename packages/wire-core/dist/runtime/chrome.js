@@ -22,6 +22,7 @@ export async function chromeLaunchArguments(environment, startUrl) {
         startUrl,
     ]);
 }
+const chromeExecutable = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 class ChromeConnection {
     socket;
     pending = new Map();
@@ -108,7 +109,7 @@ function devtoolsUrl(stderr) {
             if (match !== null)
                 resolve(match[1]);
         });
-        stderr.on("end", () => reject(new Error(contents)));
+        stderr.on("end", () => reject(new Error(contents === "" ? "Chrome exited before DevTools started. A Wire Chrome window is already open from a previous login; close it and retry." : contents)));
     });
 }
 async function closeChrome(chrome, connection, pageConnection) {
@@ -127,54 +128,6 @@ async function pageDevtoolsUrl(browserUrl, domains) {
     endpoint.hash = "";
     const targets = await (await fetch(endpoint)).json();
     return targets.find((target) => target.type === "page" && domains.some((domain) => new URL(target.url).hostname === domain || new URL(target.url).hostname.endsWith(`.${domain}`))).webSocketDebuggerUrl;
-}
-async function chatgptBrowserMetadata(pageConnection) {
-    const evaluation = await pageConnection.request("Runtime.evaluate", {
-        expression: `new Promise((resolve) => {
-      (async () => {
-        if (location.hostname !== "chatgpt.com") {
-          resolve({ ok: false });
-          return;
-        }
-        const response = await fetch("/api/auth/session", { cache: "no-store" });
-        const text = await response.text();
-        if (!text.startsWith("{")) {
-          resolve({ ok: false });
-          return;
-        }
-        const session = JSON.parse(text);
-        if (!("account" in session) || !("id" in session.account) || !("accessToken" in session) || "error" in session) {
-          resolve({ ok: false });
-          return;
-        }
-        const backend = await fetch("/backend-api/conversations?offset=0&limit=1&order=updated&is_archived=false&is_starred=false", {
-          cache: "no-store",
-          headers: {
-            authorization: \`Bearer \${session.accessToken}\`,
-            "chatgpt-account-id": session.account.id
-          }
-        });
-        resolve({ ok: backend.ok, account_id: session.account.id });
-      })().catch(() => resolve({ ok: false }));
-    })`,
-        awaitPromise: true,
-        returnByValue: true,
-    });
-    const value = evaluation.result.value;
-    if (value.ok !== true)
-        return null;
-    return Object.freeze({ account_id: value.account_id });
-}
-async function chatgptChallengeUrl(pageConnection) {
-    const evaluation = await pageConnection.request("Runtime.evaluate", {
-        expression: `(() => ({ href: location.href, title: document.title, text: document.body.innerText }))()`,
-        returnByValue: true,
-    });
-    const value = evaluation.result.value;
-    const pageText = `${value.href}\n${value.title}\n${value.text}`;
-    if (/cdn-cgi\/challenge-platform|cf_chl|Just a moment|Verify you are human|Cloudflare/i.test(pageText))
-        return value.href;
-    return null;
 }
 function chromeCookies(values, domains) {
     return Object.freeze(values.filter((cookie) => domains.some((domain) => cookie.domain === domain || cookie.domain.endsWith(`.${domain}`))).map((cookie) => Object.freeze({
@@ -197,10 +150,67 @@ async function confirmSaveLogin() {
 function sleep(milliseconds) {
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
+async function headlessChromeConnection(environment) {
+    const chrome = spawn(chromeExecutable, [`--user-data-dir=${chromeUserDataDir(environment)}`, "--remote-debugging-port=0", "--headless=new", "--no-first-run", "--no-default-browser-check", "about:blank"], { detached: true, stdio: ["ignore", "ignore", "pipe"] });
+    const connection = new ChromeConnection(await devtoolsUrl(chrome.stderr));
+    await connection.opened();
+    return Object.freeze({ chrome, connection });
+}
+async function expireServiceCookies(connection, domains) {
+    const serviceDomain = (domain) => { const bare = domain.startsWith(".") ? domain.slice(1) : domain; return domains.some((value) => bare === value || bare.endsWith(`.${value}`)); };
+    const stored = await connection.request("Storage.getCookies");
+    const expiredCopies = stored.cookies.filter((cookie) => serviceDomain(cookie.domain)).map((cookie) => ({
+        name: cookie.name,
+        value: "",
+        domain: cookie.domain,
+        path: cookie.path,
+        secure: cookie.secure,
+        httpOnly: cookie.httpOnly,
+        expires: 1,
+        ...(cookie.sameSite === undefined ? {} : { sameSite: cookie.sameSite }),
+        ...(cookie.sourceScheme === undefined ? {} : { sourceScheme: cookie.sourceScheme }),
+        ...(cookie.sourcePort === undefined ? {} : { sourcePort: cookie.sourcePort }),
+        ...(cookie.partitionKey === undefined ? {} : { partitionKey: cookie.partitionKey }),
+    }));
+    if (expiredCopies.length > 0)
+        await connection.request("Storage.setCookies", { cookies: expiredCopies });
+}
+async function extractDetachedChromeCookies(environment, extraction) {
+    await mkdir(chromeUserDataDir(environment), { recursive: true });
+    const prep = await headlessChromeConnection(environment);
+    await expireServiceCookies(prep.connection, extraction.domains);
+    await closeChrome(prep.chrome, prep.connection);
+    const chrome = spawn(chromeExecutable, [`--user-data-dir=${chromeUserDataDir(environment)}`, "--no-first-run", "--no-default-browser-check", extraction.startUrl], { detached: true, stdio: ["ignore", "ignore", "ignore"] });
+    stderr.write(`\nLog in to ${extraction.service} in the opened Chrome window, then quit Chrome (Cmd+Q). Wire picks up the session after Chrome exits.\n`);
+    let interrupted = false;
+    const interrupt = () => {
+        interrupted = true;
+        process.kill(-chrome.pid, "SIGTERM");
+    };
+    process.on("SIGINT", interrupt);
+    await new Promise((resolve) => chrome.once("exit", resolve));
+    process.off("SIGINT", interrupt);
+    await sleep(500);
+    const harvest = await headlessChromeConnection(environment);
+    const stored = await harvest.connection.request("Storage.getCookies");
+    await closeChrome(harvest.chrome, harvest.connection);
+    const cookies = chromeCookies(stored.cookies, extraction.domains);
+    if (interrupted) {
+        const save = await confirmSaveLogin();
+        if (!save)
+            throw new Error("Login not saved");
+        return Object.freeze({ cookies, metadata: Object.freeze({}), manual: true });
+    }
+    if (!extraction.ready(cookies))
+        throw new Error(`${extraction.service} login did not complete: the Chrome window was quit before login finished.`);
+    return Object.freeze({ cookies, metadata: Object.freeze({}) });
+}
 export async function extractChromeCookies(environment, extraction) {
+    if (extraction.freshSession === true)
+        return extractDetachedChromeCookies(environment, extraction);
     const profile = chromeUserDataDir(environment);
     await mkdir(profile, { recursive: true });
-    const chrome = spawn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", [...await chromeLaunchArguments(environment, extraction.startUrl)], { detached: true, stdio: ["ignore", "ignore", "pipe"] });
+    const chrome = spawn(chromeExecutable, [...await chromeLaunchArguments(environment, extraction.startUrl)], { detached: true, stdio: ["ignore", "ignore", "pipe"] });
     let interrupted = false;
     let interrupting = false;
     let interruptResult;
@@ -224,7 +234,7 @@ export async function extractChromeCookies(environment, extraction) {
     const browserUrl = await devtoolsUrl(chrome.stderr);
     const connection = new ChromeConnection(browserUrl);
     await connection.opened();
-    const pageConnection = extraction.metadataExpression === undefined && extraction.service !== "chatgpt" ? undefined : new ChromeConnection(await pageDevtoolsUrl(browserUrl, extraction.domains));
+    const pageConnection = extraction.metadataExpression === undefined ? undefined : new ChromeConnection(await pageDevtoolsUrl(browserUrl, extraction.domains));
     if (pageConnection !== undefined)
         await pageConnection.opened();
     if (pageConnection !== undefined)
@@ -252,38 +262,13 @@ export async function extractChromeCookies(environment, extraction) {
         return interruptResult;
     };
     for (;;) {
-        if (extraction.service === "chatgpt") {
-            const challengeUrl = await chatgptChallengeUrl(pageConnection);
-            const manualResult = await interruptedResult();
-            if (manualResult !== undefined)
-                return manualResult;
-            if (challengeUrl !== null) {
-                await closeChrome(chrome, connection, pageConnection);
-                process.off("SIGINT", interrupt);
-                throw new Error(`ChatGPT login is stuck on an HTML challenge: ${challengeUrl}`);
-            }
-        }
         const result = await currentResult();
         const manualResult = await interruptedResult();
         if (manualResult !== undefined)
             return manualResult;
         if (extraction.ready(result.cookies)) {
-            let metadata = result.metadata;
-            if (extraction.service === "chatgpt") {
-                const chatgptMetadata = await Promise.race([chatgptBrowserMetadata(pageConnection), interruptPromise.then(() => undefined)]);
-                const interruptedChatgptResult = await interruptedResult();
-                if (interruptedChatgptResult !== undefined)
-                    return interruptedChatgptResult;
-                if (chatgptMetadata === undefined)
-                    continue;
-                if (chatgptMetadata === null) {
-                    await closeChrome(chrome, connection, pageConnection);
-                    process.off("SIGINT", interrupt);
-                    throw new Error("ChatGPT login is blocked by an HTML challenge. Complete `wire chatgpt login` in the opened Chrome window, then retry.");
-                }
-                metadata = chatgptMetadata;
-            }
-            else if (extraction.metadataExpression !== undefined) {
+            const metadata = result.metadata;
+            if (extraction.metadataExpression !== undefined) {
                 if (Object.keys(metadata).length === 0) {
                     await Promise.race([sleep(1000), interruptPromise]);
                     const interruptedMetadataResult = await interruptedResult();
@@ -292,7 +277,7 @@ export async function extractChromeCookies(environment, extraction) {
                     continue;
                 }
             }
-            if (extraction.service !== "chatgpt" && !(await Promise.race([extraction.verify(result.cookies, metadata), interruptPromise.then(() => false)]))) {
+            if (!(await Promise.race([extraction.verify(result.cookies, metadata), interruptPromise.then(() => false)]))) {
                 const interruptedVerifyResult = await interruptedResult();
                 if (interruptedVerifyResult !== undefined)
                     return interruptedVerifyResult;

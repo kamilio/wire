@@ -1,1 +1,1 @@
-{"version":3,"file":"chatgpt.d.ts","sourceRoot":"","sources":["../src/chatgpt.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,EAA+B,SAAS,EAAE,MAAM,WAAW,CAAC;AACxE,OAAO,KAAK,EAAU,mBAAmB,EAAE,MAAM,WAAW,CAAC;AAmI7D,eAAO,MAAM,cAAc;;;;;;;;;;;;;;;;;;;;;;;;;EAyBzB,CAAC"}
+{"version":3,"file":"chatgpt.d.ts","sourceRoot":"","sources":["../src/chatgpt.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,EAA+B,SAAS,EAAE,MAAM,WAAW,CAAC;AACxE,OAAO,KAAK,EAAU,mBAAmB,EAAE,MAAM,WAAW,CAAC;AAoJ7D,eAAO,MAAM,cAAc;;;;;;;;;;;;;;;;;;;;;;;;;EAyBzB,CAAC"}

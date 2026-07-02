@@ -267,18 +267,12 @@ export function composeAuth(runtime: RuntimeCapabilities, environment: NodeEnvir
     await saveCookies(service, state.cookies, state.metadata);
     return state.result;
   };
-  const extract = async (service: AuthService, startUrl: string, domains: readonly string[], ready: (values: readonly Cookie[]) => boolean, metadataExpression?: string) => {
-    const extraction = { service, startUrl, domains, ready, verify: async (values: readonly Cookie[], metadata: Readonly<Record<string, string>>) => (await verifyCookieState(service, values, metadata)).result !== null, ...(metadataExpression === undefined ? {} : { metadataExpression }) };
+  const extract = async (service: AuthService, startUrl: string, domains: readonly string[], ready: (values: readonly Cookie[]) => boolean, metadataExpression?: string, freshSession?: true) => {
+    const extraction = { service, startUrl, domains, ready, verify: async (values: readonly Cookie[], metadata: Readonly<Record<string, string>>) => (await verifyCookieState(service, values, metadata)).result !== null, ...(metadataExpression === undefined ? {} : { metadataExpression }), ...(freshSession === undefined ? {} : { freshSession }) };
     const result = await extractCookies(environment, extraction);
     if (result.manual === true) {
       await saveCookies(service, result.cookies, result.metadata);
       return Object.freeze({ service, identity: Object.freeze({ saved: true }) });
-    }
-    if (service === "chatgpt") {
-      await saveCookies(service, result.cookies, result.metadata);
-      const accountId = result.metadata["account_id"];
-      if (accountId === undefined) throw new Error("chatgpt cookie authentication failed. Run `wire chatgpt login` once; other commands reuse saved cookies.");
-      return Object.freeze({ service, identity: Object.freeze({ account_id: accountId }) });
     }
     const verified = await verifyCookieState(service, result.cookies, result.metadata);
     if (verified.result === null) throw new Error(`${service} cookie authentication failed. Run \`wire ${service} login\` once; other commands reuse saved cookies.`);
@@ -293,7 +287,7 @@ export function composeAuth(runtime: RuntimeCapabilities, environment: NodeEnvir
       return Object.freeze({ service, deleted: true });
     },
     extractAsana: () => extract("asana", "https://app.asana.com/", ["asana.com"], (values) => values.some((cookie) => cookie.domain === ".asana.com" || cookie.domain.endsWith(".asana.com"))),
-    extractChatgpt: () => extract("chatgpt", "https://chatgpt.com/", ["chatgpt.com", "openai.com"], requiredReady(["oai-did", "__Secure-next-auth.session-token"])),
+    extractChatgpt: () => extract("chatgpt", "https://chatgpt.com/", ["chatgpt.com", "openai.com"], (values) => values.some((cookie) => cookie.name === "oai-did") && values.some((cookie) => cookie.name === "__Secure-next-auth.session-token" || cookie.name === "__Secure-next-auth.session-token.0"), undefined, true),
     extractGmail: () => extract("gmail", "https://mail.google.com/mail/u/0/", ["google.com"], googleReady),
     extractGoogleDocs: () => extract("google-docs", "https://docs.google.com/", ["google.com"], googleReady),
     extractNotion: () => extract("notion", "https://www.notion.so/login", ["notion.so", "notion.com"], requiredReady(["token_v2", "notion_user_id", "notion_users"])),
