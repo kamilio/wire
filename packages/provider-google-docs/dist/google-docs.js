@@ -132,6 +132,20 @@ function rowsMarkdown(rows) {
         ...tableRows.slice(1).map((row) => `| ${row.join(" | ")} |`),
     ].join("\n")}\n`;
 }
+function csvCell(value) {
+    return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, "\"\"")}"` : value;
+}
+function rowsCsv(rows) {
+    return `${rows.map((row) => row.map(csvCell).join(",")).join("\n")}\n`;
+}
+function sheetMarkdown(rows) {
+    if (rows.length === 0)
+        return "";
+    const columnCount = Math.max(...rows.map((row) => row.length));
+    if (rows[0].length === columnCount && rows[0].every((cell) => cell !== ""))
+        return rowsMarkdown(rows);
+    return `\`\`\`csv\n${rowsCsv(rows)}\`\`\`\n`;
+}
 function markdownTableRow(line) {
     let value = line.trim();
     if (value.startsWith("|"))
@@ -175,6 +189,19 @@ function parseMarkdownTable(markdown) {
     if (invalidRow !== -1)
         throw new Error(`Google Sheets sync requires every Markdown table row to have ${rows[0].length} cells: line ${invalidRow + 1} has ${rowLengths[invalidRow].length}`);
     return rows;
+}
+function parseSheetMarkdown(markdown) {
+    if (markdown.trim() === "")
+        return [];
+    const value = markdown.trimEnd();
+    if (!value.startsWith("```csv\n"))
+        return parseMarkdownTable(markdown);
+    if (!value.endsWith("\n```"))
+        throw new Error("Google Sheets sync requires fenced CSV to end with ```");
+    return parseCsv(value.slice("```csv\n".length, -"\n```".length));
+}
+function rowsEqual(left, right) {
+    return left.length === right.length && left.every((row, rowIndex) => row.length === right[rowIndex].length && row.every((cell, columnIndex) => cell === right[rowIndex][columnIndex]));
 }
 function resourceKey(source) {
     const key = source["resource_key"];
@@ -792,7 +819,7 @@ async function fetchGoogleDocument(runtime, source) {
     }
     const exported = await googleExport(runtime, exportUrl, label);
     const rows = source["sheet_gid"] === undefined ? null : parseCsv(exported.text);
-    const markdown = rows === null ? exported.text : rowsMarkdown(rows);
+    const markdown = rows === null ? exported.text : sheetMarkdown(rows);
     const tab = source["sheet_gid"] === undefined ? documentTab(source) : null;
     return Object.freeze({ title: exported.title, markdown, data: { document_id: documentId, title: exported.title, output_path: null, sheet_gid: sheetGid, markdown, rows, ...(tab === null ? {} : { document_tab: tab }) } });
 }
@@ -814,11 +841,21 @@ async function synchronizeGoogleDocument(runtime, _url, source, base, markdown) 
         throw new Error("Google sync base must include markdown");
     if (source["sheet_gid"] === undefined && (docMarkdownEqual(markdown, baseMarkdown) || docMarkdownEqual(markdown, remote.markdown)))
         return remote;
-    if (source["sheet_gid"] !== undefined && (markdown === baseMarkdown || markdown === remote.markdown))
-        return remote;
-    if (remote.markdown === baseMarkdown && source["sheet_gid"] !== undefined) {
-        const baseRows = stringRows(objectValue(base)["rows"]);
-        const localRows = parseMarkdownTable(markdown);
+    if (source["sheet_gid"] !== undefined) {
+        const baseObject = objectValue(base);
+        if (baseObject["rows"] === undefined) {
+            if (markdown === baseMarkdown || markdown === remote.markdown)
+                return remote;
+            if (remote.markdown !== baseMarkdown)
+                throw new Error(`${label} changed remotely and locally. Resolve the conflict in ${label} or the local Markdown file before syncing again.`);
+        }
+        const baseRows = stringRows(baseObject["rows"]);
+        const remoteRows = stringRows(objectValue(remote.data)["rows"]);
+        const localRows = parseSheetMarkdown(markdown);
+        if (rowsEqual(localRows, baseRows) || rowsEqual(localRows, remoteRows))
+            return remote;
+        if (!rowsEqual(remoteRows, baseRows))
+            throw new Error(`${label} changed remotely and locally. Resolve the conflict in ${label} or the local Markdown file before syncing again.`);
         const cells = changedCells(baseRows, localRows);
         if (cells.length === 0)
             return remote;
@@ -827,7 +864,7 @@ async function synchronizeGoogleDocument(runtime, _url, source, base, markdown) 
             throw new Error(`Google Sheets sync cannot upload formula-like cell text at row ${formula.row + 1}, column ${formula.column + 1}\nPrefix it with an apostrophe or rewrite it as plain text before syncing.`);
         await uploadSheetRows(runtime, source["document_id"] ?? source.identifier, source["sheet_gid"], resourceKey(source), cells);
         const uploaded = await fetchGoogleDocument(runtime, source);
-        if (uploaded.markdown !== rowsMarkdown(localRows))
+        if (!rowsEqual(stringRows(objectValue(uploaded.data)["rows"]), localRows))
             throw new Error("Google Sheets save verification failed");
         return uploaded;
     }

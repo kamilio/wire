@@ -8,13 +8,7 @@ async function wireRoot(dependencies, path) {
     const configured = await dependencies.workspace.configuredRoot(path, dependencies.home);
     if (configured !== null)
         return configured;
-    return (await dependencies.workspace.initialize(path, dependencies.initialization.backend, dependencies.initialization.registryPath)).root;
-}
-async function existingWireRoot(dependencies, path) {
-    const configured = await dependencies.workspace.configuredRoot(path, dependencies.home);
-    if (configured !== null)
-        return configured;
-    throw new Error("Wire workspace not initialized. Run `wire init` or `wire <url>` first.");
+    return (await dependencies.workspace.initialize(dependencies.home, dependencies.initialization.backend, dependencies.initialization.registryPath)).root;
 }
 function watchConfig(config) {
     return {
@@ -209,7 +203,7 @@ export function composeWire(dependencies) {
     };
     const sync = async (value, path) => {
         const candidatePath = resolve(path, value);
-        const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+        const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
         const relativePath = dependencies.workspace.relativePath(candidatePath, root);
         const pathResources = await registry.findByPath(relativePath);
@@ -237,7 +231,7 @@ export function composeWire(dependencies) {
     };
     const download = async (value, path) => {
         const candidatePath = resolve(path, value);
-        const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+        const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
         const resource = await resolveResource(registry, value, root, path);
         const outputPath = join(dirname(root), primaryLink(resource).path);
@@ -247,7 +241,7 @@ export function composeWire(dependencies) {
     };
     const detach = async (value, path) => {
         const candidatePath = resolve(path, value);
-        const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+        const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
         const resource = await resolveResource(registry, value, root, path);
         const outputPath = join(dirname(root), primaryLink(resource).path);
@@ -266,7 +260,7 @@ export function composeWire(dependencies) {
     };
     const watchWithHooks = async (value, path, hooks) => {
         const candidatePath = resolve(path, value);
-        const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+        const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
         const config = watchConfig(await dependencies.workspace.loadConfig(root));
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
         const resource = await resolveResource(registry, value, root, path);
@@ -315,14 +309,14 @@ export function composeWire(dependencies) {
     const watch = (value, path) => watchWithHooks(value, path, []);
     const openResource = async (value, path) => {
         const candidatePath = resolve(path, value);
-        const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+        const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
         const resource = await resolveResource(registry, value, root, path);
         await dependencies.open(resource.urls[0]);
         return resource;
     };
     const syncAll = async (path) => {
-        const root = await existingWireRoot(dependencies, path);
+        const root = await wireRoot(dependencies, path);
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
         const scope = dependencies.workspace.relativePath(path, root);
         if (relativePathEscapes(scope))
@@ -342,12 +336,12 @@ export function composeWire(dependencies) {
         return results;
     };
     const listResources = async (path) => {
-        const root = await existingWireRoot(dependencies, path);
+        const root = await wireRoot(dependencies, path);
         return (await dependencies.workspace.openRegistry(root, dependencies.home)).listResources();
     };
     const showResource = async (value, path) => {
         const candidatePath = resolve(path, value);
-        const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+        const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
         return resolveResource(registry, value, root, path);
     };
@@ -366,7 +360,10 @@ export function composeWire(dependencies) {
         listResources,
         showResource,
         init: dependencies.workspace.initialize,
-        switchBackend: (path) => dependencies.workspace.switchBackend(path, dependencies.home),
+        switchBackend: async (path) => {
+            const root = await wireRoot(dependencies, path);
+            return dependencies.workspace.switchBackend(dirname(root), dependencies.home);
+        },
         [wireWatchHooks]: watchWithHooks,
     });
 }

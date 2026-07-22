@@ -3,7 +3,7 @@
   "publisher": "wire",
   "displayName": "Wire - Markdown Sync",
   "description": "Attach Notion, Google Docs, Slack, Gmail, Asana, ChatGPT, and Zoom resources as local Markdown you can sync from VS Code.",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "type": "commonjs",
   "engines": {
     "vscode": "^1.90.0"

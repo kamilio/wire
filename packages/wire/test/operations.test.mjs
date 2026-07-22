@@ -14,6 +14,7 @@ import {
   initializeWire,
   loadWireConfig,
   openWireRegistry,
+  switchWireBackend,
   wireRelativePath,
 } from "../dist/index.js";
 
@@ -44,6 +45,7 @@ const workspace = {
   loadConfig: loadWireConfig,
   openRegistry: openWireRegistry,
   relativePath: wireRelativePath,
+  switchBackend: switchWireBackend,
 };
 
 function watchHarness() {
@@ -176,6 +178,18 @@ test("view returns fetched document without writes or registry mutation", async 
   assert.deepEqual(await import("node:fs/promises").then(({ readdir }) => readdir(project)), []);
 });
 
+test("attach automatically initializes the global workspace", async () => {
+  const home = join(testRoot, "attach-auto-init-home");
+  const project = join(home, "project");
+  await mkdir(project, { recursive: true });
+  const wire = createWire(home, async () => ({ title: "Document", markdown: "# Document\n", data: {} }));
+  const result = await wire.attach("https://notion.test/page", project);
+  assert.equal(result.path, join(project, "document.md"));
+  assert.deepEqual(result.resource.filesystem_links, [{ path: "project/document.md", role: "primary", data: { format: "markdown" } }]);
+  assert.equal(await filesystem().exists(join(home, ".wire", "config.json")), true);
+  assert.equal(await filesystem().exists(join(project, ".wire")), false);
+});
+
 test("downloadSource writes Markdown without creating a registry entry", async () => {
   const project = join(testRoot, "download-source");
   await mkdir(project);
@@ -209,33 +223,43 @@ test("downloadSource preserves tracked local files and snapshots", async () => {
   assert.deepEqual(resource.data.find((item) => item.namespace === "notion" && item.key === "snapshot").value, { revision: 1, markdown: "# Revision 1\n" });
 });
 
-test("registered-resource operations require an initialized workspace without creating one", async () => {
-  for (const [name, operation] of [
-    ["sync", (wire, project) => wire.sync("missing.md", project)],
-    ["download", (wire, project) => wire.download("missing.md", project)],
-    ["watch", (wire, project) => wire.watch("missing.md", project)],
-    ["open", (wire, project) => wire.openResource("missing.md", project)],
-    ["sync-all", (wire, project) => wire.syncAll(project)],
-    ["list", (wire, project) => wire.listResources(project)],
-    ["show", (wire, project) => wire.showResource("missing.md", project)],
-  ]) {
-    const project = join(testRoot, `missing-workspace-${name}`);
-    await mkdir(project);
-    const wire = createWire(project, async () => ({ title: "unused", markdown: "", data: {} }));
-    await assert.rejects(() => operation(wire, project), /Wire workspace not initialized\. Run `wire init` or `wire <url>` first\./);
-    assert.equal(await filesystem().exists(join(project, ".wire")), false);
-  }
+test("registry operations automatically initialize the global workspace", async () => {
+  const home = join(testRoot, "auto-init-home");
+  const project = join(home, "project");
+  await mkdir(project, { recursive: true });
+  const wire = createWire(home, async () => ({ title: "unused", markdown: "", data: {} }));
+  assert.deepEqual(await wire.listResources(project), []);
+  assert.deepEqual(await wire.syncAll(project), []);
+  assert.equal(await filesystem().exists(join(home, ".wire", "config.json")), true);
+  assert.equal(await filesystem().exists(join(project, ".wire")), false);
 });
 
-test("sync uploads existing unregistered markdown as new Notion document", async () => {
-  const project = join(testRoot, "sync-upload-local");
-  await mkdir(project);
-  await initializeWire(project, "sqlite", "registry.sqlite3");
+test("switch-db automatically initializes the global workspace", async () => {
+  const home = join(testRoot, "switch-auto-init-home");
+  const project = join(home, "project");
+  await mkdir(join(project, ".wire", "auth"), { recursive: true });
+  const wire = createWire(home, async () => ({ title: "unused", markdown: "", data: {} }));
+  const result = await wire.switchBackend(project);
+  assert.deepEqual(result, {
+    root: join(home, ".wire"),
+    from: "sqlite",
+    to: "files",
+    fromPath: join(home, ".wire", "registry.sqlite3"),
+    toPath: join(home, ".wire", "records"),
+    resources: 0,
+  });
+  assert.equal(await filesystem().exists(join(project, ".wire", "config.json")), false);
+});
+
+test("sync uploads existing unregistered markdown after automatically initializing the global workspace", async () => {
+  const home = join(testRoot, "sync-upload-local-home");
+  const project = join(home, "project");
+  await mkdir(project, { recursive: true });
   const markdownPath = join(project, "questions_grouped.md");
   await writeFile(markdownPath, "# Questions\n\nBody\n");
   const uploads = [];
   const wire = createWire(
-    project,
+    home,
     async () => ({ title: "unused", markdown: "", data: {} }),
     [],
     async (markdown, path) => {
@@ -248,7 +272,10 @@ test("sync uploads existing unregistered markdown as new Notion document", async
   assert.equal(result.path, markdownPath);
   assert.equal(result.resource.id, "notion:uploaded");
   assert.equal(result.resource.urls[0], "https://notion.test/uploaded");
+  assert.deepEqual(result.resource.filesystem_links, [{ path: "project/questions_grouped.md", role: "primary", data: { format: "markdown" } }]);
   assert.equal(await readFile(markdownPath, "utf8"), "# Questions\n\nBody\n");
+  assert.equal(await filesystem().exists(join(home, ".wire", "config.json")), true);
+  assert.equal(await filesystem().exists(join(project, ".wire")), false);
   assert.deepEqual(result.summary, { action: "uploaded", added: 0, modified: 0, removed: 0, remote: "https://notion.test/uploaded", local: markdownPath });
 });
 

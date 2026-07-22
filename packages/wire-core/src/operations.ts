@@ -84,13 +84,7 @@ type WireInternal = Wire & Readonly<{
 async function wireRoot<FetchInput>(dependencies: WireDependencies<FetchInput>, path: string): Promise<string> {
   const configured = await dependencies.workspace.configuredRoot(path, dependencies.home);
   if (configured !== null) return configured;
-  return (await dependencies.workspace.initialize(path, dependencies.initialization.backend, dependencies.initialization.registryPath)).root;
-}
-
-async function existingWireRoot<FetchInput>(dependencies: WireDependencies<FetchInput>, path: string): Promise<string> {
-  const configured = await dependencies.workspace.configuredRoot(path, dependencies.home);
-  if (configured !== null) return configured;
-  throw new Error("Wire workspace not initialized. Run `wire init` or `wire <url>` first.");
+  return (await dependencies.workspace.initialize(dependencies.home, dependencies.initialization.backend, dependencies.initialization.registryPath)).root;
 }
 
 function watchConfig(config: WireConfig): WireWatchConfig {
@@ -290,7 +284,7 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
 
   const sync = async (value: string, path: string): Promise<WireResult> => {
     const candidatePath = resolve(path, value);
-    const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+    const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const relativePath = dependencies.workspace.relativePath(candidatePath, root);
     const pathResources = await registry.findByPath(relativePath);
@@ -317,7 +311,7 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
 
   const download = async (value: string, path: string): Promise<WireResult> => {
     const candidatePath = resolve(path, value);
-    const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+    const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
     const outputPath = join(dirname(root), primaryLink(resource).path);
@@ -328,7 +322,7 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
 
   const detach = async (value: string, path: string): Promise<WireResult> => {
     const candidatePath = resolve(path, value);
-    const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+    const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
     const outputPath = join(dirname(root), primaryLink(resource).path);
@@ -348,7 +342,7 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
 
   const watchWithHooks = async (value: string, path: string, hooks: readonly WireWatchSyncHook[]): Promise<WireWatchSession> => {
     const candidatePath = resolve(path, value);
-    const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+    const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const config = watchConfig(await dependencies.workspace.loadConfig!(root));
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
@@ -395,7 +389,7 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
 
   const openResource = async (value: string, path: string): Promise<Resource> => {
     const candidatePath = resolve(path, value);
-    const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+    const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
     await dependencies.open(resource.urls[0]!);
@@ -403,7 +397,7 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
   };
 
   const syncAll = async (path: string): Promise<readonly WireResult[]> => {
-    const root = await existingWireRoot(dependencies, path);
+    const root = await wireRoot(dependencies, path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const scope = dependencies.workspace.relativePath(path, root);
     if (relativePathEscapes(scope)) throw new Error(`Sync scope is outside the Wire workspace: root ${dirname(root)}, path ${path}`);
@@ -422,13 +416,13 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
   };
 
   const listResources = async (path: string): Promise<readonly Resource[]> => {
-    const root = await existingWireRoot(dependencies, path);
+    const root = await wireRoot(dependencies, path);
     return (await dependencies.workspace.openRegistry(root, dependencies.home)).listResources();
   };
 
   const showResource = async (value: string, path: string): Promise<Resource> => {
     const candidatePath = resolve(path, value);
-    const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+    const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     return resolveResource(registry, value, root, path);
   };
@@ -448,7 +442,10 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     listResources,
     showResource,
     init: dependencies.workspace.initialize,
-    switchBackend: (path: string) => dependencies.workspace.switchBackend!(path, dependencies.home),
+    switchBackend: async (path: string) => {
+      const root = await wireRoot(dependencies, path);
+      return dependencies.workspace.switchBackend!(dirname(root), dependencies.home);
+    },
     [wireWatchHooks]: watchWithHooks,
   }) as WireInternal;
 }

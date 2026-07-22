@@ -910,6 +910,17 @@ test("google sheets adapter reads gid from hash with extra parameters", async ()
   assert.deepEqual(requests, ["https://docs.google.com/spreadsheets/d/sheet/export?format=csv&gid=7"]);
 });
 
+test("google sheets adapter exports exact tab when query and hash gid match", async () => {
+  const requests = [];
+  const document = await fetchSource(runtime(async (input) => {
+    requests.push(String(input));
+    return exportResponse("Sheet - Data", "csv", "a,b\n1,2\n");
+  }), "https://docs.google.com/spreadsheets/d/1p0nwi7Ompg0lQaOUL_BUXxbZl9CQvbmq-_NOCo-C5jU/edit?gid=1877918061#gid=1877918061", serviceCatalog);
+  assert.equal(document.markdown, "| a | b |\n| --- | --- |\n| 1 | 2 |\n");
+  assert.equal(document.data.sheet_gid, "1877918061");
+  assert.deepEqual(requests, ["https://docs.google.com/spreadsheets/d/1p0nwi7Ompg0lQaOUL_BUXxbZl9CQvbmq-_NOCo-C5jU/export?format=csv&gid=1877918061"]);
+});
+
 test("google sheets adapter accepts account-scoped spreadsheet URLs", async () => {
   const requests = [];
   const document = await fetchSource(runtime(async (input) => {
@@ -1005,6 +1016,12 @@ test("google sheets adapter renders empty tabs as empty markdown", async () => {
     return exportResponse("Sheet - Data", "csv", "");
   }), "https://docs.google.com/spreadsheets/d/sheet/edit#gid=7", serviceCatalog);
   assert.equal(document.markdown, "");
+});
+
+test("google sheets adapter renders sparse first rows as fenced CSV", async () => {
+  const document = await fetchSource(runtime(async () => exportResponse("Sheet - Data", "csv", ",2/28/2026,,Considerations\nVendor,Commitment type,,Terms\nOpenAI,Non prepaid,,\"all spend, discounted\"\n")), "https://docs.google.com/spreadsheets/d/sheet/edit#gid=7", serviceCatalog);
+  assert.equal(document.markdown, "```csv\n,2/28/2026,,Considerations\nVendor,Commitment type,,Terms\nOpenAI,Non prepaid,,\"all spend, discounted\"\n```\n");
+  assert.deepEqual(document.data.rows, [["", "2/28/2026", "", "Considerations"], ["Vendor", "Commitment type", "", "Terms"], ["OpenAI", "Non prepaid", "", "all spend, discounted"]]);
 });
 
 test("google sheets adapter preserves literal html-looking cell text", async () => {
@@ -1746,6 +1763,32 @@ test("google sheets synchronization uploads local-only table edits", async () =>
   }), "https://docs.google.com/spreadsheets/d/sheet/edit#gid=7", serviceCatalog, base.data, "| id | name |\n| --- | --- |\n| new | Name |\n", "/workspace/sheet.md");
   assert.equal(document.markdown, "| id | name |\n| --- | --- |\n| new | Name |\n");
   assert.deepEqual(requests.map((request) => request.url.pathname), ["/spreadsheets/d/sheet/export", "/spreadsheets/d/sheet/edit", "/spreadsheets/u/0/d/sheet/save", "/spreadsheets/d/sheet/export"]);
+});
+
+test("google sheets synchronization uploads local-only fenced CSV edits", async () => {
+  const requests = [];
+  let csv = ",Date\nVendor,Old\n";
+  const base = await fetchSource(runtime(async () => exportResponse("Sheet Title", "csv", csv)), "https://docs.google.com/spreadsheets/d/sheet/edit#gid=7", serviceCatalog);
+  const document = await synchronizeSource(runtime(async (input, init = {}) => {
+    const url = new URL(String(input));
+    requests.push({ url, init });
+    if (url.pathname.endsWith("/edit")) return sheetHtml();
+    if (url.pathname.endsWith("/save")) {
+      const params = new URLSearchParams(init.body);
+      const bundles = JSON.parse(params.get("bundles"));
+      assert.deepEqual(bundles, [{ commands: [[21299578, "[[\"7\",1,2,1,2],[132274236,3,[2,\"New\"],null,null,0],[null,[[null,513,[0],null,null,null,null,null,null,null,null,0]]]]"]], sid: "sid-1", reqId: 0 }]);
+      csv = ",Date\nVendor,New\n";
+      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
+    }
+    return exportResponse("Sheet Title", "csv", csv);
+  }), "https://docs.google.com/spreadsheets/d/sheet/edit#gid=7", serviceCatalog, base.data, "```csv\n,Date\nVendor,New\n```\n", "/workspace/sheet.md");
+  assert.equal(document.markdown, "```csv\n,Date\nVendor,New\n```\n");
+  assert.deepEqual(requests.map((request) => request.url.pathname), ["/spreadsheets/d/sheet/export", "/spreadsheets/d/sheet/edit", "/spreadsheets/u/0/d/sheet/save", "/spreadsheets/d/sheet/export"]);
+});
+
+test("google sheets synchronization migrates unchanged sparse tables to fenced CSV", async () => {
+  const document = await synchronizeSource(runtime(async () => exportResponse("Sheet Title", "csv", ",Date\nVendor,Old\n")), "https://docs.google.com/spreadsheets/d/sheet/edit#gid=7", serviceCatalog, { markdown: "|   | Date |\n| --- | --- |\n| Vendor | Old |\n", rows: [["", "Date"], ["Vendor", "Old"]] }, "|   | Date |\n| --- | --- |\n| Vendor | Old |\n", "/workspace/sheet.md");
+  assert.equal(document.markdown, "```csv\n,Date\nVendor,Old\n```\n");
 });
 
 test("google sheets synchronization points expired save cookies to login", async () => {

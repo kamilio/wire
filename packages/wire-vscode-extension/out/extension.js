@@ -1113,12 +1113,7 @@ var wireWatchHooks = Symbol("wireWatchHooks");
 async function wireRoot(dependencies, path) {
   const configured = await dependencies.workspace.configuredRoot(path, dependencies.home);
   if (configured !== null) return configured;
-  return (await dependencies.workspace.initialize(path, dependencies.initialization.backend, dependencies.initialization.registryPath)).root;
-}
-async function existingWireRoot(dependencies, path) {
-  const configured = await dependencies.workspace.configuredRoot(path, dependencies.home);
-  if (configured !== null) return configured;
-  throw new Error("Wire workspace not initialized. Run `wire init` or `wire <url>` first.");
+  return (await dependencies.workspace.initialize(dependencies.home, dependencies.initialization.backend, dependencies.initialization.registryPath)).root;
 }
 function watchConfig(config) {
   return {
@@ -1295,7 +1290,7 @@ function composeWire(dependencies) {
   };
   const sync = async (value, path) => {
     const candidatePath = (0, import_node_path3.resolve)(path, value);
-    const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+    const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const relativePath = dependencies.workspace.relativePath(candidatePath, root);
     const pathResources = await registry.findByPath(relativePath);
@@ -1321,7 +1316,7 @@ function composeWire(dependencies) {
   };
   const download = async (value, path) => {
     const candidatePath = (0, import_node_path3.resolve)(path, value);
-    const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+    const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
     const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
@@ -1331,7 +1326,7 @@ function composeWire(dependencies) {
   };
   const detach = async (value, path) => {
     const candidatePath = (0, import_node_path3.resolve)(path, value);
-    const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+    const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
     const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
@@ -1349,7 +1344,7 @@ function composeWire(dependencies) {
   };
   const watchWithHooks = async (value, path, hooks) => {
     const candidatePath = (0, import_node_path3.resolve)(path, value);
-    const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+    const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const config = watchConfig(await dependencies.workspace.loadConfig(root));
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
@@ -1396,14 +1391,14 @@ function composeWire(dependencies) {
   const watch = (value, path) => watchWithHooks(value, path, []);
   const openResource2 = async (value, path) => {
     const candidatePath = (0, import_node_path3.resolve)(path, value);
-    const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+    const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
     await dependencies.open(resource.urls[0]);
     return resource;
   };
   const syncAll = async (path) => {
-    const root = await existingWireRoot(dependencies, path);
+    const root = await wireRoot(dependencies, path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const scope = dependencies.workspace.relativePath(path, root);
     if (relativePathEscapes(scope)) throw new Error(`Sync scope is outside the Wire workspace: root ${(0, import_node_path3.dirname)(root)}, path ${path}`);
@@ -1421,12 +1416,12 @@ function composeWire(dependencies) {
     return results;
   };
   const listResources = async (path) => {
-    const root = await existingWireRoot(dependencies, path);
+    const root = await wireRoot(dependencies, path);
     return (await dependencies.workspace.openRegistry(root, dependencies.home)).listResources();
   };
   const showResource = async (value, path) => {
     const candidatePath = (0, import_node_path3.resolve)(path, value);
-    const root = await existingWireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
+    const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     return resolveResource(registry, value, root, path);
   };
@@ -1445,7 +1440,10 @@ function composeWire(dependencies) {
     listResources,
     showResource,
     init: dependencies.workspace.initialize,
-    switchBackend: (path) => dependencies.workspace.switchBackend(path, dependencies.home),
+    switchBackend: async (path) => {
+      const root = await wireRoot(dependencies, path);
+      return dependencies.workspace.switchBackend((0, import_node_path3.dirname)(root), dependencies.home);
+    },
     [wireWatchHooks]: watchWithHooks
   });
 }
@@ -2695,6 +2693,21 @@ function rowsMarkdown(rows) {
   ].join("\n")}
 `;
 }
+function csvCell(value) {
+  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+function rowsCsv(rows) {
+  return `${rows.map((row) => row.map(csvCell).join(",")).join("\n")}
+`;
+}
+function sheetMarkdown(rows) {
+  if (rows.length === 0) return "";
+  const columnCount = Math.max(...rows.map((row) => row.length));
+  if (rows[0].length === columnCount && rows[0].every((cell) => cell !== "")) return rowsMarkdown(rows);
+  return `\`\`\`csv
+${rowsCsv(rows)}\`\`\`
+`;
+}
 function markdownTableRow(line) {
   let value = line.trim();
   if (value.startsWith("|")) value = value.slice(1);
@@ -2729,6 +2742,16 @@ function parseMarkdownTable(markdown) {
   const invalidRow = rowLengths.findIndex((row) => row.length !== rows[0].length);
   if (invalidRow !== -1) throw new Error(`Google Sheets sync requires every Markdown table row to have ${rows[0].length} cells: line ${invalidRow + 1} has ${rowLengths[invalidRow].length}`);
   return rows;
+}
+function parseSheetMarkdown(markdown) {
+  if (markdown.trim() === "") return [];
+  const value = markdown.trimEnd();
+  if (!value.startsWith("```csv\n")) return parseMarkdownTable(markdown);
+  if (!value.endsWith("\n```")) throw new Error("Google Sheets sync requires fenced CSV to end with ```");
+  return parseCsv(value.slice("```csv\n".length, -"\n```".length));
+}
+function rowsEqual(left, right) {
+  return left.length === right.length && left.every((row, rowIndex) => row.length === right[rowIndex].length && row.every((cell, columnIndex) => cell === right[rowIndex][columnIndex]));
 }
 function resourceKey(source) {
   const key2 = source["resource_key"];
@@ -3257,7 +3280,7 @@ async function fetchGoogleDocument(runtime2, source) {
   }
   const exported = await googleExport(runtime2, exportUrl, label);
   const rows = source["sheet_gid"] === void 0 ? null : parseCsv(exported.text);
-  const markdown = rows === null ? exported.text : rowsMarkdown(rows);
+  const markdown = rows === null ? exported.text : sheetMarkdown(rows);
   const tab = source["sheet_gid"] === void 0 ? documentTab(source) : null;
   return Object.freeze({ title: exported.title, markdown, data: { document_id: documentId, title: exported.title, output_path: null, sheet_gid: sheetGid, markdown, rows, ...tab === null ? {} : { document_tab: tab } } });
 }
@@ -3274,10 +3297,17 @@ async function synchronizeGoogleDocument(runtime2, _url, source, base, markdown)
   const label = source["sheet_gid"] === void 0 ? "Google Docs" : "Google Sheets";
   if (typeof baseMarkdown !== "string") throw new Error("Google sync base must include markdown");
   if (source["sheet_gid"] === void 0 && (docMarkdownEqual(markdown, baseMarkdown) || docMarkdownEqual(markdown, remote.markdown))) return remote;
-  if (source["sheet_gid"] !== void 0 && (markdown === baseMarkdown || markdown === remote.markdown)) return remote;
-  if (remote.markdown === baseMarkdown && source["sheet_gid"] !== void 0) {
-    const baseRows = stringRows(objectValue(base)["rows"]);
-    const localRows = parseMarkdownTable(markdown);
+  if (source["sheet_gid"] !== void 0) {
+    const baseObject = objectValue(base);
+    if (baseObject["rows"] === void 0) {
+      if (markdown === baseMarkdown || markdown === remote.markdown) return remote;
+      if (remote.markdown !== baseMarkdown) throw new Error(`${label} changed remotely and locally. Resolve the conflict in ${label} or the local Markdown file before syncing again.`);
+    }
+    const baseRows = stringRows(baseObject["rows"]);
+    const remoteRows = stringRows(objectValue(remote.data)["rows"]);
+    const localRows = parseSheetMarkdown(markdown);
+    if (rowsEqual(localRows, baseRows) || rowsEqual(localRows, remoteRows)) return remote;
+    if (!rowsEqual(remoteRows, baseRows)) throw new Error(`${label} changed remotely and locally. Resolve the conflict in ${label} or the local Markdown file before syncing again.`);
     const cells = changedCells(baseRows, localRows);
     if (cells.length === 0) return remote;
     const formula = cells.find((cell) => formulaLikeCell(cell.value));
@@ -3285,7 +3315,7 @@ async function synchronizeGoogleDocument(runtime2, _url, source, base, markdown)
 Prefix it with an apostrophe or rewrite it as plain text before syncing.`);
     await uploadSheetRows(runtime2, source["document_id"] ?? source.identifier, source["sheet_gid"], resourceKey(source), cells);
     const uploaded = await fetchGoogleDocument(runtime2, source);
-    if (uploaded.markdown !== rowsMarkdown(localRows)) throw new Error("Google Sheets save verification failed");
+    if (!rowsEqual(stringRows(objectValue(uploaded.data)["rows"]), localRows)) throw new Error("Google Sheets save verification failed");
     return uploaded;
   }
   if (source["sheet_gid"] === void 0 && docMarkdownEqual(remote.markdown, baseMarkdown)) {
@@ -4934,8 +4964,6 @@ function wireError(error) {
   if (unregisteredPath !== null) return { message: `Wire - Not attached: ${unregisteredPath[1]}. Use Wire - Attach to track a source URL, or Wire - Download for a one-time copy.` };
   const missingPath = /^Resource path not found: ([\s\S]+)$/.exec(error.message);
   if (missingPath !== null) return { message: `Wire - Not found: ${missingPath[1]}.` };
-  const missingWorkspace = /^Wire workspace not initialized\. Run `wire init` or `wire <url>` first\.$/.exec(error.message);
-  if (missingWorkspace !== null) return { message: "Wire - Workspace is not initialized. Use Wire - Attach to start tracking a source URL." };
   const unsupportedSource = /^Unsupported source URL: ([\s\S]+)$/.exec(error.message);
   if (unsupportedSource !== null) return { message: `Wire - Unsupported source URL: ${unsupportedSource[1]}. Supported sources: Asana, ChatGPT, Gmail, Google Docs/Sheets/Slides/Forms, Notion, Slack, Zoom.` };
   const login = /authentication (?:is missing or expired|is missing|failed|expired).*Run `([^`]+)`/i.exec(error.message);

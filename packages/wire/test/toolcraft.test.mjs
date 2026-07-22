@@ -707,33 +707,6 @@ test("CLI watch resource lookup errors are user-facing", async () => {
   );
 });
 
-test("CLI missing workspace errors are user-facing", async () => {
-  await assert.rejects(
-    () => execFileAsync(process.execPath, [fixture, "sync-all"], { env: { ...process.env, NO_COLOR: "1", WIRE_FAKE_SYNC_ALL_ERROR: "Wire workspace not initialized. Run `wire init` or `wire <url>` first." } }),
-    (error) => {
-      assert.match(error.stdout, /workspace not initialized/);
-      assert.match(error.stdout, /run: wire init/);
-      assert.match(error.stdout, /attach: wire <url>/);
-      assert.doesNotMatch(error.stdout, /Use --debug/);
-      assert.doesNotMatch(error.stdout, /for usage/);
-      assert.equal(error.stderr, "");
-      return true;
-    },
-  );
-  await assert.rejects(
-    () => execFileAsync(process.execPath, [fixture, "switch-db"], { env: { ...process.env, NO_COLOR: "1", WIRE_FAKE_SWITCH_DB_ERROR: "Wire workspace not initialized. Run `wire init` or `wire <url>` first." } }),
-    (error) => {
-      assert.match(error.stdout, /workspace not initialized/);
-      assert.match(error.stdout, /run: wire init/);
-      assert.match(error.stdout, /attach: wire <url>/);
-      assert.doesNotMatch(error.stdout, /Use --debug/);
-      assert.doesNotMatch(error.stdout, /for usage/);
-      assert.equal(error.stderr, "");
-      return true;
-    },
-  );
-});
-
 test("CLI init conflict errors are user-facing", async () => {
   await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, "init", "--backend", "files"], { env: { ...process.env, NO_COLOR: "1", WIRE_FAKE_INIT_ERROR: "Wire workspace already initialized with sqlite registry at registry.sqlite3. Existing registries are not overwritten." } }),
@@ -768,7 +741,6 @@ test("CLI operation user errors honor JSON output", async () => {
     [["sync", "Document.md", "--json"], jsonError("api failed\nservice: Zoom\noperation: file batch_get\nstatus: HTTP 403\ndetail: {\"error\":\"denied\"}"), { WIRE_FAKE_SYNC_ERROR: "Zoom Hub file batch_get failed: HTTP 403 {\"error\":\"denied\"}" }],
     [["sync", "Document.md", "--json"], jsonError("local markdown invalid\nservice: Asana\nline: 4\ndetail: not a task"), { WIRE_FAKE_SYNC_ERROR: "Unsupported Asana Markdown at line 4: not a task" }],
     [["sync", "Document.md", "--json"], jsonError("sync conflict\nservice: Notion\nresolve: edit Notion or local Markdown, then sync again"), { WIRE_FAKE_SYNC_ERROR: "Markdown and Notion changed since last sync" }],
-    [["switch-db", "--json"], jsonError("workspace not initialized\nrun: wire init\nattach: wire <url>"), { WIRE_FAKE_SWITCH_DB_ERROR: "Wire workspace not initialized. Run `wire init` or `wire <url>` first." }],
     [["init", "--backend", "files", "--json"], jsonError("workspace already initialized\nbackend: sqlite\nregistry: registry.sqlite3\nkept: existing registry"), { WIRE_FAKE_INIT_ERROR: "Wire workspace already initialized with sqlite registry at registry.sqlite3. Existing registries are not overwritten." }],
   ]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1", ...env } }),
@@ -1169,6 +1141,7 @@ test("CLI Google local validation failures are user-facing", async () => {
     ["Google Sheets sync requires a Markdown table", [/local table invalid/, /service: Google Docs\/Sheets/, /source: Google Sheets/, /detail: requires a Markdown table/], /Google Sheets sync requires/],
     ["Google Sheets sync requires a Markdown table separator row", [/local table invalid/, /service: Google Docs\/Sheets/, /source: Google Sheets/, /detail: requires a Markdown table separator row/], /Google Sheets sync requires/],
     ["Google Sheets sync requires every Markdown table row to have the same number of cells", [/local table invalid/, /service: Google Docs\/Sheets/, /source: Google Sheets/, /detail: requires every Markdown table row to have the same number of cells/], /Google Sheets sync requires/],
+    ["Google Sheets sync requires fenced CSV to end with ```", [/local CSV invalid/, /service: Google Docs\/Sheets/, /source: Google Sheets/, /detail: fenced CSV must end with ```/], /Google Sheets sync requires/],
     ["Google Sheets sync cannot upload formula-like cell text at row 2, column 2\nPrefix it with an apostrophe or rewrite it as plain text before syncing.", [/formula-like cell blocked/, /service: Google Docs\/Sheets/, /source: Google Sheets/, /cell: row 2, column 2/, /resolve: prefix with an apostrophe or rewrite as plain text/], /Google Sheets sync cannot upload formula-like cell text/],
   ]) await assert.rejects(
     () => execFileAsync(process.execPath, [fixture, "sync", "Document.md"], { env: { ...process.env, NO_COLOR: "1", WIRE_FAKE_SYNC_ERROR: message } }),

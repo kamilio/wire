@@ -196,14 +196,48 @@ function watchSessionJson(value: WireWatchSession) {
 }
 
 function wireUserErrorMessage(message: string): boolean {
-  return /^Unsupported source URL: /.test(message) || /^Wire workspace not initialized\. Run `wire init` or `wire <url>` first\.$/.test(message) || /^Wire workspace already initialized with (sqlite|files) registry at .+\. Existing registries are not overwritten\.$/.test(message) || /^Resource path is not registered: /.test(message) || /^Resource (path |identifier |URL )?not found: /.test(message) || /^Ambiguous resource path /.test(message) || /^Login not saved$/.test(message) || /authentication (is missing|is missing or expired|failed|expired).*Run `wire (asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.test(message) || /^Asana API /.test(message) || /^(GET|POST|PUT|DELETE) \/.* failed: \d+ /.test(message) || /^(Invalid Asana project heading|Asana section appears|Asana milestone appears|Asana task appears|Asana subtask appears|Unsupported Asana Markdown|Duplicate Asana identity|Missing Asana project heading|Asana project identity changed|Unknown Asana identity|Conflicting Asana edits)/.test(message) || /^ChatGPT conversation download failed\. Run `wire chatgpt login`\./.test(message) || /^Gmail API .+ failed: HTTP \d+ /.test(message) || /^Slack API [\w.]+ failed: /.test(message) || /^Zoom Hub (.+ failed: HTTP \d+|file .+ was not returned by batch_get)/.test(message) || /^(Markdown document requires a first heading|Markdown and Notion changed since last sync|lossless Markdown headings deeper than level 3 are not supported)$/.test(message) || /^Indented Notion Markdown block has no parent at indent \d+$/.test(message) || /^POST [A-Za-z0-9]+ failed: \d+ /.test(message) || /^Google (Docs|Sheets|Slides) changed remotely and locally\./.test(message) || /^Google Docs local edit cannot be mapped to the live document text$/.test(message) || /^Google Docs sync cannot upload formatting-only Markdown edits$/.test(message) || /^Google Docs sync cannot preserve formatting in edited text$/.test(message) || /^Google Slides sync is download-only\./.test(message) || /^Google Forms sync is download-only\./.test(message) || /^Google Forms API is disabled\. Enable it at /.test(message) || /^Google Forms API token is missing required scopes\./.test(message) || /^Google Forms API authentication is missing or expired\./.test(message) || /^Google Forms API .+ failed: HTTP \d+/.test(message) || /^Google (Docs|Sheets) editor did not include save metadata$/.test(message) || /^Google (Docs Markdown|Sheets CSV|Slides PPTX) export (did not include a filename|failed: HTTP \d+)$/.test(message) || /^Google (Docs|Sheets) save (failed: |verification failed$)/.test(message) || /^Google sync base must /.test(message) || /^Google Sheets sync base /.test(message) || /^Google Sheets sync cannot upload formula-like cell text at row \d+, column \d+\nPrefix it with an apostrophe or rewrite it as plain text before syncing\.$/.test(message) || /^Google Sheets sync requires a Markdown table/.test(message) || /^Google Sheets sync requires every Markdown table row to have the same number of cells$/.test(message) || /^Google Sheets sync requires every Markdown table row to have \d+ cells: line \d+ has \d+$/.test(message);
+  return /^Unsupported source URL: /.test(message)
+    || /^Wire workspace already initialized with (sqlite|files) registry at .+\. Existing registries are not overwritten\.$/.test(message)
+    || /^Resource path is not registered: /.test(message)
+    || /^Resource (path |identifier |URL )?not found: /.test(message)
+    || /^Ambiguous resource path /.test(message)
+    || /^Login not saved$/.test(message)
+    || /authentication (is missing|is missing or expired|failed|expired).*Run `wire (asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.test(message)
+    || /^Asana API /.test(message)
+    || /^(GET|POST|PUT|DELETE) \/.* failed: \d+ /.test(message)
+    || /^(Invalid Asana project heading|Asana section appears|Asana milestone appears|Asana task appears|Asana subtask appears|Unsupported Asana Markdown|Duplicate Asana identity|Missing Asana project heading|Asana project identity changed|Unknown Asana identity|Conflicting Asana edits)/.test(message)
+    || /^ChatGPT conversation download failed\. Run `wire chatgpt login`\./.test(message)
+    || /^Gmail API .+ failed: HTTP \d+ /.test(message)
+    || /^Slack API [\w.]+ failed: /.test(message)
+    || /^Zoom Hub (.+ failed: HTTP \d+|file .+ was not returned by batch_get)/.test(message)
+    || /^(Markdown document requires a first heading|Markdown and Notion changed since last sync|lossless Markdown headings deeper than level 3 are not supported)$/.test(message)
+    || /^Indented Notion Markdown block has no parent at indent \d+$/.test(message)
+    || /^POST [A-Za-z0-9]+ failed: \d+ /.test(message)
+    || /^Google (Docs|Sheets|Slides) changed remotely and locally\./.test(message)
+    || /^Google Docs local edit cannot be mapped to the live document text$/.test(message)
+    || /^Google Docs sync cannot upload formatting-only Markdown edits$/.test(message)
+    || /^Google Docs sync cannot preserve formatting in edited text$/.test(message)
+    || /^Google Slides sync is download-only\./.test(message)
+    || /^Google Forms sync is download-only\./.test(message)
+    || /^Google Forms API is disabled\. Enable it at /.test(message)
+    || /^Google Forms API token is missing required scopes\./.test(message)
+    || /^Google Forms API authentication is missing or expired\./.test(message)
+    || /^Google Forms API .+ failed: HTTP \d+/.test(message)
+    || /^Google (Docs|Sheets) editor did not include save metadata$/.test(message)
+    || /^Google (Docs Markdown|Sheets CSV|Slides PPTX) export (did not include a filename|failed: HTTP \d+)$/.test(message)
+    || /^Google (Docs|Sheets) save (failed: |verification failed$)/.test(message)
+    || /^Google sync base must /.test(message)
+    || /^Google Sheets sync base /.test(message)
+    || /^Google Sheets sync cannot upload formula-like cell text at row \d+, column \d+\nPrefix it with an apostrophe or rewrite it as plain text before syncing\.$/.test(message)
+    || /^Google Sheets sync requires fenced CSV to end with ```$/.test(message)
+    || /^Google Sheets sync requires a Markdown table/.test(message)
+    || /^Google Sheets sync requires every Markdown table row to have the same number of cells$/.test(message)
+    || /^Google Sheets sync requires every Markdown table row to have \d+ cells: line \d+ has \d+$/.test(message);
 }
 
 function wireUserErrorDisplayMessage(message: string): string {
   const unsupportedSource = /^Unsupported source URL: ([\s\S]+)$/.exec(message);
   if (unsupportedSource !== null) return `unsupported source\nurl: ${lineText(unsupportedSource[1]!)}\nsupported: Asana, ChatGPT, Gmail, Google Docs/Sheets/Slides/Forms, Notion, Slack, Zoom`;
-  const missingWorkspace = /^Wire workspace not initialized\. Run `wire init` or `wire <url>` first\.$/.exec(message);
-  if (missingWorkspace !== null) return "workspace not initialized\nrun: wire init\nattach: wire <url>";
   const existingWorkspace = /^Wire workspace already initialized with (sqlite|files) registry at ([\s\S]+)\. Existing registries are not overwritten\.$/.exec(message);
   if (existingWorkspace !== null) return `workspace already initialized\nbackend: ${existingWorkspace[1]!}\nregistry: ${lineText(existingWorkspace[2]!)}\nkept: existing registry`;
   const authentication = /authentication (is missing or expired|is missing|failed|expired).*Run `wire (asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.exec(message);
@@ -274,6 +308,7 @@ function wireUserErrorDisplayMessage(message: string): string {
   if (googleSheetsSyncBase !== null) return `sync base invalid\nservice: Google Docs/Sheets/Slides\nsource: Google Sheets\ndetail: ${lineText(googleSheetsSyncBase[1]!)}`;
   const googleSheetsFormulaCell = /^Google Sheets sync cannot upload formula-like cell text at row (\d+), column (\d+)\nPrefix it with an apostrophe or rewrite it as plain text before syncing\.$/.exec(message);
   if (googleSheetsFormulaCell !== null) return `formula-like cell blocked\nservice: Google Docs/Sheets/Slides\nsource: Google Sheets\ncell: row ${googleSheetsFormulaCell[1]!}, column ${googleSheetsFormulaCell[2]!}\nresolve: prefix with an apostrophe or rewrite as plain text`;
+  if (message === "Google Sheets sync requires fenced CSV to end with ```") return "local CSV invalid\nservice: Google Docs/Sheets/Slides\nsource: Google Sheets\ndetail: fenced CSV must end with ```";
   const googleSheetsTable = /^Google Sheets sync requires (a Markdown table(?: separator row)?|every Markdown table row to have the same number of cells|every Markdown table row to have \d+ cells: line \d+ has \d+)$/.exec(message);
   if (googleSheetsTable !== null) return `local table invalid\nservice: Google Docs/Sheets/Slides\nsource: Google Sheets\ndetail: requires ${lineText(googleSheetsTable[1]!)}`;
   const missingPath = /^Resource path (not found|is not registered): ([\s\S]+)$/.exec(message);

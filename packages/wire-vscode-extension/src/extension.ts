@@ -131,8 +131,6 @@ function wireError(error: unknown): WireDisplayError | null {
   if (unregisteredPath !== null) return { message: `Wire - Not attached: ${unregisteredPath[1]}. Use Wire - Attach to track a source URL, or Wire - Download for a one-time copy.` };
   const missingPath = /^Resource path not found: ([\s\S]+)$/.exec(error.message);
   if (missingPath !== null) return { message: `Wire - Not found: ${missingPath[1]}.` };
-  const missingWorkspace = /^Wire workspace not initialized\. Run `wire init` or `wire <url>` first\.$/.exec(error.message);
-  if (missingWorkspace !== null) return { message: "Wire - Workspace is not initialized. Use Wire - Attach to start tracking a source URL." };
   const unsupportedSource = /^Unsupported source URL: ([\s\S]+)$/.exec(error.message);
   if (unsupportedSource !== null) return { message: `Wire - Unsupported source URL: ${unsupportedSource[1]}. Supported sources: Asana, ChatGPT, Gmail, Google Docs/Sheets/Slides/Forms, Notion, Slack, Zoom.` };
   const login = /authentication (?:is missing or expired|is missing|failed|expired).*Run `([^`]+)`/i.exec(error.message);
