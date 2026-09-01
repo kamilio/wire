@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { createRoot } from "./adapters/root.js";
 import { composeAuth } from "./auth.js";
@@ -88,7 +88,8 @@ export function createExecutableRoot(environment, currentDirectory, options = { 
             exists: async (path) => existsSync(path),
             isFile: async (path) => existsSync(path) && statSync(path).isFile(),
             readText: runtime.filesystem.readText,
-            writeText: (path, contents) => writeFile(path, contents, "utf8"),
+            writeText: async (path, contents) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, contents, "utf8"); },
+            writeBytes: async (path, contents) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, contents); },
         },
         workspace: {
             configuredRoot: configuredWireRoot,

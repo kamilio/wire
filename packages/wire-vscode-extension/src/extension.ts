@@ -84,7 +84,8 @@ async function wire(path: string) {
       exists: async (path: string) => existsSync(path),
       isFile: async (path: string) => existsSync(path) && statSync(path).isFile(),
       readText: capabilities.filesystem.readText,
-      writeText: capabilities.filesystem.writeText
+      writeText: capabilities.filesystem.writeText,
+      writeBytes: async (path: string, contents: Uint8Array) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, contents); }
     },
     workspace: {
       configuredRoot: configuredWireRoot,

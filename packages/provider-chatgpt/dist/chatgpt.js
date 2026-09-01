@@ -1,22 +1,6 @@
 import { defineService } from "wire-core";
-function chatgptAuthError() {
-    return new Error("ChatGPT authentication is missing or expired. Run `wire chatgpt login` once; other commands reuse saved cookies.");
-}
-function cookieHeader(cookies) {
-    return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
-}
-function headers(cookies, referer) {
-    return {
-        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
-        "sec-ch-ua": '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"macOS"',
-        "oai-device-id": cookies.find((cookie) => cookie.name === "oai-did").value,
-        "oai-language": "en-US",
-        referer,
-        cookie: cookieHeader(cookies),
-    };
-}
+import { connectChatgpt, object } from "./client.js";
+import { downloadChatgpt } from "./download.js";
 function formatUpdateTime(value) {
     if (typeof value === "string")
         return value;
@@ -26,20 +10,24 @@ function orderedMessages(conversation) {
     const mapping = conversation["mapping"];
     if (typeof conversation["current_node"] === "string") {
         const path = [];
+        const visited = new Set();
         let nodeId = conversation["current_node"];
         while (nodeId !== null) {
+            if (visited.has(nodeId) || mapping[nodeId] === undefined)
+                throw new Error("Invalid ChatGPT conversation branch");
+            visited.add(nodeId);
             const node = mapping[nodeId];
             const message = node["message"];
-            if (message !== null)
+            if (message != null)
                 path.push(message);
-            nodeId = node["parent"];
+            nodeId = typeof node["parent"] === "string" ? node["parent"] : null;
         }
         return path.reverse();
     }
     const messages = [];
     for (const node of Object.values(mapping)) {
         const message = node["message"];
-        if (message !== null)
+        if (message != null)
             messages.push(message);
     }
     messages.sort((left, right) => {
@@ -158,33 +146,22 @@ function fetchedConversation(conversation) {
 }
 export const chatgptService = defineService({
     name: "chatgpt",
-    matches: (url) => (url.hostname === "chatgpt.com" || url.hostname === "chat.openai.com") && /^\/c\/[^/]+\/?$/.test(url.pathname),
-    parse: (url) => Object.freeze({ service: "chatgpt", identifier: /^\/c\/([^/]+)\/?$/.exec(url.pathname)[1], type: "message-thread" }),
+    matches: (url) => (url.hostname === "chatgpt.com" || url.hostname === "chat.openai.com") && (url.pathname === "/" || /^\/c\/[^/]+\/?$/.test(url.pathname) || /^\/g\/g-p-[^/]+\/project\/?$/.test(url.pathname) || /^\/g\/[^/]+\/c\/[^/]+\/?$/.test(url.pathname)),
+    parse: (url) => {
+        if (url.pathname === "/")
+            return Object.freeze({ service: "chatgpt", identifier: "history", type: "project" });
+        const project = /^\/g\/(g-p-[^/]+)\/project\/?$/.exec(url.pathname);
+        if (project !== null)
+            return Object.freeze({ service: "chatgpt", identifier: project[1], type: "project" });
+        return Object.freeze({ service: "chatgpt", identifier: /\/c\/([^/]+)\/?$/.exec(url.pathname)[1], type: "message-thread" });
+    },
+    download: (runtime, url, source, write) => downloadChatgpt(runtime, url, source, write, conversationMarkdown),
     fetch: async (runtime, url, source) => {
-        const cookies = await runtime.cookies.loadSaved("chatgpt");
-        if (cookies === null)
-            throw chatgptAuthError();
-        const sessionHeaders = headers(cookies, "https://chatgpt.com/");
-        const sessionResponse = await runtime.http.request("https://chatgpt.com/api/auth/session", { headers: sessionHeaders });
-        const sessionText = await sessionResponse.text();
-        if (!sessionText.startsWith("{"))
-            throw chatgptAuthError();
-        const session = JSON.parse(sessionText);
-        if ("error" in session)
-            throw chatgptAuthError();
-        if (session["account"] === undefined || session["accessToken"] === undefined)
-            throw chatgptAuthError();
-        const account = session["account"];
-        const conversationHeaders = {
-            ...sessionHeaders,
-            authorization: `Bearer ${session["accessToken"]}`,
-            "chatgpt-account-id": account["id"],
-            referer: url,
-        };
-        const conversationResponse = await runtime.http.request(`https://chatgpt.com/backend-api/conversation/${encodeURIComponent(source.identifier)}`, { headers: conversationHeaders });
-        if (!conversationResponse.ok)
-            throw new Error(`ChatGPT conversation download failed. Run \`wire chatgpt login\`. ${await conversationResponse.text()}`);
-        return fetchedConversation(await conversationResponse.json());
+        if (source.type === "project")
+            throw new Error("Use `wire download <url>` to export ChatGPT history or projects as a directory.");
+        const session = await connectChatgpt(runtime, url);
+        const conversation = await session.forAccount(session.accountId).json(`/backend-api/conversation/${encodeURIComponent(source.identifier)}`);
+        return fetchedConversation(object(conversation));
     },
 });
 //# sourceMappingURL=chatgpt.js.map

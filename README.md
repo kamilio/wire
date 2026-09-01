@@ -37,7 +37,7 @@ Tracking lives in `~/.wire` by default. Run `wire init` inside a project to trac
 | Asana | Tasks | One-way |
 | Slack | Messages and threads | One-way |
 | Gmail | Email threads | One-way |
-| ChatGPT | Conversations | One-way |
+| ChatGPT | Conversations, whole history, projects and files | One-way |
 | Zoom | Docs and meeting transcripts | One-way |
 
 Two-way syncs pull remote changes and push local Markdown edits back to the source. One-way syncs only refresh the local file.
@@ -58,6 +58,36 @@ wire watch <file>        # sync a file whenever it changes
 ```
 
 Run `wire --help` for the full CLI.
+
+### ChatGPT archives
+
+```sh
+wire chatgpt login
+wire download https://chatgpt.com/
+wire download https://chatgpt.com/g/g-p-6a9702085aa081919400a53261afae49/project
+```
+
+The root URL exports to `chatgpt/index.md`, with separate account, project, conversation,
+and Library directories. It paginates active, archived, and starred chats and all
+accessible projects, including shared projects. Each conversation includes readable
+Markdown plus the full returned JSON, preserving alternate branches, tool messages,
+citations, and attachment references. Project instructions, source metadata, canvases,
+and downloadable attachments and Library files are saved too. Project URLs export
+only that project's content under `chatgpt/projects/<id>/`, with `export.md` as the index.
+
+`manifest.json` records completed resources, file hashes, unavailable accounts, errors,
+and cooldowns. Requests run sequentially. HTTP 429 and transient server failures honor
+`Retry-After` (seconds or HTTP dates, adjusted for server clock skew); without a valid
+header, retries use 1, 2, 4, and 8 second backoffs. The manifest records the precise
+retry deadline and whether it came from the server or fallback policy. After five
+rate-limited attempts the export stops making requests, retains completed files, and
+reports a partial result with the earliest retry time. Run the command again to refresh
+the same ID-based paths; files no longer returned by the server are not deleted.
+
+Exports never include session credentials. Deleted chats, expired assets, inaccessible
+workspaces, and the contents of external linked sources cannot be recovered by this
+export; available source metadata and download failures remain in the archive.
+Whole-history and project exports are one-off downloads, not tracked two-way syncs.
 
 ## MCP
 

@@ -6,6 +6,7 @@ export type WireFilesystem = Readonly<{
     isFile(path: string): Promise<boolean>;
     readText(path: string): Promise<string>;
     writeText(path: string, contents: string): Promise<void>;
+    writeBytes?(path: string, contents: Uint8Array): Promise<void>;
 }>;
 export type WireDependencies<FetchInput> = Readonly<{
     home: string;

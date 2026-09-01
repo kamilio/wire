@@ -14,6 +14,12 @@ export declare const chatgptService: Readonly<{
         markdown: string;
         data: JsonValue;
     }>>;
+    download?(input: RuntimeCapabilities, url: string, source: Readonly<{
+        [key: string]: JsonValue;
+        service: string;
+        identifier: string;
+        type: import("wire-core").ResourceType;
+    }>, write: import("wire-core").DownloadWriter): Promise<import("wire-core").DownloadedDocument | null>;
     synchronize?(input: RuntimeCapabilities, url: string, source: Readonly<{
         [key: string]: JsonValue;
         service: string;

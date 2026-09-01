@@ -1,4 +1,4 @@
-export type { FetchedDocument, FilesystemLink, Identifier, JsonObject, JsonPrimitive, JsonValue, Registry, Relationship, Resource, ResourceData, ResourceType, Service, ServiceCatalog, Source, UploadedDocument } from "./core/model.js";
+export type { DownloadedDocument, DownloadWriter, FetchedDocument, FilesystemLink, Identifier, JsonObject, JsonPrimitive, JsonValue, Registry, Relationship, Resource, ResourceData, ResourceType, Service, ServiceCatalog, Source, UploadedDocument } from "./core/model.js";
 export type { ClockCapability, ConfigurationCapability, Cookie, CookiesCapability, FilesystemCapability, GoogleTokenDocument, GoogleTokensCapability, HttpCapability, InitializedWire, OpenFilesCapability, ProcessCapability, ProcessResult, RuntimeCapabilities, SecretsCapability, SwitchedWireBackend, WatchCapability, WatchHandle, WireBackend, WireConfig, WireWatchConfig, WireWatchMode, WireWorkspace } from "./ports.js";
 export { stableJsonCompact, stableJsonPretty } from "./core/json.js";
 export { normalizeResource, resourceId } from "./core/resource.js";

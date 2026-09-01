@@ -36,7 +36,7 @@ __export(extension_exports, {
 module.exports = __toCommonJS(extension_exports);
 var import_node_child_process3 = require("node:child_process");
 var import_node_fs4 = require("node:fs");
-var import_promises6 = require("node:fs/promises");
+var import_promises7 = require("node:fs/promises");
 var import_node_path5 = require("node:path");
 var import_node_util2 = require("node:util");
 var vscode = __toESM(require("vscode"));
@@ -90,9 +90,9 @@ function serialize(value, indent, level) {
     if (value.length === 0) {
       return "[]";
     }
-    const items2 = value.map((item) => serialize(item, indent, level + 1));
-    return indent === void 0 ? `[${items2.join(",")}]` : `[
-${childIndent}${items2.join(`,
+    const items3 = value.map((item) => serialize(item, indent, level + 1));
+    return indent === void 0 ? `[${items3.join(",")}]` : `[
+${childIndent}${items3.join(`,
 ${childIndent}`)}
 ${currentIndent}]`;
   }
@@ -100,9 +100,9 @@ ${currentIndent}]`;
   if (entries.length === 0) {
     return "{}";
   }
-  const items = entries.map(([key2, item]) => `${quote(key2)}${indent === void 0 ? ":" : ": "}${serialize(item, indent, level + 1)}`);
-  return indent === void 0 ? `{${items.join(",")}}` : `{
-${childIndent}${items.join(`,
+  const items2 = entries.map(([key2, item]) => `${quote(key2)}${indent === void 0 ? ":" : ": "}${serialize(item, indent, level + 1)}`);
+  return indent === void 0 ? `{${items2.join(",")}}` : `{
+${childIndent}${items2.join(`,
 ${childIndent}`)}
 ${currentIndent}}`;
 }
@@ -146,7 +146,7 @@ function normalizeResource(resource) {
     id: resource.id,
     type: resource.type,
     identifiers: Object.freeze(
-      resource.identifiers.map((identifier) => Object.freeze({ service: identifier.service, identifier: identifier.identifier })).sort((left, right) => compareStrings2(left.service, right.service) || compareStrings2(left.identifier, right.identifier))
+      resource.identifiers.map((identifier2) => Object.freeze({ service: identifier2.service, identifier: identifier2.identifier })).sort((left, right) => compareStrings2(left.service, right.service) || compareStrings2(left.identifier, right.identifier))
     ),
     urls: Object.freeze([...resource.urls].sort(compareStrings2)),
     filesystem_links: Object.freeze(
@@ -323,10 +323,10 @@ function jsonCookie(value, domain) {
 function parseJsonCookies(contents, domain) {
   const value = JSON.parse(contents);
   if (Array.isArray(value)) return Object.freeze(value.map((cookie) => jsonCookie(cookie, domain)));
-  const object4 = value;
-  if (Array.isArray(object4["cookies"])) return Object.freeze(object4["cookies"].map((cookie) => jsonCookie(cookie, domain)));
-  if ("name" in object4 && "value" in object4) return Object.freeze([jsonCookie(object4, domain)]);
-  return Object.freeze(Object.entries(object4).map(([name, cookieValue]) => frozenCookie({
+  const object5 = value;
+  if (Array.isArray(object5["cookies"])) return Object.freeze(object5["cookies"].map((cookie) => jsonCookie(cookie, domain)));
+  if ("name" in object5 && "value" in object5) return Object.freeze([jsonCookie(object5, domain)]);
+  return Object.freeze(Object.entries(object5).map(([name, cookieValue]) => frozenCookie({
     domain,
     includeSubdomains: domain.startsWith("."),
     path: "/",
@@ -527,12 +527,12 @@ async function closeChrome(chrome, connection, pageConnection) {
   await closed;
 }
 async function pageDevtoolsUrl(browserUrl, domains) {
-  const endpoint = new URL(browserUrl);
-  endpoint.protocol = "http:";
-  endpoint.pathname = "/json/list";
-  endpoint.search = "";
-  endpoint.hash = "";
-  const targets = await (await fetch(endpoint)).json();
+  const endpoint2 = new URL(browserUrl);
+  endpoint2.protocol = "http:";
+  endpoint2.pathname = "/json/list";
+  endpoint2.search = "";
+  endpoint2.hash = "";
+  const targets = await (await fetch(endpoint2)).json();
   return targets.find((target) => target.type === "page" && domains.some((domain) => new URL(target.url).hostname === domain || new URL(target.url).hostname.endsWith(`.${domain}`))).webSocketDebuggerUrl;
 }
 function chromeCookies(values2, domains) {
@@ -788,7 +788,7 @@ function assertUnique(values2) {
   if (new Set(values2).size !== values2.length) throw new Error(JSON.stringify(values2));
 }
 function assertUniqueFileResource(resource) {
-  assertUnique(resource.identifiers.map((identifier) => JSON.stringify([identifier.service, identifier.identifier])));
+  assertUnique(resource.identifiers.map((identifier2) => JSON.stringify([identifier2.service, identifier2.identifier])));
   assertUnique(resource.urls);
   assertUnique(resource.filesystem_links.map((link) => JSON.stringify([link.path, link.role])));
   assertUnique(resource.data.map((item) => JSON.stringify([item.namespace, item.key])));
@@ -797,8 +797,8 @@ function assertUniqueFileResource(resource) {
 function missingResource(resourceId3) {
   return new Error(`Resource not found: ${resourceId3}`);
 }
-function missingIdentifier(service, identifier) {
-  return new Error(`Resource identifier not found: ${service}/${identifier}`);
+function missingIdentifier(service, identifier2) {
+  return new Error(`Resource identifier not found: ${service}/${identifier2}`);
 }
 function missingUrl(url) {
   return new Error(`Resource URL not found: ${url}`);
@@ -857,11 +857,11 @@ var SqliteRegistry = class {
     const normalized = storageResource(resource);
     assertUniqueFileResource(normalized);
     const database = this.connect();
-    for (const identifier of normalized.identifiers) {
-      const row = database.prepare("SELECT resource_id FROM resource_identifiers WHERE service = ? AND identifier = ? AND resource_id != ?").get(identifier.service, identifier.identifier, normalized.id);
+    for (const identifier2 of normalized.identifiers) {
+      const row = database.prepare("SELECT resource_id FROM resource_identifiers WHERE service = ? AND identifier = ? AND resource_id != ?").get(identifier2.service, identifier2.identifier, normalized.id);
       if (row !== void 0) {
         database.close();
-        throw new Error(`${identifier.service}/${identifier.identifier}`);
+        throw new Error(`${identifier2.service}/${identifier2.identifier}`);
       }
     }
     for (const url of normalized.urls) {
@@ -905,13 +905,13 @@ var SqliteRegistry = class {
     database.close();
     return resource;
   }
-  async findByIdentifier(service, identifier) {
+  async findByIdentifier(service, identifier2) {
     const database = this.connect();
     database.exec("BEGIN");
-    const row = database.prepare("SELECT resource_id FROM resource_identifiers WHERE service = ? AND identifier = ?").get(service, identifier);
+    const row = database.prepare("SELECT resource_id FROM resource_identifiers WHERE service = ? AND identifier = ?").get(service, identifier2);
     if (row === void 0) {
       database.close();
-      throw missingIdentifier(service, identifier);
+      throw missingIdentifier(service, identifier2);
     }
     const resource = this.getResource(database, row.resource_id);
     database.exec("COMMIT");
@@ -965,7 +965,7 @@ var SqliteRegistry = class {
     return {
       id: row.id,
       type: row.type,
-      identifiers: identifiers.map((identifier) => ({ service: identifier.service, identifier: identifier.identifier })),
+      identifiers: identifiers.map((identifier2) => ({ service: identifier2.service, identifier: identifier2.identifier })),
       urls: urls.map((item) => item.url),
       filesystem_links: links.map((link) => ({ path: link.path, role: link.role, data: JSON.parse(link.data_json) })),
       data: data.map((item) => ({ namespace: item.namespace, key: item.key, value: JSON.parse(item.value_json) })),
@@ -988,9 +988,9 @@ var FileRegistry = class {
     assertUniqueFileResource(normalized);
     const existingResources = (await this.listResources()).filter((existing) => existing.id !== normalized.id);
     const existingUrls = new Set(existingResources.flatMap((existing) => existing.urls));
-    for (const identifier of normalized.identifiers) {
-      if (existingResources.some((existing) => existing.identifiers.some((item) => item.service === identifier.service && item.identifier === identifier.identifier))) {
-        throw new Error(`${identifier.service}/${identifier.identifier}`);
+    for (const identifier2 of normalized.identifiers) {
+      if (existingResources.some((existing) => existing.identifiers.some((item) => item.service === identifier2.service && item.identifier === identifier2.identifier))) {
+        throw new Error(`${identifier2.service}/${identifier2.identifier}`);
       }
     }
     for (const url of normalized.urls) {
@@ -1008,9 +1008,9 @@ var FileRegistry = class {
     if (!(0, import_node_fs.existsSync)(this.resourcePath(resourceId3))) throw missingResource(resourceId3);
     return parseResource(await (0, import_promises3.readFile)(this.resourcePath(resourceId3), "utf8"));
   }
-  async findByIdentifier(service, identifier) {
-    const resource = (await this.listResources()).find((item) => item.identifiers.some((value) => value.service === service && value.identifier === identifier));
-    if (resource === void 0) throw missingIdentifier(service, identifier);
+  async findByIdentifier(service, identifier2) {
+    const resource = (await this.listResources()).find((item) => item.identifiers.some((value) => value.service === service && value.identifier === identifier2));
+    if (resource === void 0) throw missingIdentifier(service, identifier2);
     return this.get(resource.id);
   }
   async findByUrl(url) {
@@ -1125,9 +1125,9 @@ function watchConfig(config) {
 function primaryLink(resource) {
   return resource.filesystem_links.find((link) => link.role === "primary");
 }
-function collisionFilename(title2, service, identifier) {
+function collisionFilename(title2, service, identifier2) {
   const base = markdownFilename(title2).slice(0, -3);
-  const suffix = `${service}-${identifier}`.replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^-+|-+$/g, "");
+  const suffix = `${service}-${identifier2}`.replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^-+|-+$/g, "");
   const compact2 = suffix.length <= 48 ? suffix : `${suffix.slice(0, 32).replace(/[-_.]+$/g, "")}-${(0, import_node_crypto2.createHash)("sha256").update(suffix).digest("hex").slice(0, 10)}`;
   return `${base}-${compact2}.md`;
 }
@@ -1150,9 +1150,9 @@ function changeSummary(before, after) {
   const modified = Math.min(removed, added);
   return { added: added - modified, removed: removed - modified, modified };
 }
-async function existingResource(registry, service, identifier) {
+async function existingResource(registry, service, identifier2) {
   const resources = await registry.listResources();
-  return resources.find((resource) => resource.identifiers.some((item) => item.service === service && item.identifier === identifier)) ?? null;
+  return resources.find((resource) => resource.identifiers.some((item) => item.service === service && item.identifier === identifier2)) ?? null;
 }
 function jsonObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -1243,11 +1243,27 @@ function composeWire(dependencies) {
   const create = attach;
   const view = (url) => fetchSource(dependencies.fetchInput, url, dependencies.catalog);
   const downloadSource = async (url, path) => {
-    const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
     const source = parseSourceUrl(url, dependencies.catalog);
-    const cleanPath = (0, import_node_path3.join)((0, import_node_path3.resolve)(path), markdownFilename(fetched.title));
+    const directory = (0, import_node_path3.resolve)(path);
+    const downloadPath = (path2) => {
+      const target = (0, import_node_path3.resolve)(directory, path2);
+      const child = (0, import_node_path3.relative)(directory, target);
+      if ((0, import_node_path3.isAbsolute)(path2) || path2.includes("\\") || child === "" || child === ".." || child.startsWith(`..${import_node_path3.sep}`)) throw new Error(`Unsafe download path: ${path2}`);
+      return target;
+    };
+    const service = dependencies.catalog.find((item) => item.matches(new URL(url)));
+    const downloaded = await service.download?.(dependencies.fetchInput, url, source, async (relative3, contents) => {
+      const target = downloadPath(relative3);
+      if (typeof contents === "string") await dependencies.filesystem.writeText(target, contents);
+      else {
+        if (dependencies.filesystem.writeBytes === void 0) throw new Error("This filesystem does not support binary downloads");
+        await dependencies.filesystem.writeBytes(target, contents);
+      }
+    });
+    const fetched = downloaded ?? await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
+    const cleanPath = downloaded == null ? (0, import_node_path3.join)(directory, markdownFilename(fetched.title)) : downloadPath(downloaded.path);
     let outputPath = cleanPath;
-    if (await dependencies.filesystem.exists(cleanPath)) {
+    if (downloaded == null && await dependencies.filesystem.exists(cleanPath)) {
       const existingMarkdown = await dependencies.filesystem.readText(cleanPath);
       if (existingMarkdown !== fetched.markdown) outputPath = (0, import_node_path3.join)((0, import_node_path3.resolve)(path), collisionFilename(fetched.title, source.service, source.identifier));
     }
@@ -1259,7 +1275,7 @@ function composeWire(dependencies) {
       type: source.type,
       identifiers: [{ service: source.service, identifier: source.identifier }],
       urls: [url],
-      filesystem_links: [{ path: (0, import_node_path3.basename)(outputPath), role: "primary", data: { format: "markdown" } }],
+      filesystem_links: [{ path: (0, import_node_path3.relative)(directory, outputPath), role: "primary", data: { format: "markdown" } }],
       data: [
         { namespace: "wire", key: "title", value: fetched.title },
         { namespace: "wire", key: "synced_at", value: dependencies.now().toISOString() },
@@ -1267,13 +1283,13 @@ function composeWire(dependencies) {
       ],
       relationships: extractRelationships(fetched.markdown, id, dependencies.catalog)
     };
-    return { resource, path: outputPath, markdown: fetched.markdown, summary: { action: "downloaded", ...changeSummary(previous, fetched.markdown), remote: url, local: outputPath } };
+    return { resource, path: outputPath, markdown: fetched.markdown, summary: { action: downloaded?.error === void 0 ? "downloaded" : "failed", ...changeSummary(previous, fetched.markdown), remote: url, local: outputPath, ...downloaded?.error === void 0 ? {} : { error: downloaded.error } } };
   };
   const resolveResource = async (registry, value, root, path) => {
     if (value.startsWith("http://") || value.startsWith("https://")) {
       const source = parseSourceUrl(value, dependencies.catalog);
       const resources2 = await registry.listResources();
-      const resource = resources2.find((item) => item.identifiers.some((identifier) => identifier.service === source.service && identifier.identifier === source.identifier));
+      const resource = resources2.find((item) => item.identifiers.some((identifier2) => identifier2.service === source.service && identifier2.identifier === source.identifier));
       if (resource === void 0) throw new Error(`Resource URL not found: ${value}`);
       return resource;
     }
@@ -1519,8 +1535,8 @@ function zoomSplitSetCookieHeader(value) {
   return Object.freeze(value.split(/,(?=\s*[^;,]+=)/).map((item) => item.trim()));
 }
 function zoomSetCookieHeaders(response) {
-  const headers2 = response.headers;
-  const values2 = headers2.getSetCookie?.();
+  const headers = response.headers;
+  const values2 = headers.getSetCookie?.();
   if (values2 !== void 0) return Object.freeze(values2);
   const value = response.headers.get("set-cookie");
   if (value === null) return Object.freeze([]);
@@ -1607,9 +1623,9 @@ async function verifyChatgpt(runtime2, cookies) {
     "oai-language": "en-US",
     referer: "https://chatgpt.com/"
   } });
-  const text2 = await response.text();
-  if (!text2.startsWith("{")) return null;
-  const session = JSON.parse(text2);
+  const text3 = await response.text();
+  if (!text3.startsWith("{")) return null;
+  const session = JSON.parse(text3);
   if (!response.ok) return null;
   if ("error" in session) return null;
   const account = session["account"];
@@ -1625,16 +1641,16 @@ async function verifyAsana(runtime2, cookies) {
 async function verifyGmailCookies(runtime2, cookies) {
   const response = await runtime2.http.request("https://accounts.google.com/ListAccounts?gpsia=1&source=ChromiumBrowser&json=standard", { headers: { cookie: cookieHeader(cookies), accept: "application/json, text/plain, */*", "user-agent": "Mozilla/5.0" } });
   if (!response.ok) return null;
-  const text2 = await response.text();
-  const email = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.exec(text2)?.[0];
+  const text3 = await response.text();
+  const email = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.exec(text3)?.[0];
   if (email === void 0) return null;
   return Object.freeze({ service: "gmail", identity: Object.freeze({ email }) });
 }
 async function verifyGoogleDocsCookies(runtime2, cookies) {
   const response = await runtime2.http.request("https://docs.google.com/document/u/0/?tgif=d", { headers: { cookie: cookieHeader(cookies), accept: "text/html,application/xhtml+xml", "user-agent": "Mozilla/5.0" } });
   if (!response.ok || !response.url.startsWith("https://docs.google.com/")) return null;
-  const text2 = await response.text();
-  const email = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.exec(text2)?.[0];
+  const text3 = await response.text();
+  const email = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.exec(text3)?.[0];
   return Object.freeze({ service: "google-docs", identity: Object.freeze(email === void 0 ? { service: "google-docs" } : { email }) });
 }
 function composeAuth(runtime2, environment2, extractCookies) {
@@ -2268,18 +2284,18 @@ async function asana(runtime2, path, parameters) {
   if (!response.ok) throw new Error(`Asana API ${path} failed: HTTP ${response.status} ${asanaErrorMessage(body2)}`);
   return body2;
 }
-async function fetchTask(runtime2, identifier) {
-  return object2((await asana(runtime2, `/tasks/${identifier}`, {
+async function fetchTask(runtime2, identifier2) {
+  return object2((await asana(runtime2, `/tasks/${identifier2}`, {
     opt_fields: "gid,name,notes,completed,completed_at,created_at,modified_at,due_on,due_at,permalink_url,assignee,assignee.name,assignee.email,memberships.project.gid,memberships.project.name,memberships.section.name,projects.name,tags.name"
   }))["data"]);
 }
-async function fetchStories(runtime2, identifier) {
+async function fetchStories(runtime2, identifier2) {
   const stories = [];
   let offset;
   do {
     const parameters = { limit: "100", opt_fields: "gid,type,text,created_at,created_by.name,created_by.email,resource_subtype" };
     if (offset !== void 0) parameters["offset"] = offset;
-    const page = await asana(runtime2, `/tasks/${identifier}/stories`, parameters);
+    const page = await asana(runtime2, `/tasks/${identifier2}/stories`, parameters);
     stories.push(...page["data"]);
     const nextPage = page["next_page"];
     offset = nextPage === null ? void 0 : nextPage["offset"];
@@ -2328,25 +2344,456 @@ var asanaProvider = Object.freeze({
   services: [asanaProjectService, asanaTaskService]
 });
 
-// ../provider-chatgpt/src/chatgpt.ts
-function chatgptAuthError() {
+// ../provider-chatgpt/src/cooldown.ts
+var import_promises6 = require("node:timers/promises");
+var ChatgptCooldownError = class extends Error {
+  constructor(cooldown) {
+    super(`ChatGPT is still rate-limited after ${cooldown.attempt} attempts. No further requests were sent. Retry no earlier than ${cooldown.retry_at} (${cooldown.source}).`);
+    this.cooldown = cooldown;
+  }
+};
+function responseCooldown(response, now, attempt, endpoint2) {
+  const retryAfter = response.headers.get("retry-after")?.trim();
+  let milliseconds = 1e3 * 2 ** (attempt - 1);
+  let source = "exponential-backoff";
+  if (retryAfter !== void 0 && /^\d+$/.test(retryAfter) && Number.isSafeInteger(Number(retryAfter) * 1e3)) {
+    milliseconds = Number(retryAfter) * 1e3;
+    source = "retry-after-seconds";
+  } else if (retryAfter !== void 0 && /^[A-Za-z]/.test(retryAfter) && Number.isFinite(Date.parse(retryAfter))) {
+    const serverDate = Date.parse(response.headers.get("date") ?? "");
+    milliseconds = Math.max(0, Date.parse(retryAfter) - (Number.isFinite(serverDate) ? serverDate : now));
+    source = "retry-after-date";
+  }
+  if (!Number.isFinite(new Date(now + milliseconds).getTime())) {
+    milliseconds = 1e3 * 2 ** (attempt - 1);
+    source = "exponential-backoff";
+  }
+  return { endpoint: endpoint2, status: response.status, attempt, delay_ms: milliseconds, retry_at: new Date(now + milliseconds).toISOString(), source };
+}
+function createChatgptRequester(http, onCooldown = async () => {
+}, timing = { now: () => Date.now(), sleep: (milliseconds) => (0, import_promises6.setTimeout)(milliseconds) }) {
+  const deadlines = /* @__PURE__ */ new Map();
+  let stopped;
+  return async (url, headers, endpoint2) => {
+    if (stopped !== void 0) throw stopped;
+    const origin = new URL(url).origin;
+    for (let attempt = 1; ; attempt++) {
+      while (timing.now() < (deadlines.get(origin) ?? 0)) await timing.sleep(Math.min(2147483647, deadlines.get(origin) - timing.now()));
+      const response = await http.request(url, { headers, redirect: "manual", signal: AbortSignal.timeout(6e4) });
+      if (![429, 500, 502, 503, 504].includes(response.status)) return response;
+      const cooldown = responseCooldown(response, timing.now(), attempt, endpoint2);
+      deadlines.set(origin, Math.max(deadlines.get(origin) ?? 0, Date.parse(cooldown.retry_at)));
+      await onCooldown(cooldown);
+      if (attempt === 5) {
+        if (response.status !== 429) return response;
+        await response.body?.cancel();
+        stopped = new ChatgptCooldownError(cooldown);
+        throw stopped;
+      }
+      await response.body?.cancel();
+    }
+  };
+}
+
+// ../provider-chatgpt/src/client.ts
+function authError() {
   return new Error("ChatGPT authentication is missing or expired. Run `wire chatgpt login` once; other commands reuse saved cookies.");
 }
-function cookieHeader2(cookies) {
-  return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
+function object3(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Unexpected ChatGPT object response");
+  return value;
 }
-function headers(cookies, referer) {
-  return {
+function text(value) {
+  return typeof value === "string" && value !== "" ? value : void 0;
+}
+var ChatgptRequestError = class extends Error {
+  constructor(status, endpoint2) {
+    super(`ChatGPT request failed (${status}): ${endpoint2}${status === 401 || status === 403 ? ". Run `wire chatgpt login`." : ""}`);
+    this.status = status;
+    this.endpoint = endpoint2;
+  }
+};
+async function connectChatgpt(runtime2, referer, onCooldown) {
+  const cookies = await runtime2.cookies.loadSaved("chatgpt");
+  if (cookies === null) throw authError();
+  const device = cookies.find((cookie) => cookie.name === "oai-did")?.value;
+  const headers = {
     "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
     "sec-ch-ua": '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
     "sec-ch-ua-mobile": "?0",
     "sec-ch-ua-platform": '"macOS"',
-    "oai-device-id": cookies.find((cookie) => cookie.name === "oai-did").value,
+    ...device === void 0 ? {} : { "oai-device-id": device },
     "oai-language": "en-US",
     referer,
-    cookie: cookieHeader2(cookies)
+    cookie: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ")
   };
+  const response = await runtime2.http.request("https://chatgpt.com/api/auth/session", { headers, signal: AbortSignal.timeout(6e4), redirect: "error" });
+  const contents = await response.text();
+  if (!response.ok || !contents.trimStart().startsWith("{")) throw authError();
+  const session = object3(JSON.parse(contents));
+  if (session["error"] !== void 0 || text(session["accessToken"]) === void 0 || session["account"] == null) throw authError();
+  const account = object3(session["account"]);
+  const accountId = text(account["id"]);
+  if (accountId === void 0) throw authError();
+  headers["authorization"] = `Bearer ${session["accessToken"]}`;
+  const request2 = createChatgptRequester(runtime2.http, onCooldown);
+  const forAccount = (id) => {
+    const authenticated = { ...headers, "chatgpt-account-id": id };
+    const json = async (endpoint2) => {
+      if (!endpoint2.startsWith("/backend-api/")) throw new Error("Invalid ChatGPT API endpoint");
+      const result = await request2(`https://chatgpt.com${endpoint2}`, authenticated, endpoint2);
+      if (!result.ok) throw new ChatgptRequestError(result.status, endpoint2);
+      return await result.json();
+    };
+    const bytes = async (value) => {
+      let url = new URL(value, "https://chatgpt.com");
+      for (let redirects = 0; redirects <= 5; redirects++) {
+        const trusted = url.hostname === "chatgpt.com" || url.hostname.endsWith(".oaiusercontent.com") || url.hostname.endsWith(".blob.core.windows.net");
+        if (url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.port !== "" && url.port !== "443" || !trusted) throw new Error("Untrusted ChatGPT file download URL");
+        const result = await request2(url.href, url.origin === "https://chatgpt.com" ? authenticated : {}, url.origin + url.pathname);
+        if ([301, 302, 303, 307, 308].includes(result.status)) {
+          const location = result.headers.get("location");
+          await result.body?.cancel();
+          if (location === null) throw new Error("ChatGPT file redirect is missing its destination");
+          url = new URL(location, url);
+          continue;
+        }
+        if (!result.ok) throw new ChatgptRequestError(result.status, url.origin + url.pathname);
+        return new Uint8Array(await result.arrayBuffer());
+      }
+      throw new Error("Too many ChatGPT file redirects");
+    };
+    return { id, json, bytes };
+  };
+  return { accountId, forAccount };
 }
+
+// ../provider-chatgpt/src/download.ts
+var import_node_crypto3 = require("node:crypto");
+function segment(value) {
+  const safe = value.replace(/[^\p{L}\p{N}._-]/gu, "-").slice(0, 64);
+  return safe === value && safe !== "." && safe !== ".." && safe !== "" ? safe : `${safe || "item"}-${(0, import_node_crypto3.createHash)("sha256").update(value).digest("hex").slice(0, 12)}`;
+}
+function items(value) {
+  if (!Array.isArray(value)) throw new Error("ChatGPT list response is missing items");
+  return value.map((item) => object3(item));
+}
+function identifier(value) {
+  const id = text(value["id"]) ?? text(value["conversation_id"]);
+  if (id === void 0) throw new Error("ChatGPT item is missing its identifier");
+  return id;
+}
+function endpoint(path, query) {
+  return `${path}?${new URLSearchParams(query)}`;
+}
+function assets(value, context2) {
+  const found = /* @__PURE__ */ new Map();
+  const addFile = (id, name) => {
+    const queryIndex = id.indexOf("?");
+    const fileId = (queryIndex === -1 ? id : id.slice(0, queryIndex)).replaceAll("#", "*");
+    const query = Object.fromEntries(new URLSearchParams(queryIndex === -1 ? "" : id.slice(queryIndex + 1)));
+    if (context2.conversation !== void 0) query["conversation_id"] = context2.conversation;
+    if (context2.project !== void 0) query["gizmo_id"] = context2.project;
+    const key2 = `file:${id}`;
+    found.set(key2, { key: key2, name: name ?? fileId, endpoint: endpoint(`/backend-api/files/download/${encodeURIComponent(fileId)}`, query) });
+  };
+  const visit = (node, message) => {
+    if (typeof node === "string") {
+      if (node.startsWith("file-service://") || node.startsWith("sediment://")) addFile(node.slice(node.indexOf("://") + 3));
+      if (context2.conversation !== void 0 && message !== void 0) {
+        for (const match of node.matchAll(/sandbox:(\/[^\s)\]<>"']+)/g)) {
+          const path = match[1];
+          const key2 = `sandbox:${message}:${path}`;
+          found.set(key2, { key: key2, name: path.split("/").pop() || "file", endpoint: endpoint(`/backend-api/conversation/${encodeURIComponent(context2.conversation)}/interpreter/download`, { message_id: message, sandbox_path: path }) });
+        }
+      }
+    } else if (Array.isArray(node)) {
+      for (const child of node) visit(child, message);
+    } else if (node !== null && typeof node === "object") {
+      const record = node;
+      const currentMessage = record["author"] !== void 0 ? text(record["id"]) ?? message : message;
+      const fileId = text(record["file_id"]) ?? (/^file[-_]/.test(text(record["id"]) ?? "") ? text(record["id"]) : void 0);
+      if (fileId !== void 0) addFile(fileId, text(record["name"]) ?? text(record["filename"]));
+      const libraryId = text(record["library_file_id"]) ?? (text(record["id"])?.startsWith("libfile_") ? text(record["id"]) : void 0);
+      if (fileId === void 0 && libraryId !== void 0) {
+        const key2 = `library:${libraryId}`;
+        found.set(key2, { key: key2, name: text(record["name"]) ?? libraryId, endpoint: `/backend-api/files/library/files/${encodeURIComponent(libraryId)}/content_url` });
+      }
+      for (const child of Object.values(record)) visit(child, currentMessage);
+    }
+  };
+  visit(value, context2.message);
+  return [...found.values()];
+}
+var DownloadWriteError = class extends Error {
+};
+async function downloadChatgpt(runtime2, url, source, write, render) {
+  if (source.type !== "project") return null;
+  const wholeHistory = source.identifier === "history";
+  const base = wholeHistory ? "chatgpt" : `chatgpt/projects/${segment(source.identifier)}`;
+  const title2 = wholeHistory ? "ChatGPT history" : "ChatGPT project";
+  const errors = [];
+  const skipped = [];
+  const records = [];
+  const files = [];
+  const cooldowns = [];
+  const started = runtime2.clock.now().toISOString();
+  const save = async (path2, contents) => {
+    try {
+      await write(path2, contents);
+    } catch (error) {
+      throw new DownloadWriteError(`Could not write ${path2}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const json = (path2, value) => save(path2, `${JSON.stringify(value, null, 2)}
+`);
+  const attempt = async (resource, action) => {
+    try {
+      return await action();
+    } catch (error) {
+      if (error instanceof DownloadWriteError || error instanceof ChatgptCooldownError) throw error;
+      errors.push({ resource, error: error instanceof Error ? error.message : String(error) });
+      return void 0;
+    }
+  };
+  const session = await connectChatgpt(runtime2, url, async (cooldown) => {
+    cooldowns.push(cooldown);
+    await json(`${base}/manifest.json`, { status: "cooldown", source: url, started_at: started, records, files, errors, skipped, cooldowns, retry_at: cooldown.retry_at });
+  });
+  await json(`${base}/manifest.json`, { status: "in_progress", source: url, started_at: started });
+  const paged = async (client, path2, query, output, consume, offsetMode = false, filter) => {
+    const seen = /* @__PURE__ */ new Set();
+    let cursor;
+    let offset = 0;
+    let pageNumber = 0;
+    for (; ; ) {
+      const parameters = { ...query, ...offsetMode ? { offset: String(offset) } : cursor === void 0 ? {} : { cursor } };
+      const page = object3(await client.json(endpoint(path2, parameters)));
+      const entries = items(page["items"]);
+      await json(`${output}/${pageNumber++}.json`, filter === void 0 ? page : { ...page, items: entries.filter(filter) });
+      for (const item of entries) consume(item);
+      if (offsetMode) {
+        if (page["offset"] !== void 0 && page["offset"] !== offset) throw new Error(`ChatGPT returned a different offset for ${path2}`);
+        if (entries.length === 0) {
+          if (typeof page["total"] === "number" && offset < page["total"]) throw new Error(`ChatGPT listing stopped before its reported total: ${path2}`);
+          break;
+        }
+        const signature = entries.map(identifier).join("|");
+        if (seen.has(signature)) throw new Error(`ChatGPT repeated a page: ${path2}`);
+        seen.add(signature);
+        offset += entries.length;
+        if (typeof page["total"] === "number" && offset >= page["total"]) break;
+      } else {
+        if (!("cursor" in page) && !("next_cursor" in page) && page["has_more"] !== false) throw new Error(`ChatGPT list response is missing pagination metadata: ${path2}`);
+        const next = page["cursor"] ?? page["next_cursor"];
+        if (next == null || next === "") {
+          if (page["has_more"] === true) throw new Error(`ChatGPT listing has more items but no cursor: ${path2}`);
+          break;
+        }
+        if (typeof next !== "string" && typeof next !== "number") throw new Error(`Invalid ChatGPT pagination cursor: ${path2}`);
+        cursor = String(next);
+        if (seen.has(cursor)) throw new Error(`ChatGPT repeated a cursor: ${path2}`);
+        seen.add(cursor);
+      }
+    }
+  };
+  const downloadAssets = async (client, references, directory) => {
+    const links = [];
+    for (const asset of references) {
+      await attempt(asset.endpoint, async () => {
+        const metadata = object3(await client.json(asset.endpoint));
+        const downloadUrl = text(metadata["download_url"]) ?? text(metadata["content_url"]);
+        if (downloadUrl === void 0) throw new Error(`ChatGPT file is unavailable (${String(metadata["status"] ?? "missing URL")})`);
+        const bytes = await client.bytes(downloadUrl);
+        const name = `${(0, import_node_crypto3.createHash)("sha256").update(asset.key).digest("hex").slice(0, 12)}-${segment(asset.name)}`;
+        const path2 = `${directory}/assets/${name}`;
+        await save(path2, bytes);
+        files.push({ path: path2, source: asset.endpoint, bytes: bytes.byteLength, sha256: (0, import_node_crypto3.createHash)("sha256").update(bytes).digest("hex") });
+        links.push(`- [${asset.name.replace(/[\[\]\r\n]/g, " ")}](assets/${encodeURIComponent(name)})`);
+      });
+    }
+    return links;
+  };
+  const exportAccount = async (client, directory, projectId) => {
+    const conversations = /* @__PURE__ */ new Map();
+    const projects = /* @__PURE__ */ new Map();
+    const projectConversations = /* @__PURE__ */ new Map();
+    const addConversation = (entry, owner) => {
+      const id = identifier(entry);
+      conversations.set(id, { ...conversations.get(id), ...entry });
+      const project = owner ?? text(entry["gizmo_id"]) ?? text(entry["conversation_template_id"]);
+      if (project?.startsWith("g-p-")) {
+        if (!projects.has(project)) projects.set(project, void 0);
+        if (!projectConversations.has(project)) projectConversations.set(project, /* @__PURE__ */ new Set());
+        projectConversations.get(project).add(id);
+      }
+    };
+    for (const archived of [false, true]) for (const starred of [false, true]) {
+      await attempt(`${client.id}: ${archived ? "archived" : "active"} ${starred ? "starred" : "unstarred"} conversations`, () => paged(client, "/backend-api/conversations", { limit: "100", order: "updated", is_archived: String(archived), is_starred: String(starred) }, `${directory}/listings/${archived ? "archived" : "active"}-${starred ? "starred" : "unstarred"}`, (entry) => {
+        if (projectId === void 0 || entry["gizmo_id"] === projectId || entry["conversation_template_id"] === projectId) addConversation(entry);
+      }, true, projectId === void 0 ? void 0 : (entry) => entry["gizmo_id"] === projectId || entry["conversation_template_id"] === projectId));
+    }
+    if (projectId === void 0) {
+      await attempt(`${client.id}: projects`, () => paged(client, "/backend-api/gizmos/snorlax/sidebar", { owned_only: "false", conversations_per_gizmo: "5", limit: "20" }, `${directory}/listings/projects`, (entry) => {
+        const wrapper = object3(entry["gizmo"]);
+        const project = object3(wrapper["gizmo"]);
+        const id = identifier(project);
+        projects.set(id, wrapper);
+        if (entry["conversations"] !== void 0) for (const conversation of items(object3(entry["conversations"])["items"])) addConversation(conversation, id);
+      }));
+    } else projects.set(projectId, void 0);
+    for (const [id, fallback] of projects) {
+      const projectDirectory2 = projectId === void 0 ? `${directory}/projects/${segment(id)}` : directory;
+      const metadata = await attempt(`${client.id}: project ${id}`, () => client.json(`/backend-api/gizmos/${encodeURIComponent(id)}`));
+      const detail = metadata ?? fallback;
+      let projectTitle = id;
+      let instructions = "";
+      let fileLinks = [];
+      if (detail !== void 0) {
+        await json(`${projectDirectory2}/project.json`, detail);
+        await attempt(`${id}: project metadata`, async () => {
+          const wrapper = object3(detail);
+          const project = object3(wrapper["gizmo"]);
+          projectTitle = text(object3(project["display"])["name"]) ?? id;
+          instructions = text(project["instructions"]) ?? "";
+          fileLinks = await downloadAssets(client, assets(wrapper, { project: id }), projectDirectory2);
+        });
+      }
+      await attempt(`${id}: project conversations`, () => paged(client, `/backend-api/gizmos/${encodeURIComponent(id)}/conversations`, { limit: "50", owned_only: "false" }, `${projectDirectory2}/listings/conversations`, (entry) => addConversation(entry, id)));
+      await attempt(`${id}: project sources`, () => paged(client, `/backend-api/projects/${encodeURIComponent(id)}/connector_scopes`, { limit: "100" }, `${projectDirectory2}/sources`, () => {
+      }));
+      const ids = [...projectConversations.get(id) ?? []];
+      const prefix = projectId === void 0 ? "../../" : "";
+      const markdown2 = `# ${projectTitle}
+
+## Instructions
+
+${instructions || "No project instructions."}
+
+## Conversations
+
+${ids.map((conversationId) => `- [${conversationId}](${prefix}conversations/${segment(conversationId)}/index.md)`).join("\n") || "No conversations."}
+
+## Files
+
+${fileLinks.join("\n") || "See project.json and sources for source metadata."}
+`;
+      await save(`${projectDirectory2}/index.md`, markdown2);
+      records.push({ type: "project", account_id: client.id, id, title: projectTitle, path: `${projectDirectory2}/index.md`, conversations: ids });
+    }
+    for (const [id, listing] of conversations) {
+      const conversationDirectory = `${directory}/conversations/${segment(id)}`;
+      await json(`${conversationDirectory}/listing.json`, listing);
+      await attempt(`${client.id}: conversation ${id}`, async () => {
+        const conversation = object3(await client.json(`/backend-api/conversation/${encodeURIComponent(id)}`));
+        await json(`${conversationDirectory}/conversation.json`, conversation);
+        records.push({ type: "conversation", account_id: client.id, id, title: text(conversation["title"]) ?? id, path: `${conversationDirectory}/index.md`, raw: `${conversationDirectory}/conversation.json` });
+        const fileLinks = await downloadAssets(client, assets(conversation, { conversation: id }), conversationDirectory);
+        await attempt(`${id}: canvases`, async () => {
+          const canvases = await client.json(`/backend-api/conversation/${encodeURIComponent(id)}/textdocs`);
+          await json(`${conversationDirectory}/textdocs.json`, canvases);
+          for (const canvas of items(canvases)) {
+            const content = text(canvas["content"]);
+            if (content !== void 0) await save(`${conversationDirectory}/canvases/${segment(identifier(canvas))}.txt`, content);
+          }
+        });
+        const markdown2 = await attempt(`${id}: readable transcript`, async () => render(conversation));
+        await save(`${conversationDirectory}/index.md`, `${markdown2 ?? `# ${text(conversation["title"]) ?? id}
+
+The readable transcript could not be rendered; the full JSON is preserved.
+`}
+## Archive
+
+[Complete conversation JSON (all branches and metadata)](conversation.json)
+
+${fileLinks.join("\n")}
+`);
+      });
+    }
+    if (projectId === void 0) {
+      const directories = [void 0];
+      const seenDirectories = /* @__PURE__ */ new Set();
+      const library = /* @__PURE__ */ new Map();
+      for (const parent of directories) {
+        await attempt(`${client.id}: library ${parent ?? "root"}`, () => paged(client, "/backend-api/files/library/nodes", { include_hidden_files: "true", include_saved_entities: "true", ...parent === void 0 ? {} : { parent_directory_id: parent } }, `${directory}/library/listings/${parent === void 0 ? "root" : segment(parent)}`, (entry) => {
+          const id = text(entry["id"]) ?? text(entry["library_file_id"]);
+          if (id === void 0) throw new Error("ChatGPT Library item is missing its identifier");
+          if (entry["type"] === "folder" || entry["kind"] === "folder" || entry["kind"] === "directory" || entry["node_type"] === "directory") {
+            if (!seenDirectories.has(id)) {
+              seenDirectories.add(id);
+              directories.push(id);
+            }
+          } else library.set(id, entry);
+        }));
+      }
+      for (const [id, entry] of library) {
+        const fileDirectory = `${directory}/library/files/${segment(id)}`;
+        await json(`${fileDirectory}/metadata.json`, entry);
+        const links = await downloadAssets(client, [{ key: `library:${id}`, name: text(entry["name"]) ?? id, endpoint: `/backend-api/files/library/files/${encodeURIComponent(id)}/content_url` }], fileDirectory);
+        await save(`${fileDirectory}/index.md`, `# ${text(entry["name"]) ?? id}
+
+${links.join("\n")}
+`);
+      }
+      for (const path2 of ["me", "user_system_messages", "settings/user"]) {
+        await attempt(`${client.id}: ${path2}`, async () => json(`${directory}/account/${path2.replaceAll("/", "-")}.json`, await client.json(`/backend-api/${path2}`)));
+      }
+    }
+  };
+  const exportAll = async () => {
+    if (!wholeHistory) {
+      await exportAccount(session.forAccount(session.accountId), base, source.identifier);
+      return;
+    }
+    const current = session.forAccount(session.accountId);
+    const accounts = await attempt("accounts", () => current.json("/backend-api/accounts/check/v4-2023-04-27"));
+    const accountIds = /* @__PURE__ */ new Set([session.accountId]);
+    if (accounts !== void 0) {
+      await json(`${base}/accounts.json`, accounts);
+      await attempt("account listing", async () => {
+        for (const value of Object.values(object3(object3(accounts)["accounts"]))) {
+          const entry = object3(value);
+          const account = object3(entry["account"]);
+          const id = text(account["account_id"]);
+          if (id === void 0 || accountIds.has(id)) continue;
+          if (entry["can_access_with_session"] === false || account["is_deactivated"] === true) skipped.push({ type: "account", id, reason: "Not accessible with the current session or deactivated" });
+          else accountIds.add(id);
+        }
+      });
+    }
+    for (const id of accountIds) await exportAccount(session.forAccount(id), `${base}/accounts/${segment(id)}`);
+  };
+  try {
+    await exportAll();
+  } catch (error) {
+    if (!(error instanceof ChatgptCooldownError)) throw error;
+    errors.push({ resource: error.cooldown.endpoint, error: error.message, retry_at: error.cooldown.retry_at });
+  }
+  const status = errors.length === 0 ? "complete" : "partial";
+  const manifest = { status, source: url, started_at: started, finished_at: runtime2.clock.now().toISOString(), records, files, errors, skipped, cooldowns };
+  await json(`${base}/manifest.json`, manifest);
+  const relative3 = (path2) => path2.slice(base.length + 1);
+  const lines = records.map((record) => `- ${record["type"]}: [${String(record["title"]).replace(/[\[\]\r\n]/g, " ")}](${relative3(record["path"])})`);
+  const markdown = `# ${title2}
+
+Status: **${status}**
+
+${records.filter((record) => record["type"] === "conversation").length} conversations, ${records.filter((record) => record["type"] === "project").length} projects, ${files.length} downloaded files.
+
+[Export manifest](manifest.json) records every failure and unavailable account. Raw conversation JSON preserves all returned branches, messages, citations, and metadata; Markdown is the readable active branch. Deleted or expired server data cannot be recovered. Linked external sources are recorded, not recursively fetched.
+
+${lines.join("\n")}
+${errors.length === 0 ? "" : `
+## Incomplete downloads
+
+${errors.map((error) => `- ${error["resource"]}: ${error["error"]}`).join("\n")}
+`}`;
+  const path = `${base}/${wholeHistory ? "index" : "export"}.md`;
+  const retryAt = errors.map((error) => text(error["retry_at"])).filter((value) => value !== void 0).sort().at(-1);
+  return { title: title2, markdown, path, data: { status, manifest: `${base}/manifest.json`, conversations: records.filter((record) => record["type"] === "conversation").length, projects: records.filter((record) => record["type"] === "project").length, files: files.length, errors: errors.length }, ...errors.length === 0 ? {} : { error: `${errors.length} downloads failed. See ${base}/manifest.json; successfully downloaded data was retained.${retryAt === void 0 ? "" : ` Retry no earlier than ${retryAt}.`}` } };
+}
+
+// ../provider-chatgpt/src/chatgpt.ts
 function formatUpdateTime(value) {
   if (typeof value === "string") return value;
   return new Date(value * 1e3).toISOString();
@@ -2355,19 +2802,22 @@ function orderedMessages(conversation) {
   const mapping = conversation["mapping"];
   if (typeof conversation["current_node"] === "string") {
     const path = [];
+    const visited = /* @__PURE__ */ new Set();
     let nodeId = conversation["current_node"];
     while (nodeId !== null) {
+      if (visited.has(nodeId) || mapping[nodeId] === void 0) throw new Error("Invalid ChatGPT conversation branch");
+      visited.add(nodeId);
       const node = mapping[nodeId];
       const message = node["message"];
-      if (message !== null) path.push(message);
-      nodeId = node["parent"];
+      if (message != null) path.push(message);
+      nodeId = typeof node["parent"] === "string" ? node["parent"] : null;
     }
     return path.reverse();
   }
   const messages = [];
   for (const node of Object.values(mapping)) {
     const message = node["message"];
-    if (message !== null) messages.push(message);
+    if (message != null) messages.push(message);
   }
   messages.sort((left, right) => {
     const leftTime = left["create_time"];
@@ -2466,28 +2916,19 @@ function fetchedConversation(conversation) {
 }
 var chatgptService = defineService({
   name: "chatgpt",
-  matches: (url) => (url.hostname === "chatgpt.com" || url.hostname === "chat.openai.com") && /^\/c\/[^/]+\/?$/.test(url.pathname),
-  parse: (url) => Object.freeze({ service: "chatgpt", identifier: /^\/c\/([^/]+)\/?$/.exec(url.pathname)[1], type: "message-thread" }),
+  matches: (url) => (url.hostname === "chatgpt.com" || url.hostname === "chat.openai.com") && (url.pathname === "/" || /^\/c\/[^/]+\/?$/.test(url.pathname) || /^\/g\/g-p-[^/]+\/project\/?$/.test(url.pathname) || /^\/g\/[^/]+\/c\/[^/]+\/?$/.test(url.pathname)),
+  parse: (url) => {
+    if (url.pathname === "/") return Object.freeze({ service: "chatgpt", identifier: "history", type: "project" });
+    const project = /^\/g\/(g-p-[^/]+)\/project\/?$/.exec(url.pathname);
+    if (project !== null) return Object.freeze({ service: "chatgpt", identifier: project[1], type: "project" });
+    return Object.freeze({ service: "chatgpt", identifier: /\/c\/([^/]+)\/?$/.exec(url.pathname)[1], type: "message-thread" });
+  },
+  download: (runtime2, url, source, write) => downloadChatgpt(runtime2, url, source, write, conversationMarkdown),
   fetch: async (runtime2, url, source) => {
-    const cookies = await runtime2.cookies.loadSaved("chatgpt");
-    if (cookies === null) throw chatgptAuthError();
-    const sessionHeaders = headers(cookies, "https://chatgpt.com/");
-    const sessionResponse = await runtime2.http.request("https://chatgpt.com/api/auth/session", { headers: sessionHeaders });
-    const sessionText = await sessionResponse.text();
-    if (!sessionText.startsWith("{")) throw chatgptAuthError();
-    const session = JSON.parse(sessionText);
-    if ("error" in session) throw chatgptAuthError();
-    if (session["account"] === void 0 || session["accessToken"] === void 0) throw chatgptAuthError();
-    const account = session["account"];
-    const conversationHeaders = {
-      ...sessionHeaders,
-      authorization: `Bearer ${session["accessToken"]}`,
-      "chatgpt-account-id": account["id"],
-      referer: url
-    };
-    const conversationResponse = await runtime2.http.request(`https://chatgpt.com/backend-api/conversation/${encodeURIComponent(source.identifier)}`, { headers: conversationHeaders });
-    if (!conversationResponse.ok) throw new Error(`ChatGPT conversation download failed. Run \`wire chatgpt login\`. ${await conversationResponse.text()}`);
-    return fetchedConversation(await conversationResponse.json());
+    if (source.type === "project") throw new Error("Use `wire download <url>` to export ChatGPT history or projects as a directory.");
+    const session = await connectChatgpt(runtime2, url);
+    const conversation = await session.forAccount(session.accountId).json(`/backend-api/conversation/${encodeURIComponent(source.identifier)}`);
+    return fetchedConversation(object3(conversation));
   }
 });
 
@@ -2500,8 +2941,8 @@ var chatgptProvider = Object.freeze({
 function decode(data) {
   return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
 }
-function entities(text2) {
-  return text2.replace(/&nbsp;/g, "\xA0").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&#(\d+);/g, (_match, code) => String.fromCodePoint(Number(code))).replace(/&#x([0-9a-f]+);/gi, (_match, code) => String.fromCodePoint(Number.parseInt(code, 16)));
+function entities(text3) {
+  return text3.replace(/&nbsp;/g, "\xA0").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&#(\d+);/g, (_match, code) => String.fromCodePoint(Number(code))).replace(/&#x([0-9a-f]+);/gi, (_match, code) => String.fromCodePoint(Number.parseInt(code, 16)));
 }
 function stripTags(html) {
   return html.replace(/<[^>]+>/g, "");
@@ -2532,11 +2973,11 @@ function body(payload) {
 function threadIdentifier(url) {
   const fragmentPath = url.hash.slice(1).split("?")[0];
   const parts = fragmentPath.replace(/\/$/, "").split("/");
-  const identifier = parts.at(-1);
-  if (identifier === "") return void 0;
-  if (["search", "label"].includes(parts[0])) return parts.length >= 3 ? identifier : void 0;
-  if (parts[0] === "category") return parts.length === 3 ? identifier : void 0;
-  if (["all", "drafts", "important", "inbox", "sent", "snoozed", "spam", "starred", "trash"].includes(parts[0])) return parts.length === 2 ? identifier : void 0;
+  const identifier2 = parts.at(-1);
+  if (identifier2 === "") return void 0;
+  if (["search", "label"].includes(parts[0])) return parts.length >= 3 ? identifier2 : void 0;
+  if (parts[0] === "category") return parts.length === 3 ? identifier2 : void 0;
+  if (["all", "drafts", "important", "inbox", "sent", "snoozed", "spam", "starred", "trash"].includes(parts[0])) return parts.length === 2 ? identifier2 : void 0;
   return void 0;
 }
 async function gmailJson(response, label) {
@@ -2559,11 +3000,11 @@ var gmailService = defineService({
     const thread = await gmailJson(response, "thread fetch");
     const messages = thread["messages"].map((message) => {
       const payload = message["payload"];
-      const headers2 = Object.fromEntries(payload["headers"].map((header) => [header["name"].toLowerCase(), header["value"]]));
-      const to = headers2["to"];
+      const headers = Object.fromEntries(payload["headers"].map((header) => [header["name"].toLowerCase(), header["value"]]));
+      const to = headers["to"];
       const renderedBody = body(payload);
-      if (to === void 0) return Object.freeze({ id: message["id"], from: headers2["from"], date: headers2["date"], subject: headers2["subject"], body: renderedBody });
-      return Object.freeze({ id: message["id"], from: headers2["from"], to, date: headers2["date"], subject: headers2["subject"], body: renderedBody });
+      if (to === void 0) return Object.freeze({ id: message["id"], from: headers["from"], date: headers["date"], subject: headers["subject"], body: renderedBody });
+      return Object.freeze({ id: message["id"], from: headers["from"], to, date: headers["date"], subject: headers["subject"], body: renderedBody });
     });
     const lines = [`# ${messages[0].subject}`, "", `- Source: ${url}`, `- Thread ID: ${source.identifier}`, ""];
     for (const message of messages) {
@@ -2583,7 +3024,7 @@ var gmailProvider = Object.freeze({
 
 // ../provider-google-docs/src/google-docs.ts
 var import_node_zlib = require("node:zlib");
-async function cookieHeader3(runtime2) {
+async function cookieHeader2(runtime2) {
   const cookies = await runtime2.cookies.loadSaved("google-docs");
   if (cookies === null) throw cookieAuthenticationError();
   return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
@@ -2600,7 +3041,7 @@ function filenameTitle(value, label) {
   return filename.replace(/\.(csv|html|md|pptx|txt|xlsx)$/i, "");
 }
 async function googleExport(runtime2, url, label) {
-  const response = await runtime2.http.request(url, { headers: { Cookie: await cookieHeader3(runtime2) } });
+  const response = await runtime2.http.request(url, { headers: { Cookie: await cookieHeader2(runtime2) } });
   if (response.status === 401 || response.status === 403) throw cookieAuthenticationError();
   if (!response.ok) throw new Error(`Google ${label} failed: HTTP ${response.status}`);
   const disposition = response.headers.get("content-disposition");
@@ -2608,7 +3049,7 @@ async function googleExport(runtime2, url, label) {
   return Object.freeze({ title: filenameTitle(disposition, label), text: await response.text() });
 }
 async function googleExportBytes(runtime2, url, label) {
-  const response = await runtime2.http.request(url, { headers: { Cookie: await cookieHeader3(runtime2) } });
+  const response = await runtime2.http.request(url, { headers: { Cookie: await cookieHeader2(runtime2) } });
   if (response.status === 401 || response.status === 403) throw cookieAuthenticationError();
   if (!response.ok) throw new Error(`Google ${label} failed: HTTP ${response.status}`);
   const disposition = response.headers.get("content-disposition");
@@ -2616,20 +3057,20 @@ async function googleExportBytes(runtime2, url, label) {
   return Object.freeze({ title: filenameTitle(disposition, label), bytes: new Uint8Array(await response.arrayBuffer()) });
 }
 async function googleText(runtime2, url, label) {
-  const response = await runtime2.http.request(url, { headers: { Cookie: await cookieHeader3(runtime2) } });
+  const response = await runtime2.http.request(url, { headers: { Cookie: await cookieHeader2(runtime2) } });
   if (response.status === 401 || response.status === 403) throw cookieAuthenticationError();
   if (!response.ok) throw new Error(`Google ${label} failed: HTTP ${response.status}`);
   return response.text();
 }
-function saveResult(text2, label) {
-  if (/^\s*</.test(text2)) throw cookieAuthenticationError();
-  if (!text2.startsWith(")]}'\n")) throw new Error(`Google ${label} save failed: unexpected response`);
-  return JSON.parse(text2.slice(")]}'\n".length));
+function saveResult(text3, label) {
+  if (/^\s*</.test(text3)) throw cookieAuthenticationError();
+  if (!text3.startsWith(")]}'\n")) throw new Error(`Google ${label} save failed: unexpected response`);
+  return JSON.parse(text3.slice(")]}'\n".length));
 }
 function objectValue(value) {
-  const object4 = value;
+  const object5 = value;
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Google sync base must be an object");
-  return object4;
+  return object5;
 }
 function parseCsv(value) {
   const rows = [];
@@ -2679,8 +3120,8 @@ function stringRows(value) {
 }
 function markdownTableCell(value) {
   const escaped2 = value.replace(/&amp;#(9|32);/g, "&amp;amp;#$1;").replace(/&#(9|32);/g, "&amp;#$1;").replace(/&amp;lt;br&amp;gt;/g, "&amp;amp;lt;br&amp;amp;gt;").replace(/&lt;br&gt;/g, "&amp;lt;br&amp;gt;").replace(/<br>/g, "&lt;br&gt;").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
-  const text2 = escaped2.replace(/^[ \t]+|[ \t]+$/g, (match) => match.replace(/ /g, "&#32;").replace(/\t/g, "&#9;"));
-  return text2 === "" ? " " : text2;
+  const text3 = escaped2.replace(/^[ \t]+|[ \t]+$/g, (match) => match.replace(/ /g, "&#32;").replace(/\t/g, "&#9;"));
+  return text3 === "" ? " " : text3;
 }
 function rowsMarkdown(rows) {
   if (rows.length === 0) return "";
@@ -2851,8 +3292,8 @@ function parseXml(xml) {
       index = end + 1;
     } else {
       const end = xml.indexOf("<", index);
-      const text2 = decodeXml(xml.slice(index, end === -1 ? xml.length : end));
-      if (text2 !== "") stack[stack.length - 1].children.push(text2);
+      const text3 = decodeXml(xml.slice(index, end === -1 ? xml.length : end));
+      if (text3 !== "") stack[stack.length - 1].children.push(text3);
       index = end === -1 ? xml.length : end;
     }
   }
@@ -2923,9 +3364,9 @@ function relationshipTargets(xml) {
 function resolvePartPath(basePath, target) {
   const parts = basePath.split("/");
   parts.pop();
-  for (const segment of target.split("/")) {
-    if (segment === "..") parts.pop();
-    else if (segment !== ".") parts.push(segment);
+  for (const segment2 of target.split("/")) {
+    if (segment2 === "..") parts.pop();
+    else if (segment2 !== ".") parts.push(segment2);
   }
   return parts.join("/");
 }
@@ -2961,11 +3402,11 @@ function linkMarkdown(value, target) {
   return core === "" ? value : `${leading}[${core.replace(/[[\]\\]/g, "\\$&")}](${target.replace(/\)/g, "%29")})${trailing}`;
 }
 function formattedRunMarkdown(run, relationships) {
-  const text2 = xmlDescendants(run, "a:t").map(xmlText).join("");
+  const text3 = xmlDescendants(run, "a:t").map(xmlText).join("");
   const runProperties = xmlChildren(run, "a:rPr")[0];
-  if (runProperties === void 0) return text2;
+  if (runProperties === void 0) return text3;
   const hyperlink = xmlDescendants(runProperties, "a:hlinkClick")[0];
-  let markdown = text2;
+  let markdown = text3;
   if (runProperties.attributes.get("u") !== void 0 && runProperties.attributes.get("u") !== "none" && hyperlink === void 0) markdown = markdownSpan(markdown, "<u>", "</u>");
   if (runProperties.attributes.get("strike") !== void 0 && runProperties.attributes.get("strike") !== "noStrike") markdown = markdownSpan(markdown, "~~", "~~");
   if (runProperties.attributes.get("b") === "1" && runProperties.attributes.get("i") === "1") markdown = markdownSpan(markdown, "***", "***");
@@ -3057,11 +3498,11 @@ async function uploadSheetRows(runtime2, documentId, gid2, key2, cells) {
   const session = sheetSession(await googleText(runtime2, sheetEditUrl(documentId, gid2, key2), "Sheets editor"));
   const bundles = [{ commands: cells.map((cell) => sheetCellCommand(session.gridId, cell.row, cell.column, cell.value)), sid: session.sid, reqId: 0 }];
   const body2 = new URLSearchParams({ rev: String(session.revision), bundles: JSON.stringify(bundles) });
-  const response = await runtime2.http.request(`https://docs.google.com/spreadsheets/u/0/d/${encodeURIComponent(documentId)}/save?id=${encodeURIComponent(documentId)}&token=${encodeURIComponent(session.token)}`, { method: "POST", headers: { Cookie: await cookieHeader3(runtime2), "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: body2.toString() });
+  const response = await runtime2.http.request(`https://docs.google.com/spreadsheets/u/0/d/${encodeURIComponent(documentId)}/save?id=${encodeURIComponent(documentId)}&token=${encodeURIComponent(session.token)}`, { method: "POST", headers: { Cookie: await cookieHeader2(runtime2), "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: body2.toString() });
   if (response.status === 401 || response.status === 403) throw cookieAuthenticationError();
   if (!response.ok) throw new Error(`Google Sheets save failed: HTTP ${response.status}`);
-  const text2 = await response.text();
-  const result = saveResult(text2, "Sheets");
+  const text3 = await response.text();
+  const result = saveResult(text3, "Sheets");
   if (result["revisionRanges"] === void 0) throw new Error("Google Sheets save failed: missing revision ranges");
 }
 function docSession(html) {
@@ -3163,12 +3604,12 @@ function editTouchesMarkdownSpan(before, value, edited) {
 function context(value, side, length) {
   return side === "before" ? value.slice(Math.max(0, value.length - length)) : value.slice(0, length);
 }
-function followingWhitespaceEnd(text2, index) {
+function followingWhitespaceEnd(text3, index) {
   let end = index;
-  while (end < text2.length && /\s/.test(text2[end])) end += 1;
+  while (end < text3.length && /\s/.test(text3[end])) end += 1;
   return end;
 }
-function docTextRange(text2, edit) {
+function docTextRange(text3, edit) {
   const base = markdownText(edit.base);
   const beforeText = markdownText(edit.before);
   const afterText = markdownText(edit.after);
@@ -3179,7 +3620,7 @@ function docTextRange(text2, edit) {
       const trimmed = anchor.replace(/\s+$/g, "");
       let index = 0;
       for (; ; ) {
-        const found = text2.indexOf(anchor, index);
+        const found = text3.indexOf(anchor, index);
         if (found === -1) break;
         candidates.push(found + anchor.length);
         index = found + 1;
@@ -3187,20 +3628,20 @@ function docTextRange(text2, edit) {
       if (trimmed !== anchor) {
         index = 0;
         for (; ; ) {
-          const found = text2.indexOf(trimmed, index);
+          const found = text3.indexOf(trimmed, index);
           if (found === -1) break;
-          candidates.push(followingWhitespaceEnd(text2, found + trimmed.length));
+          candidates.push(followingWhitespaceEnd(text3, found + trimmed.length));
           index = found + 1;
         }
       }
     }
     if (afterText === "") {
-      candidates.push(text2.length);
+      candidates.push(text3.length);
     } else {
       const anchor = context(afterText, "after", Math.min(80, afterText.length));
       let index = 0;
       for (; ; ) {
-        const found = text2.indexOf(anchor, index);
+        const found = text3.indexOf(anchor, index);
         if (found === -1) break;
         candidates.push(found);
         index = found + 1;
@@ -3209,7 +3650,7 @@ function docTextRange(text2, edit) {
   } else {
     let index = 0;
     for (; ; ) {
-      const found = text2.indexOf(base, index);
+      const found = text3.indexOf(base, index);
       if (found === -1) break;
       candidates.push(found);
       index = found + 1;
@@ -3219,7 +3660,7 @@ function docTextRange(text2, edit) {
   for (const length of [80, 40, 20, 10, 0]) {
     const before = context(beforeText, "before", length);
     const after = context(afterText, "after", length);
-    const matched = uniqueCandidates.filter((index) => text2.slice(Math.max(0, index - before.length), index) === before && text2.slice(index + base.length, index + base.length + after.length) === after);
+    const matched = uniqueCandidates.filter((index) => text3.slice(Math.max(0, index - before.length), index) === before && text3.slice(index + base.length, index + base.length + after.length) === after);
     if (matched.length === 1) return Object.freeze({ start: matched[0], end: matched[0] + base.length });
   }
   throw new Error("Google Docs local edit cannot be mapped to the live document text");
@@ -3237,11 +3678,11 @@ async function uploadDocText(runtime2, documentId, key2, tab, baseMarkdown, loca
   ]);
   const params = new URLSearchParams({ id: documentId, sid, vc: "1", c: "1", w: "1", flr: "0", smv: "2147483647", smb: "[2147483647, AAE=]", token: session.token, ouid: session.ouid, includes_info_params: "true", cros_files: "false", nded: "false", tab });
   const body2 = new URLSearchParams({ rev: String(session.revision), bundles: JSON.stringify([{ commands: commands2, sid, reqId: 0 }]) });
-  const response = await runtime2.http.request(`https://docs.google.com/document/d/${encodeURIComponent(documentId)}/save?${params}`, { method: "POST", headers: { Cookie: await cookieHeader3(runtime2), "content-type": "application/x-www-form-urlencoded;charset=UTF-8", origin: "https://docs.google.com", referer: editUrl }, body: body2.toString() });
+  const response = await runtime2.http.request(`https://docs.google.com/document/d/${encodeURIComponent(documentId)}/save?${params}`, { method: "POST", headers: { Cookie: await cookieHeader2(runtime2), "content-type": "application/x-www-form-urlencoded;charset=UTF-8", origin: "https://docs.google.com", referer: editUrl }, body: body2.toString() });
   if (response.status === 401 || response.status === 403) throw cookieAuthenticationError();
   if (!response.ok) throw new Error(`Google Docs save failed: HTTP ${response.status}`);
-  const text2 = await response.text();
-  const result = saveResult(text2, "Docs");
+  const text3 = await response.text();
+  const result = saveResult(text3, "Docs");
   if (result["revisionRanges"] === void 0) throw new Error("Google Docs save failed: missing revision ranges");
 }
 async function fetchGoogleDocument(runtime2, source) {
@@ -3376,14 +3817,14 @@ function apiDisabledError(body2) {
 async function formsJson(runtime2, url, label) {
   const token = await runtime2.googleFormsTokens.load();
   const response = await runtime2.http.request(url, { headers: { authorization: `Bearer ${token.token}` } });
-  const text2 = await response.text();
-  const body2 = text2 === "" ? {} : JSON.parse(text2);
+  const text3 = await response.text();
+  const body2 = text3 === "" ? {} : JSON.parse(text3);
   if (response.status === 401) throw formsAuthError();
   if (!response.ok) {
     const disabled = apiDisabledError(body2);
     if (disabled !== null) throw disabled;
     const error = body2["error"];
-    const message = typeof error?.["message"] === "string" ? error["message"] : text2;
+    const message = typeof error?.["message"] === "string" ? error["message"] : text3;
     if (response.status === 403 && /insufficient authentication scopes/i.test(message)) throw new Error("Google Forms API token is missing required scopes. Regenerate GOOGLE_FORMS_TOKEN_FILE with forms.body and forms.responses.readonly scopes.");
     throw new Error(`Google Forms API ${label} failed: HTTP ${response.status}${message === "" ? "" : ` ${message}`}`);
   }
@@ -3398,8 +3839,8 @@ function jsonObject2(value) {
 function optionsMarkdown(options) {
   if (!Array.isArray(options)) return null;
   return options.map((option) => {
-    const object4 = option;
-    return object4["value"];
+    const object5 = option;
+    return object5["value"];
   }).join(", ");
 }
 function questionMarkdown(item) {
@@ -3447,7 +3888,7 @@ function answerTexts(answer) {
 function formAnswers(response) {
   const answers = response["answers"];
   if (answers === void 0) return [];
-  return Object.entries(answers).flatMap(([questionId, answer]) => answerTexts(answer).map((text2) => ({ questionId, text: text2 })));
+  return Object.entries(answers).flatMap(([questionId, answer]) => answerTexts(answer).map((text3) => ({ questionId, text: text3 })));
 }
 function formMarkdown(form, responses) {
   const info = form["info"];
@@ -3462,9 +3903,9 @@ function formMarkdown(form, responses) {
     lines.push(`- Accepting responses: ${String(publish["isAcceptingResponses"])}`);
   }
   lines.push("", "## Items");
-  const items = form["items"];
-  if (items === void 0 || items.length === 0) lines.push("No items.");
-  else for (const item of items) lines.push(...questionMarkdown(item));
+  const items2 = form["items"];
+  if (items2 === void 0 || items2.length === 0) lines.push("No items.");
+  else for (const item of items2) lines.push(...questionMarkdown(item));
   lines.push("", "## Responses", "", `Response count: ${responses.length}`);
   for (const response of responses) {
     lines.push("", `### ${response["responseId"]}`);
@@ -3519,21 +3960,21 @@ var googleDocsProvider = Object.freeze({
 });
 
 // ../provider-notion/src/notion-sync.ts
-var import_node_crypto3 = require("node:crypto");
-function object3(value) {
+var import_node_crypto4 = require("node:crypto");
+function object4(value) {
   return value;
 }
 function array(value) {
   return value;
 }
-function text(value) {
+function text2(value) {
   return value;
 }
 function notionAuthError() {
   return new Error("notion cookie authentication is missing or expired. Run `wire notion login` once; other commands reuse saved cookies.");
 }
 function richTextText(value) {
-  return value.map((segment) => segment[0]).join("");
+  return value.map((segment2) => segment2[0]).join("");
 }
 function titleRichText(value) {
   return value === "" ? [] : [[value]];
@@ -3548,7 +3989,7 @@ function compact(value) {
   return stableJsonCompact(value);
 }
 function hash(value) {
-  return `sha256:${(0, import_node_crypto3.createHash)("sha256").update(compact(value)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto4.createHash)("sha256").update(compact(value)).digest("hex")}`;
 }
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -3607,22 +4048,22 @@ function renderMarks(marks) {
 function normalizeRichText(value) {
   const output = [];
   for (const raw of value) {
-    const content = text(raw[0]).replace(/\r\n?/g, "\n");
+    const content = text2(raw[0]).replace(/\r\n?/g, "\n");
     if (content === "") continue;
     const marks = raw.length > 1 ? normalizeMarks(raw[1]) : [];
     if (marks.length > 0 && content.match(/^ +/) !== null) output.push([content.match(/^ +/)[0]]);
     const trimmedContent = marks.length === 0 ? content : content.replace(/^ +| +$/g, "");
-    const segment = marks.length === 0 ? [trimmedContent] : [trimmedContent, marks];
+    const segment2 = marks.length === 0 ? [trimmedContent] : [trimmedContent, marks];
     if (trimmedContent === "") continue;
     const previous = output[output.length - 1];
-    if (previous !== void 0 && compact(previous[1] ?? []) === compact(segment[1] ?? [])) previous[0] = `${previous[0]}${trimmedContent}`;
-    else output.push(segment);
+    if (previous !== void 0 && compact(previous[1] ?? []) === compact(segment2[1] ?? [])) previous[0] = `${previous[0]}${trimmedContent}`;
+    else output.push(segment2);
     if (marks.length > 0 && content.match(/ +$/) !== null) output.push([content.match(/ +$/)[0]]);
   }
-  while (output.length > 0 && text(output[0][0]).trim() === "") output.shift();
-  while (output.length > 0 && text(output[output.length - 1][0]).trim() === "") output.pop();
-  if (output.length > 0) output[0][0] = text(output[0][0]).replace(/^ +/, "");
-  if (output.length > 0) output[output.length - 1][0] = text(output[output.length - 1][0]).replace(/ +$/, "");
+  while (output.length > 0 && text2(output[0][0]).trim() === "") output.shift();
+  while (output.length > 0 && text2(output[output.length - 1][0]).trim() === "") output.pop();
+  if (output.length > 0) output[0][0] = text2(output[0][0]).replace(/^ +/, "");
+  if (output.length > 0) output[output.length - 1][0] = text2(output[output.length - 1][0]).replace(/ +$/, "");
   return output;
 }
 function parseInline(value) {
@@ -3632,9 +4073,9 @@ function parseInline(value) {
     if (content !== "") segments.push(marks.length === 0 ? [content] : [content, marks]);
   };
   const pushMarked = (content, mark) => {
-    for (const segment of parseInline(content)) {
-      const marks = normalizeMarks([...segment[1] ?? [], mark]);
-      push2(segment[0], marks);
+    for (const segment2 of parseInline(content)) {
+      const marks = normalizeMarks([...segment2[1] ?? [], mark]);
+      push2(segment2[0], marks);
     }
   };
   while (rest.length > 0) {
@@ -3670,9 +4111,9 @@ function parseInline(value) {
     if (rest.startsWith("***")) {
       const end = closingDelimiter(rest, 3, "***");
       if (end !== -1) {
-        for (const segment of parseInline(rest.slice(3, end))) {
-          const marks = normalizeMarks([...segment[1] ?? [], ["b"], ["i"]]);
-          push2(segment[0], marks);
+        for (const segment2 of parseInline(rest.slice(3, end))) {
+          const marks = normalizeMarks([...segment2[1] ?? [], ["b"], ["i"]]);
+          push2(segment2[0], marks);
         }
         rest = rest.slice(end + 3);
         continue;
@@ -3753,7 +4194,7 @@ function renderSegment(content, marks) {
   return link === null ? rendered : `[${rendered}](${link})`;
 }
 function renderRichText(value) {
-  return normalizeRichText(value).map((segment) => renderSegment(text(segment[0]), segment[1] ?? [])).join("");
+  return normalizeRichText(value).map((segment2) => renderSegment(text2(segment2[0]), segment2[1] ?? [])).join("");
 }
 function renderUserMentions(markdownText2, mentions) {
   let output = markdownText2;
@@ -4024,7 +4465,7 @@ function parseNotionMarkdown(markdown) {
   return parseLines(markdown.replace(/^\ufeff/, "").split("\n"));
 }
 function tableRowCells(block, columnOrder) {
-  const cells = object3(block.properties["cells"]);
+  const cells = object4(block.properties["cells"]);
   if (columnOrder === void 0) return cells;
   const localColumns = Object.keys(cells);
   return Object.fromEntries(columnOrder.map((column, index) => [column, cells[localColumns[index]]]));
@@ -4032,17 +4473,17 @@ function tableRowCells(block, columnOrder) {
 function tableColumnOrder(remote, local) {
   const localColumns = local.properties["column_ids"];
   if (remote === void 0) return localColumns;
-  const remoteColumns = object3(remote["format"])["table_block_column_order"];
+  const remoteColumns = object4(remote["format"])["table_block_column_order"];
   const used = /* @__PURE__ */ new Set();
   return localColumns.map((column, index) => {
-    const value = index < remoteColumns.length ? remoteColumns[index] : used.has(column) ? `column_${index}_${(0, import_node_crypto3.randomUUID)().replaceAll("-", "")}` : column;
+    const value = index < remoteColumns.length ? remoteColumns[index] : used.has(column) ? `column_${index}_${(0, import_node_crypto4.randomUUID)().replaceAll("-", "")}` : column;
     used.add(value);
     return value;
   });
 }
 function parserBlockToNotionBlock(block, id, parentId, parentTable, spaceId, userId, currentTime, columnOrder) {
   const base = { id, type: block.type, space_id: spaceId, parent_id: parentId, parent_table: parentTable, alive: true, created_time: currentTime, created_by_table: "notion_user", created_by_id: userId, last_edited_time: currentTime, last_edited_by_table: "notion_user", last_edited_by_id: userId };
-  if (block.properties["notion_opaque"] !== void 0) return { ...object3(block.properties["notion_opaque"]), ...base };
+  if (block.properties["notion_opaque"] !== void 0) return { ...object4(block.properties["notion_opaque"]), ...base };
   if (block.type === "divider") return base;
   if (block.type === "toggle") return { ...base, type: "text", properties: { title: block.rich_text }, format: { toggleable: true } };
   if (block.type === "code") return { ...base, properties: { title: [[block.content]], language: [[block.properties["language"]]] } };
@@ -4056,7 +4497,7 @@ function parserBlockToNotionBlock(block, id, parentId, parentTable, spaceId, use
   if (["header", "sub_header", "sub_sub_header"].includes(block.type)) return { ...base, properties: { title: block.rich_text }, ...block.properties["format"] === void 0 ? {} : { format: block.properties["format"] } };
   return { ...base, properties: { title: block.rich_text } };
 }
-function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTime, createId = () => (0, import_node_crypto3.randomUUID)(), initialTableColumnOrder) {
+function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTime, createId = () => (0, import_node_crypto4.randomUUID)(), initialTableColumnOrder) {
   const operations = [];
   const topLevelIds = [];
   const lastAtIndent = /* @__PURE__ */ new Map();
@@ -4089,20 +4530,20 @@ function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTim
 }
 function canonicalBlock(value, columnOrder) {
   const type = value["type"];
-  if (type === "text" && object3(value["format"] ?? {})["toggleable"] === true) return { type: "toggle", title: normalizeRichText(object3(value["properties"])["title"]) };
-  if (type === "code") return { type, title: normalizeRichText(object3(value["properties"])["title"]), language: object3(value["properties"])["language"] };
-  if (type === "to_do") return { type, title: normalizeRichText(object3(value["properties"])["title"]), checked: object3(value["properties"])["checked"] ?? [["No"]] };
-  if (type === "table") return { type, column_count: object3(value["format"])["table_block_column_order"].length };
-  if (type === "table_row") return { type, cells: columnOrder.map((column) => normalizeRichText(object3(value["properties"])[column] ?? [])) };
-  if (type === "image") return { type, source: object3(value["properties"])["source"], alt_text: object3(value["properties"])["alt_text"], caption: object3(value["properties"])["caption"] ?? null };
+  if (type === "text" && object4(value["format"] ?? {})["toggleable"] === true) return { type: "toggle", title: normalizeRichText(object4(value["properties"])["title"]) };
+  if (type === "code") return { type, title: normalizeRichText(object4(value["properties"])["title"]), language: object4(value["properties"])["language"] };
+  if (type === "to_do") return { type, title: normalizeRichText(object4(value["properties"])["title"]), checked: object4(value["properties"])["checked"] ?? [["No"]] };
+  if (type === "table") return { type, column_count: object4(value["format"])["table_block_column_order"].length };
+  if (type === "table_row") return { type, cells: columnOrder.map((column) => normalizeRichText(object4(value["properties"])[column] ?? [])) };
+  if (type === "image") return { type, source: object4(value["properties"])["source"], alt_text: object4(value["properties"])["alt_text"], caption: object4(value["properties"])["caption"] ?? null };
   if (["divider", "column_list", "transclusion_container"].includes(type)) return { type };
-  if (type === "column") return { type, column_ratio: object3(value["format"] ?? {})["column_ratio"] ?? null };
-  if (["header", "sub_header", "sub_sub_header"].includes(type)) return { type, title: normalizeRichText(object3(value["properties"] ?? { title: [] })["title"] ?? []), toggleable: object3(value["format"] ?? {})["toggleable"] === true };
-  return { type, title: normalizeRichText(object3(value["properties"] ?? { title: [] })["title"] ?? []) };
+  if (type === "column") return { type, column_ratio: object4(value["format"] ?? {})["column_ratio"] ?? null };
+  if (["header", "sub_header", "sub_sub_header"].includes(type)) return { type, title: normalizeRichText(object4(value["properties"] ?? { title: [] })["title"] ?? []), toggleable: object4(value["format"] ?? {})["toggleable"] === true };
+  return { type, title: normalizeRichText(object4(value["properties"] ?? { title: [] })["title"] ?? []) };
 }
 function canonicalParserBlock(block, columnOrder) {
-  if (block.properties["notion_opaque"] !== void 0) return canonicalBlock(object3(block.properties["notion_opaque"]), columnOrder);
-  if (block.type === "header" || block.type === "sub_header" || block.type === "sub_sub_header") return { type: block.type, title: normalizeRichText(block.rich_text), toggleable: object3(block.properties["format"] ?? {})["toggleable"] === true };
+  if (block.properties["notion_opaque"] !== void 0) return canonicalBlock(object4(block.properties["notion_opaque"]), columnOrder);
+  if (block.type === "header" || block.type === "sub_header" || block.type === "sub_sub_header") return { type: block.type, title: normalizeRichText(block.rich_text), toggleable: object4(block.properties["format"] ?? {})["toggleable"] === true };
   if (block.type === "text" || block.type === "bulleted_list" || block.type === "numbered_list" || block.type === "quote" || block.type === "callout" || block.type === "toggle") return { type: block.type, title: normalizeRichText(block.rich_text) };
   if (block.type === "code") return { type: "code", title: normalizeRichText([[block.content]]), language: [[block.properties["language"]]] };
   if (block.type === "to_do") return { type: "to_do", title: normalizeRichText(block.rich_text), checked: [[block.properties["checked"] === true ? "Yes" : "No"]] };
@@ -4113,7 +4554,7 @@ function canonicalParserBlock(block, columnOrder) {
   }
   if (block.type === "image") return { type: "image", source: [[block.properties["source"]]], alt_text: [[block.properties["alt_text"]]], caption: block.properties["caption"] ?? null };
   if (block.type === "page" || block.type === "equation") return { type: block.type, title: normalizeRichText(block.rich_text) };
-  if (block.type === "column") return { type: "column", column_ratio: object3(block.properties["format"] ?? {})["column_ratio"] ?? null };
+  if (block.type === "column") return { type: "column", column_ratio: object4(block.properties["format"] ?? {})["column_ratio"] ?? null };
   if (block.type === "column_list" || block.type === "transclusion_container") return { type: block.type };
   return { type: block.type };
 }
@@ -4124,7 +4565,7 @@ function sidecarBlocksFromNotionTree(tree) {
   const blocks = [];
   const walk = (node, path, columnOrder) => {
     const type = node.block["type"];
-    const nextColumnOrder = type === "table" ? object3(node.block["format"])["table_block_column_order"] : columnOrder;
+    const nextColumnOrder = type === "table" ? object4(node.block["format"])["table_block_column_order"] : columnOrder;
     blocks.push({ id: node.id, path, type, hash: notionBlockContentHash(node.block, columnOrder), snapshot: canonicalBlock(node.block, columnOrder) });
     node.children.forEach((child, index) => walk(child, [...path, index], nextColumnOrder));
   };
@@ -4143,27 +4584,27 @@ function localTree(blocks) {
   return roots;
 }
 function outputNode(node, remoteNode, parentId, remote, currentTime, columnOrder) {
-  const id = remoteNode?.id ?? formatBlockId((0, import_node_crypto3.randomUUID)().replaceAll("-", ""));
+  const id = remoteNode?.id ?? formatBlockId((0, import_node_crypto4.randomUUID)().replaceAll("-", ""));
   const block = parserBlockToNotionBlock(node.block, id, parentId, "block", remote.spaceId, remote.userId, currentTime, node.block.type === "table" ? tableColumnOrder(remoteNode?.block, node.block) : node.block.type === "table_row" ? columnOrder : void 0);
-  const nextColumnOrder = block["type"] === "table" ? object3(block["format"])["table_block_column_order"] : columnOrder;
+  const nextColumnOrder = block["type"] === "table" ? object4(block["format"])["table_block_column_order"] : columnOrder;
   return { id, block, children: node.children.map((child, index) => outputNode(child, remoteNode?.children[index], id, remote, currentTime, nextColumnOrder)) };
 }
 function emitUpdates(remote, local, blockId, spaceId, columnOrder) {
   const operations = [];
-  const remoteType = remote["type"] === "text" && object3(remote["format"] ?? {})["toggleable"] === true ? "toggle" : remote["type"];
+  const remoteType = remote["type"] === "text" && object4(remote["format"] ?? {})["toggleable"] === true ? "toggle" : remote["type"];
   const localType = local.type === "toggle" ? "text" : local.type;
   const typeChanged = remoteType !== local.type;
   if (typeChanged) operations.push({ pointer: pointer(blockId, spaceId), path: ["type"], command: "set", args: localType });
   const effectiveColumnOrder = local.type === "table" ? tableColumnOrder(remote, local) : columnOrder;
   const args = parserBlockToNotionBlock(local, blockId, remote["parent_id"] ?? "", "block", spaceId, "", 0, local.type === "table" || local.type === "table_row" ? effectiveColumnOrder : void 0);
-  const remoteProperties = object3(remote["properties"] ?? {});
-  const nextProperties = object3(args["properties"] ?? {});
+  const remoteProperties = object4(remote["properties"] ?? {});
+  const nextProperties = object4(args["properties"] ?? {});
   if (typeChanged) {
     if (compact(remoteProperties) !== compact(nextProperties)) operations.push({ pointer: pointer(blockId, spaceId), path: ["properties"], command: "set", args: nextProperties });
   } else {
     for (const key2 of Object.keys(nextProperties)) if (compact(remoteProperties[key2] ?? null) !== compact(nextProperties[key2])) operations.push({ pointer: pointer(blockId, spaceId), path: ["properties", key2], command: "set", args: nextProperties[key2] });
   }
-  const nextFormat = object3(args["format"] ?? {});
+  const nextFormat = object4(args["format"] ?? {});
   if ((typeChanged || args["format"] !== void 0 || remote["format"] !== void 0) && compact(remote["format"] ?? {}) !== compact(nextFormat)) operations.push({ pointer: pointer(blockId, spaceId), path: ["format"], command: "set", args: nextFormat });
   return operations;
 }
@@ -4181,7 +4622,7 @@ function buildNotionCreateSubtreeOperations(node, parentId, ambient, columnOrder
 }
 function positionRootCreateOperations(operations, parentId, spaceId, previousId) {
   return operations.map((operation) => {
-    if (operation.pointer["id"] === parentId && operation.pointer["spaceId"] === spaceId && operation.path.length === 1 && operation.path[0] === "content") return { ...operation, command: previousId === void 0 ? "listBefore" : "listAfter", args: previousId === void 0 ? { id: object3(operation.args)["id"] } : { id: object3(operation.args)["id"], after: previousId } };
+    if (operation.pointer["id"] === parentId && operation.pointer["spaceId"] === spaceId && operation.path.length === 1 && operation.path[0] === "content") return { ...operation, command: previousId === void 0 ? "listBefore" : "listAfter", args: previousId === void 0 ? { id: object4(operation.args)["id"] } : { id: object4(operation.args)["id"], after: previousId } };
     return operation;
   });
 }
@@ -4274,10 +4715,10 @@ function diffNotionBlockTrees(remoteTree, localBlocks, _sidecarBlocks, ambient) 
 }
 function renderNode(tree, indent, parentType = "") {
   const prefix = "  ".repeat(indent);
-  const type = tree.block["type"] === "text" && object3(tree.block["format"] ?? {})["toggleable"] === true ? "toggle" : tree.block["type"];
-  const properties = object3(tree.block["properties"] ?? {});
+  const type = tree.block["type"] === "text" && object4(tree.block["format"] ?? {})["toggleable"] === true ? "toggle" : tree.block["type"];
+  const properties = object4(tree.block["properties"] ?? {});
   const title2 = properties["title"] === void 0 ? "" : renderRichText(properties["title"]);
-  const format = object3(tree.block["format"] ?? {});
+  const format = object4(tree.block["format"] ?? {});
   if (["header", "sub_header", "sub_sub_header"].includes(type)) {
     const marker = type === "header" ? "#" : type === "sub_header" ? "##" : "###";
     return [`${prefix}${marker} ${title2}${format["toggleable"] === true ? " {toggle}" : ""}`, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
@@ -4313,8 +4754,8 @@ function renderNode(tree, indent, parentType = "") {
   if (type === "transclusion_container") return [`${prefix}:::synced`, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type)), `${prefix}:::`];
   if (type === "callout" || type === "toggle") return [`${prefix}:::${type}`, `${prefix}${title2}`, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type)), `${prefix}:::`];
   if (type === "table") {
-    const columns = object3(tree.block["format"])["table_block_column_order"];
-    const rows = tree.children.map((child) => columns.map((column) => renderRichText(object3(child.block["properties"])[column]).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/<br>/g, "\\<br>").replace(/\n/g, "<br>")));
+    const columns = object4(tree.block["format"])["table_block_column_order"];
+    const rows = tree.children.map((child) => columns.map((column) => renderRichText(object4(child.block["properties"])[column]).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/<br>/g, "\\<br>").replace(/\n/g, "<br>")));
     return rows.flatMap((row, index) => index === 0 ? [`${prefix}| ${row.join(" | ")} |`, `${prefix}| ${columns.map(() => "---").join(" | ")} |`] : [`${prefix}| ${row.join(" | ")} |`]);
   }
   if (type !== "text") {
@@ -4327,7 +4768,7 @@ function renderNode(tree, indent, parentType = "") {
   return title2.split("\n").map((line) => `${prefix}${escapeBlockMarkdownLine(line)}`);
 }
 function renderNotionTreeToMarkdown(tree, mentions) {
-  const title2 = renderRichText(object3(tree.block["properties"])["title"]);
+  const title2 = renderRichText(object4(tree.block["properties"])["title"]);
   const compactTypes = /* @__PURE__ */ new Set(["bulleted_list", "numbered_list", "to_do"]);
   const body2 = tree.children.flatMap((child, index) => [
     ...index === 0 || tree.children[index - 1].block["type"] === child.block["type"] && compactTypes.has(child.block["type"]) ? [] : [""],
@@ -4336,8 +4777,8 @@ function renderNotionTreeToMarkdown(tree, mentions) {
   const markdown = [`# ${title2}`, ...body2.length === 0 ? [] : ["", ...body2]].join("\n").trim();
   return mentions === void 0 ? markdown : renderUserMentions(markdown, mentions);
 }
-async function notionPost(runtime2, path, cookie, body2, headers2) {
-  const response = await runtime2.http.request(`https://www.notion.so/api/v3/${path}`, { method: "POST", headers: { cookie, "content-type": "application/json", ...headers2 }, body: JSON.stringify(body2) });
+async function notionPost(runtime2, path, cookie, body2, headers) {
+  const response = await runtime2.http.request(`https://www.notion.so/api/v3/${path}`, { method: "POST", headers: { cookie, "content-type": "application/json", ...headers }, body: JSON.stringify(body2) });
   if (!response.ok) throw new Error(`POST ${path} failed: ${response.status} ${await response.text()}`);
   return await response.json();
 }
@@ -4349,22 +4790,22 @@ async function fetchTree(runtime2, url, source) {
   const csrf = cookies.find((value) => value.name === "csrf")?.value;
   await runtime2.http.request(url, { headers: { cookie } });
   const spaces = await notionPost(runtime2, "getSpaces", cookie, {}, {});
-  const spaceView = object3(object3(spaces[userId])["space_view"]);
-  const initialSpaceId = object3(spaceView[Object.keys(spaceView)[0]])["spaceId"];
+  const spaceView = object4(object4(spaces[userId])["space_view"]);
+  const initialSpaceId = object4(spaceView[Object.keys(spaceView)[0]])["spaceId"];
   const pageId = formatBlockId(source.identifier);
-  let headers2 = { "x-notion-active-user-header": userId, "x-notion-space-id": initialSpaceId, referer: url, ...csrf === void 0 ? {} : { "x-csrf-token": csrf } };
+  let headers = { "x-notion-active-user-header": userId, "x-notion-space-id": initialSpaceId, referer: url, ...csrf === void 0 ? {} : { "x-csrf-token": csrf } };
   const blocks = /* @__PURE__ */ new Map();
   let stack = [];
   let chunkNumber = 0;
   do {
-    const data = await notionPost(runtime2, "loadCachedPageChunkV2", cookie, { page: { id: pageId }, limit: 100, cursor: { stack }, chunkNumber, verticalColumns: false }, headers2);
-    for (const [blockId, wrapper] of Object.entries(object3(object3(data["recordMap"])["block"]))) blocks.set(blockId, object3(object3(object3(wrapper)["value"])["value"]));
+    const data = await notionPost(runtime2, "loadCachedPageChunkV2", cookie, { page: { id: pageId }, limit: 100, cursor: { stack }, chunkNumber, verticalColumns: false }, headers);
+    for (const [blockId, wrapper] of Object.entries(object4(object4(data["recordMap"])["block"]))) blocks.set(blockId, object4(object4(object4(wrapper)["value"])["value"]));
     const cursors = data["cursors"];
     stack = cursors.length === 0 ? [] : cursors[0]["stack"];
     chunkNumber += 1;
   } while (stack.length > 0);
   const spaceId = blocks.get(pageId)["space_id"];
-  headers2 = { ...headers2, "x-notion-space-id": spaceId };
+  headers = { ...headers, "x-notion-space-id": spaceId };
   while (true) {
     const missing = /* @__PURE__ */ new Set();
     const pending = [pageId];
@@ -4383,9 +4824,9 @@ async function fetchTree(runtime2, url, source) {
     }
     if (missing.size === 0) break;
     const missingIds = [...missing];
-    const data = await notionPost(runtime2, "getRecordValues", cookie, { requests: missingIds.map((idValue) => ({ table: "block", id: idValue })) }, headers2);
+    const data = await notionPost(runtime2, "getRecordValues", cookie, { requests: missingIds.map((idValue) => ({ table: "block", id: idValue })) }, headers);
     for (const [index, result] of data["results"].entries()) {
-      const block = object3(result["value"]);
+      const block = object4(result["value"]);
       blocks.set(block["id"] ?? missingIds[index], block);
     }
   }
@@ -4394,7 +4835,7 @@ async function fetchTree(runtime2, url, source) {
     if (idValue !== pageId && block["type"] === "page") return { id: idValue, block, children: [] };
     return { id: idValue, block, children: (block["content"] ?? []).filter((child) => blocks.get(child)?.["alive"] !== false).map(build) };
   };
-  return { tree: build(pageId), userId, spaceId, cookie, headers: headers2 };
+  return { tree: build(pageId), userId, spaceId, cookie, headers };
 }
 async function fetchNotionDocument(runtime2, url, source) {
   const { tree } = await fetchTree(runtime2, url, source);
@@ -4410,13 +4851,13 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
   const userId = cookies.find((value) => value.name === "notion_user_id").value;
   const csrf = cookies.find((value) => value.name === "csrf")?.value;
   const spaces = await notionPost(runtime2, "getSpaces", cookie, {}, {});
-  const spaceView = object3(object3(spaces[userId])["space_view"]);
+  const spaceView = object4(object4(spaces[userId])["space_view"]);
   if (Object.keys(spaceView).length !== 1) throw new Error("Notion upload requires an explicit target workspace.");
-  const spaceId = object3(spaceView[Object.keys(spaceView)[0]])["spaceId"];
-  const pageId = (0, import_node_crypto3.randomUUID)();
+  const spaceId = object4(spaceView[Object.keys(spaceView)[0]])["spaceId"];
+  const pageId = (0, import_node_crypto4.randomUUID)();
   const compactPageId = pageId.replaceAll("-", "");
   const currentTime = runtime2.clock.now().getTime();
-  const headers2 = { "x-notion-active-user-header": userId, "x-notion-space-id": spaceId, referer: `https://www.notion.so/${compactPageId}`, ...csrf === void 0 ? {} : { "x-csrf-token": csrf } };
+  const headers = { "x-notion-active-user-header": userId, "x-notion-space-id": spaceId, referer: `https://www.notion.so/${compactPageId}`, ...csrf === void 0 ? {} : { "x-csrf-token": csrf } };
   const pageOperation = {
     pointer: pointer(pageId, spaceId),
     path: [],
@@ -4440,7 +4881,7 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
   };
   const localBlocks = parseNotionMarkdown(split.body);
   const operations = [pageOperation, ...buildNotionCreateOperations(localBlocks, pageId, spaceId, userId, currentTime).operations];
-  await notionPost(runtime2, "saveTransactionsFanout", cookie, { requestId: (0, import_node_crypto3.randomUUID)(), transactions: [{ id: (0, import_node_crypto3.randomUUID)(), spaceId, operations }] }, headers2);
+  await notionPost(runtime2, "saveTransactionsFanout", cookie, { requestId: (0, import_node_crypto4.randomUUID)(), transactions: [{ id: (0, import_node_crypto4.randomUUID)(), spaceId, operations }] }, headers);
   const pageTree = {
     id: pageId,
     block: pageOperation.args,
@@ -4458,7 +4899,7 @@ function splitTitle(markdown) {
 }
 async function synchronizeNotionDocument(runtime2, url, source, base, markdown, _markdownPath) {
   const remote = await fetchTree(runtime2, url, source);
-  const baseObject = object3(base);
+  const baseObject = object4(base);
   const mentions = baseUserMentions(baseObject);
   const currentMarkdown = renderNotionTreeToMarkdown(remote.tree, mentions);
   const baseMarkdown = baseObject["markdown"];
@@ -4486,10 +4927,10 @@ ${split.body}`;
       if (localTitleChanged && remoteTitleChanged && split.title !== currentSplit.title) throw new Error("Markdown and Notion changed since last sync");
       if (localTitleChanged && remoteTitleChanged) return { title: currentSplit.title, markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions) };
     }
-    const titleRich2 = split.title === "" ? object3(remote.tree.block["properties"])["title"] : titleRichText(split.title);
-    const titleChanged = split.title !== "" && compact(object3(remote.tree.block["properties"])["title"]) !== compact(titleRich2);
-    if (titleChanged) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto3.randomUUID)(), transactions: [{ id: (0, import_node_crypto3.randomUUID)(), spaceId: remote.spaceId, operations: [{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "set", args: titleRich2 }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime2.clock.now().getTime() }] }] }, remote.headers);
-    const outputTree2 = { ...remote.tree, block: { ...remote.tree.block, properties: { ...object3(remote.tree.block["properties"]), title: titleRich2 } } };
+    const titleRich2 = split.title === "" ? object4(remote.tree.block["properties"])["title"] : titleRichText(split.title);
+    const titleChanged = split.title !== "" && compact(object4(remote.tree.block["properties"])["title"]) !== compact(titleRich2);
+    if (titleChanged) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto4.randomUUID)(), transactions: [{ id: (0, import_node_crypto4.randomUUID)(), spaceId: remote.spaceId, operations: [{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "set", args: titleRich2 }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime2.clock.now().getTime() }] }] }, remote.headers);
+    const outputTree2 = { ...remote.tree, block: { ...remote.tree.block, properties: { ...object4(remote.tree.block["properties"]), title: titleRich2 } } };
     const output2 = renderNotionTreeToMarkdown(outputTree2, mentions);
     return { title: output2.split("\n")[0].replace(/^# */, ""), markdown: output2, data: notionData(remote.tree.id, output2, outputTree2, mentions) };
   }
@@ -4505,10 +4946,10 @@ ${split.body}`;
   const ambient = { spaceId: remote.spaceId, userId: remote.userId, currentTime: runtime2.clock.now().getTime() };
   const diffResult = diffNotionBlockTrees(remote.tree, localBlocks, sidecarBlocksFromNotionTree(remote.tree), ambient);
   const operations = [...diffResult.operations];
-  const titleRich = split.title === "" ? object3(remote.tree.block["properties"])["title"] : titleRichText(split.title);
-  if (split.title !== "" && compact(object3(remote.tree.block["properties"])["title"]) !== compact(titleRich)) operations.unshift({ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "set", args: titleRich });
-  if (operations.length > 0) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto3.randomUUID)(), transactions: [{ id: (0, import_node_crypto3.randomUUID)(), spaceId: remote.spaceId, operations }] }, remote.headers);
-  const outputTree = { id: remote.tree.id, block: { ...remote.tree.block, properties: { ...object3(remote.tree.block["properties"]), title: titleRich } }, children: localTree(localBlocks).map((node, index) => outputNode(node, remote.tree.children[index], remote.tree.id, remote, ambient.currentTime)) };
+  const titleRich = split.title === "" ? object4(remote.tree.block["properties"])["title"] : titleRichText(split.title);
+  if (split.title !== "" && compact(object4(remote.tree.block["properties"])["title"]) !== compact(titleRich)) operations.unshift({ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "set", args: titleRich });
+  if (operations.length > 0) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto4.randomUUID)(), transactions: [{ id: (0, import_node_crypto4.randomUUID)(), spaceId: remote.spaceId, operations }] }, remote.headers);
+  const outputTree = { id: remote.tree.id, block: { ...remote.tree.block, properties: { ...object4(remote.tree.block["properties"]), title: titleRich } }, children: localTree(localBlocks).map((node, index) => outputNode(node, remote.tree.children[index], remote.tree.id, remote, ambient.currentTime)) };
   const output = renderNotionTreeToMarkdown(outputTree, mentions);
   return { title: output.split("\n")[0].replace(/^# */, ""), markdown: output, data: notionData(remote.tree.id, output, outputTree, mentions) };
 }
@@ -4533,14 +4974,14 @@ var notionProvider = Object.freeze({
 function slackAuthError() {
   return new Error("slack cookie authentication is missing or expired. Run `wire slack login` once; other commands reuse saved cookies.");
 }
-function decodeEntities(text2) {
-  return text2.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+function decodeEntities(text3) {
+  return text3.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
 }
 function markdownLinkLabel(value) {
   return value.replace(/\\/g, "\\\\").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
 }
-function cleanText(text2) {
-  return decodeEntities(text2.replace(/<@([A-Z0-9]+)(?:\|([^>]+))?>/g, (_match, id, label) => `@${label ?? id}`).replace(/<#[A-Z0-9]+\|([^>]+)>/g, "#$1").replace(/<#([A-Z0-9]+)>/g, "#$1").replace(/<!subteam\^[A-Z0-9]+\|([^>]+)>/g, "$1").replace(/<!(here|channel|everyone)>/g, "@$1").replace(/<(https?:\/\/[^|>\s]+)\|([^>]+)>/g, (_match, url, label) => `[${markdownLinkLabel(label)}](${url})`).replace(/<(https?:\/\/[^>]+)>/g, "$1").replace(/<(mailto:[^|>]+)\|([^>]+)>/g, "$2"));
+function cleanText(text3) {
+  return decodeEntities(text3.replace(/<@([A-Z0-9]+)(?:\|([^>]+))?>/g, (_match, id, label) => `@${label ?? id}`).replace(/<#[A-Z0-9]+\|([^>]+)>/g, "#$1").replace(/<#([A-Z0-9]+)>/g, "#$1").replace(/<!subteam\^[A-Z0-9]+\|([^>]+)>/g, "$1").replace(/<!(here|channel|everyone)>/g, "@$1").replace(/<(https?:\/\/[^|>\s]+)\|([^>]+)>/g, (_match, url, label) => `[${markdownLinkLabel(label)}](${url})`).replace(/<(https?:\/\/[^>]+)>/g, "$1").replace(/<(mailto:[^|>]+)\|([^>]+)>/g, "$2"));
 }
 async function api(runtime2, origin, token, cookie, method, parameters) {
   const body2 = new URLSearchParams({ token, ...parameters });
@@ -4616,9 +5057,9 @@ var slackService = defineService({
         if (!botCache.has(botId)) botCache.set(botId, (await api(runtime2, origin, token, cookie, "bots.info", { bot: botId }))["bot"]["name"]);
         userName = botCache.get(botId);
       } else userName = "unknown";
-      const text2 = raw["text"];
+      const text3 = raw["text"];
       const files = raw["files"] === void 0 ? [] : raw["files"].map((file) => Object.freeze({ name: file["name"], url: file["url_private"] }));
-      messages.push({ ts: raw["ts"], user_id: userId ?? "unknown", user_name: userName, text: text2, files });
+      messages.push({ ts: raw["ts"], user_id: userId ?? "unknown", user_name: userName, text: text3, files });
     }
     const mentioned = new Set(messages.flatMap((message) => [...message.text.matchAll(/<@([A-Z0-9]+)(?:\|[^>]+)?>/g)].map((match) => match[1])));
     for (const id of mentioned) await resolveUser(id);
@@ -4665,10 +5106,10 @@ function transcriptTitle(title2, startTime, timezone) {
   return `${meetingDate(startTime, timezone)}-${base}`;
 }
 async function zoomText(response, label) {
-  const text2 = await response.text();
+  const text3 = await response.text();
   if (response.status === 401) throw zoomAuthError();
-  if (!response.ok) throw new Error(`Zoom Hub ${label} failed: HTTP ${response.status} ${text2}`);
-  return text2;
+  if (!response.ok) throw new Error(`Zoom Hub ${label} failed: HTTP ${response.status} ${text3}`);
+  return text3;
 }
 async function zoomJson(response, label) {
   const body2 = await response.json();
@@ -4676,8 +5117,8 @@ async function zoomJson(response, label) {
   if (!response.ok) throw new Error(`Zoom Hub ${label} failed: HTTP ${response.status} ${JSON.stringify(body2)}`);
   return body2;
 }
-function zoomJwt(text2) {
-  const token = text2.trim();
+function zoomJwt(text3) {
+  const token = text3.trim();
   if (token.split(".").length !== 3) throw zoomAuthError();
   return token;
 }
@@ -4711,8 +5152,8 @@ function splitSetCookieHeader(value) {
   return Object.freeze(value.split(/,(?=\s*[^;,]+=)/).map((item) => item.trim()));
 }
 function setCookieHeaders(response) {
-  const headers2 = response.headers;
-  const values2 = headers2.getSetCookie?.();
+  const headers = response.headers;
+  const values2 = headers.getSetCookie?.();
   if (values2 !== void 0) return Object.freeze(values2);
   const value = response.headers.get("set-cookie");
   if (value === null) return Object.freeze([]);
@@ -4875,12 +5316,12 @@ function repositoryRoot() {
 function runtime(values2) {
   const filesystem = {
     exists: async (path) => (0, import_node_fs4.existsSync)(path),
-    readText: (path) => (0, import_promises6.readFile)(path, "utf8"),
+    readText: (path) => (0, import_promises7.readFile)(path, "utf8"),
     writeText: async (path, contents) => {
-      await (0, import_promises6.mkdir)((0, import_node_path5.dirname)(path), { recursive: true });
-      await (0, import_promises6.writeFile)(path, contents, "utf8");
+      await (0, import_promises7.mkdir)((0, import_node_path5.dirname)(path), { recursive: true });
+      await (0, import_promises7.writeFile)(path, contents, "utf8");
     },
-    delete: (path) => (0, import_promises6.rm)(path)
+    delete: (path) => (0, import_promises7.rm)(path)
   };
   const clock = {
     now: () => /* @__PURE__ */ new Date(),
@@ -4924,7 +5365,11 @@ async function wire(path) {
       exists: async (path2) => (0, import_node_fs4.existsSync)(path2),
       isFile: async (path2) => (0, import_node_fs4.existsSync)(path2) && (0, import_node_fs4.statSync)(path2).isFile(),
       readText: capabilities.filesystem.readText,
-      writeText: capabilities.filesystem.writeText
+      writeText: capabilities.filesystem.writeText,
+      writeBytes: async (path2, contents) => {
+        await (0, import_promises7.mkdir)((0, import_node_path5.dirname)(path2), { recursive: true });
+        await (0, import_promises7.writeFile)(path2, contents);
+      }
     },
     workspace: {
       configuredRoot: configuredWireRoot,

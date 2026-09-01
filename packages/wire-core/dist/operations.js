@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { extractRelationships, markdownFilename } from "./core/transform.js";
 import { resourceId } from "./core/resource.js";
 import { fetchSource, parseSourceUrl, synchronizeSource, uploadSource } from "./core/source.js";
@@ -151,11 +151,30 @@ export function composeWire(dependencies) {
     const create = attach;
     const view = (url) => fetchSource(dependencies.fetchInput, url, dependencies.catalog);
     const downloadSource = async (url, path) => {
-        const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
         const source = parseSourceUrl(url, dependencies.catalog);
-        const cleanPath = join(resolve(path), markdownFilename(fetched.title));
+        const directory = resolve(path);
+        const downloadPath = (path) => {
+            const target = resolve(directory, path);
+            const child = relative(directory, target);
+            if (isAbsolute(path) || path.includes("\\") || child === "" || child === ".." || child.startsWith(`..${sep}`))
+                throw new Error(`Unsafe download path: ${path}`);
+            return target;
+        };
+        const service = dependencies.catalog.find((item) => item.matches(new URL(url)));
+        const downloaded = await service.download?.(dependencies.fetchInput, url, source, async (relative, contents) => {
+            const target = downloadPath(relative);
+            if (typeof contents === "string")
+                await dependencies.filesystem.writeText(target, contents);
+            else {
+                if (dependencies.filesystem.writeBytes === undefined)
+                    throw new Error("This filesystem does not support binary downloads");
+                await dependencies.filesystem.writeBytes(target, contents);
+            }
+        });
+        const fetched = downloaded ?? await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
+        const cleanPath = downloaded == null ? join(directory, markdownFilename(fetched.title)) : downloadPath(downloaded.path);
         let outputPath = cleanPath;
-        if (await dependencies.filesystem.exists(cleanPath)) {
+        if (downloaded == null && await dependencies.filesystem.exists(cleanPath)) {
             const existingMarkdown = await dependencies.filesystem.readText(cleanPath);
             if (existingMarkdown !== fetched.markdown)
                 outputPath = join(resolve(path), collisionFilename(fetched.title, source.service, source.identifier));
@@ -168,7 +187,7 @@ export function composeWire(dependencies) {
             type: source.type,
             identifiers: [{ service: source.service, identifier: source.identifier }],
             urls: [url],
-            filesystem_links: [{ path: basename(outputPath), role: "primary", data: { format: "markdown" } }],
+            filesystem_links: [{ path: relative(directory, outputPath), role: "primary", data: { format: "markdown" } }],
             data: [
                 { namespace: "wire", key: "title", value: fetched.title },
                 { namespace: "wire", key: "synced_at", value: dependencies.now().toISOString() },
@@ -176,7 +195,7 @@ export function composeWire(dependencies) {
             ],
             relationships: extractRelationships(fetched.markdown, id, dependencies.catalog),
         };
-        return { resource, path: outputPath, markdown: fetched.markdown, summary: { action: "downloaded", ...changeSummary(previous, fetched.markdown), remote: url, local: outputPath } };
+        return { resource, path: outputPath, markdown: fetched.markdown, summary: { action: downloaded?.error === undefined ? "downloaded" : "failed", ...changeSummary(previous, fetched.markdown), remote: url, local: outputPath, ...(downloaded?.error === undefined ? {} : { error: downloaded.error }) } };
     };
     const resolveResource = async (registry, value, root, path) => {
         if (value.startsWith("http://") || value.startsWith("https://")) {
