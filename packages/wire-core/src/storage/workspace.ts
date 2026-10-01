@@ -87,6 +87,11 @@ export async function switchWireBackend(path: string, home: string): Promise<Swi
   const to = config.backend === "sqlite" ? "files" : "sqlite";
   const targetRelativePath = registryPathForBackend(to);
   const toPath = join(wireRoot, targetRelativePath);
+  const canonicalSource = canonicalPath(fromPath);
+  const canonicalTarget = canonicalPath(toPath);
+  if (canonicalSource === canonicalTarget || canonicalSource.startsWith(`${canonicalTarget}${sep}`) || canonicalTarget.startsWith(`${canonicalSource}${sep}`)) {
+    throw new Error(`Cannot switch storage backends because registry paths overlap: ${fromPath} and ${toPath}. Move the source registry and update config.json before switching.`);
+  }
   await rm(toPath, { recursive: true, force: true });
   const target = to === "sqlite" ? new SqliteRegistry(toPath) : new FileRegistry(toPath);
   for (const resource of resources) await target.put(resource);

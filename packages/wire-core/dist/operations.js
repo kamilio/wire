@@ -26,6 +26,17 @@ function collisionFilename(title, service, identifier) {
     const compact = suffix.length <= 48 ? suffix : `${suffix.slice(0, 32).replace(/[-_.]+$/g, "")}-${createHash("sha256").update(suffix).digest("hex").slice(0, 10)}`;
     return `${base}-${compact}.md`;
 }
+async function availableMarkdownPath(directory, title, service, identifier, occupied) {
+    const cleanPath = join(resolve(directory), markdownFilename(title));
+    if (!await occupied(cleanPath))
+        return cleanPath;
+    const fallback = join(resolve(directory), collisionFilename(title, service, identifier));
+    let candidate = fallback;
+    let number = 2;
+    while (await occupied(candidate))
+        candidate = `${fallback.slice(0, -3)}-${number++}.md`;
+    return candidate;
+}
 function markdownLines(markdown) {
     return markdown === "" ? [] : markdown.endsWith("\n") ? markdown.slice(0, -1).split("\n") : markdown.split("\n");
 }
@@ -106,8 +117,7 @@ export function composeWire(dependencies) {
         else if (fixedOutputPath !== undefined)
             outputPath = fixedOutputPath;
         else {
-            const cleanPath = join(resolve(path), markdownFilename(fetched.title));
-            outputPath = await dependencies.filesystem.exists(cleanPath) ? join(resolve(path), collisionFilename(fetched.title, source.service, source.identifier)) : cleanPath;
+            outputPath = await availableMarkdownPath(path, fetched.title, source.service, source.identifier, async (candidate) => await dependencies.filesystem.exists(candidate) || (await registry.findByPath(dependencies.workspace.relativePath(candidate, root))).length > 0);
         }
         const relativePath = dependencies.workspace.relativePath(outputPath, root);
         const previous = previousMarkdown === null ? await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "" : previousMarkdown;
@@ -172,13 +182,9 @@ export function composeWire(dependencies) {
             }
         });
         const fetched = downloaded ?? await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
-        const cleanPath = downloaded == null ? join(directory, markdownFilename(fetched.title)) : downloadPath(downloaded.path);
-        let outputPath = cleanPath;
-        if (downloaded == null && await dependencies.filesystem.exists(cleanPath)) {
-            const existingMarkdown = await dependencies.filesystem.readText(cleanPath);
-            if (existingMarkdown !== fetched.markdown)
-                outputPath = join(resolve(path), collisionFilename(fetched.title, source.service, source.identifier));
-        }
+        const outputPath = downloaded == null
+            ? await availableMarkdownPath(directory, fetched.title, source.service, source.identifier, async (candidate) => await dependencies.filesystem.exists(candidate) && (!await dependencies.filesystem.isFile(candidate) || await dependencies.filesystem.readText(candidate) !== fetched.markdown))
+            : downloadPath(downloaded.path);
         const previous = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
         await dependencies.filesystem.writeText(outputPath, fetched.markdown);
         const id = resourceId(source);

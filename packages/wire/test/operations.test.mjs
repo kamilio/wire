@@ -324,6 +324,32 @@ test("create keeps clean titles and adds stable identity only on filename collis
   assert.equal(third.path, join(project, `weekly-sync-${compact}.md`));
 });
 
+for (const operation of ["attach", "downloadSource"]) {
+  test(`${operation} preserves occupied fallback filenames`, async () => {
+    const project = join(testRoot, `${operation}-occupied-fallback`);
+    await mkdir(project);
+    const wire = createWire(project, async () => ({ title: "Document", markdown: "# Remote\n", data: {} }));
+    const occupied = ["document.md", "document-notion-page.md", "document-notion-page-2.md"];
+    for (const name of occupied) await writeFile(join(project, name), `Local contents of ${name}\n`);
+    const result = await wire[operation]("https://notion.test/page", project);
+    for (const name of occupied) assert.equal(await readFile(join(project, name), "utf8"), `Local contents of ${name}\n`);
+    assert.equal(await readFile(result.path, "utf8"), "# Remote\n");
+  });
+}
+
+test("attach reserves paths belonging to resources with missing local files", async () => {
+  const project = join(testRoot, "attach-missing-registered-file");
+  await mkdir(project);
+  const wire = createWire(project, async (_url, source) => ({ title: "Document", markdown: `# ${source.identifier}\n`, data: {} }));
+  const first = await wire.attach("https://notion.test/one", project);
+  await unlink(first.path);
+  const second = await wire.attach("https://notion.test/two", project);
+  assert.notEqual(second.path, first.path);
+  await wire.download(first.resource.id, project);
+  assert.equal(await readFile(second.path, "utf8"), "# two\n");
+  assert.equal((await wire.showResource(second.path, project)).id, second.resource.id);
+});
+
 test("sync-all preserves registered subdirectories", async () => {
   const project = join(testRoot, "sync-all");
   await mkdir(join(project, "one"), { recursive: true });

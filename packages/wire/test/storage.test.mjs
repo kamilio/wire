@@ -344,6 +344,18 @@ test("explicit backend configuration opens the configured relative path", async 
   }
 });
 
+for (const [backend, path] of [["files", "registry.sqlite3"], ["sqlite", "records"]]) {
+  test(`switchWireBackend preserves ${backend} data when the custom path is the destination`, async () => {
+    const project = join(testRoot, `switch-overlapping-${backend}`);
+    await mkdir(project);
+    const initialized = await initializeWire(project, backend, path);
+    await (await openWireRegistry(project, testRoot)).put(resourceA);
+    await assert.rejects(() => switchWireBackend(project, testRoot), /overlap/i);
+    assert.deepEqual(await loadWireConfig(initialized.root), { backend, path });
+    assert.deepEqual(await (await openWireRegistry(project, testRoot)).get(resourceA.id), normalizeResource(resourceA));
+  });
+}
+
 test("switchWireBackend converts sqlite and files registries while preserving config data", async () => {
   const sqliteProject = join(testRoot, "switch-sqlite");
   await mkdir(sqliteProject);
