@@ -63,6 +63,8 @@ function notionRuntime(page, submitted) {
     http: { request: async (input, init) => {
       const path = String(input).split("/api/v3/")[1];
       if (path === undefined) return new Response("{}", { headers: { "content-type": "application/json" } });
+      assert.equal(init.headers["user-agent"], "Mozilla/5.0");
+      assert.equal(init.headers["notion-client-version"], "23.13.0.4595");
       const bodyValue = JSON.parse(init.body);
       if (path === "getSpaces") return Response.json({ user: { space_view: { view: { spaceId: "space" } } } });
       if (path === "loadCachedPageChunkV2") return Response.json({ recordMap: { block: blockMap }, cursors: [] });

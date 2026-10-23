@@ -888,7 +888,7 @@ export function renderNotionTreeToMarkdown(tree, mentions) {
     return mentions === undefined ? markdown : renderUserMentions(markdown, mentions);
 }
 async function notionPost(runtime, path, cookie, body, headers) {
-    const response = await runtime.http.request(`https://www.notion.so/api/v3/${path}`, { method: "POST", headers: { cookie, "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+    const response = await runtime.http.request(`https://www.notion.so/api/v3/${path}`, { method: "POST", headers: { cookie, "content-type": "application/json", "notion-client-version": "23.13.0.4595", "user-agent": "Mozilla/5.0", ...headers }, body: JSON.stringify(body) });
     if (!response.ok)
         throw new Error(`POST ${path} failed: ${response.status} ${await response.text()}`);
     return await response.json();
