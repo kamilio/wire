@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { sendSlackMessage } from "provider-slack";
 import { createRoot } from "./adapters/root.js";
 import { composeAuth } from "./auth.js";
 import { serviceCatalog } from "./adapters/services/catalog.js";
@@ -123,6 +124,6 @@ export function createExecutableRoot(environment, currentDirectory, options = { 
         switchBackend: baseWire.switchBackend,
     });
     const wire = withWireHooks(configuredWire, { currentDirectory, home, environment: configuredEnvironment() });
-    return createRoot(wire, currentDirectory, auth, readStandardInput, options);
+    return createRoot(wire, currentDirectory, auth, readStandardInput, options, (destination, markdown) => sendSlackMessage(runtime, destination, markdown));
 }
 //# sourceMappingURL=executable.js.map

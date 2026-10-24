@@ -237,6 +237,8 @@ function excessPositionals(argv) {
     const command = words[0];
     if (command in fixedCommandPositionals)
         return Object.freeze({ commandPath: command, expected: fixedCommandPositionals[command].expected, received: words.length - 1 });
+    if (command === "slack" && words[1] === "send")
+        return Object.freeze({ commandPath: "slack send", expected: 2, received: words.length - 2 });
     if (authServices.has(command)) {
         const authCommand = words[1];
         if (authCommand === undefined || !authCommands.has(authCommand))
@@ -254,6 +256,8 @@ function missingPositionals(argv) {
     if (words === null || words.length === 0)
         return null;
     const command = words[0];
+    if (command === "slack" && words[1] === "send" && words.length < 4)
+        return { commandPath: "slack send", name: words.length === 2 ? "destination" : "markdown" };
     if (!(command in fixedCommandPositionals))
         return null;
     const positional = fixedCommandPositionals[command];
@@ -293,7 +297,7 @@ function renderUnknownAuthCommand(argv) {
     if (hasRootSeparator(argv))
         return false;
     const words = positionalWords(argv);
-    if (words === null || words.length < 2 || !authServices.has(words[0]) || authCommands.has(words[1]))
+    if (words === null || words.length < 2 || !authServices.has(words[0]) || authCommands.has(words[1]) || words[0] === "slack" && words[1] === "send")
         return false;
     renderCliError(argv, `Unknown command: ${words[1]}`, `wire ${words[0]} --help`, `Unknown command: ${cliValue(words[1])}`);
     return true;

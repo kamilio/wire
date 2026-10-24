@@ -1,6 +1,7 @@
 import { UserError, defineCommand, defineGroup, S, type Group } from "toolcraft";
 
 import { defaultWireBackend, registryPathForBackend, type FetchedDocument, type InitializedWire, type Resource, type SwitchedWireBackend, type Wire, type WireBackend, type WireResult, type WireWatchSession } from "wire-core";
+import type { SlackSentMessage } from "provider-slack";
 import type { Auth, AuthResult, AuthService } from "../auth.js";
 
 export type WireRoot = Group;
@@ -414,7 +415,7 @@ function authGroup(service: AuthService, description: string, loginDescription: 
   ] });
 }
 
-export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, readInput?: TextInputReader, options: WireRootOptions = { allowPaste: true }): WireRoot {
+export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, readInput?: TextInputReader, options: WireRootOptions = { allowPaste: true }, sendSlack?: (destination: string, markdown: string) => Promise<SlackSentMessage>): WireRoot {
   const attachFromCliUrl = (url: string) => {
     const removedCommand = removedCliCommandNames[url as keyof typeof removedCliCommandNames];
     if (removedCommand !== undefined) throw new UserError(`Unknown command: ${url}. ${removedCommand}`);
@@ -431,7 +432,16 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
   });
   const authCommand = (service: (typeof authServices)[number]) => {
     const title = serviceTitle(service);
-    return authGroup(service, `Manage ${title} login.`, "Capture cookies once; normal commands reuse saved cookies.", auth!, readInput, options);
+    const group = authGroup(service, `Manage ${title} login.`, "Capture cookies once; normal commands reuse saved cookies.", auth!, readInput, options);
+    if (service !== "slack" || sendSlack === undefined) return group;
+    return defineGroup({ name: "slack", description: "Read Slack channels and threads, send Markdown, and manage login.", children: [...group.children, defineCommand({
+      name: "send",
+      description: "Send Markdown to a channel name, channel ID, channel URL, or thread URL. Use a thread URL to reply. Tables and frontmatter are sent as code blocks.",
+      positional: ["destination", "markdown"],
+      params: S.Object({ destination: S.String({ description: "Slack channel name (with #), channel ID, channel URL, or message URL to reply to." }), markdown: S.String({ description: "Message in Markdown. Supports formatting, nested lists, code, quotes, links, and explicit Slack mentions such as <@U123>." }) }),
+      handler: ({ params }) => userFacing(() => sendSlack(params.destination, params.markdown)),
+      render: render<SlackSentMessage>((result) => `Sent: ${result.url}`),
+    })] });
   };
   return defineGroup({
     name: "",

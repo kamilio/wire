@@ -196,7 +196,7 @@ test("CLI version flags render version", async () => {
 test("CLI bare auth group renders service help", async () => {
   for (const [service, title] of [["google-docs", "Google Docs/Sheets/Slides"], ["slack", "Slack"]]) {
     const execution = await execFileAsync(process.execPath, [fixture, service], { env: { ...process.env, NO_COLOR: "1" } });
-    assert.match(execution.stdout, new RegExp(`^${service} (?:-|—) Manage ${title} login\\.`, "m"));
+    assert.match(execution.stdout, service === "slack" ? /^slack (?:-|—) Read Slack channels and threads, send Markdown, and manage login\./m : new RegExp(`^${service} (?:-|—) Manage ${title} login\\.`, "m"));
     assert.match(execution.stdout, new RegExp(`Usage: wire ${service} \\[command\\] \\[OPTIONS\\]`));
     assert.doesNotMatch(execution.stdout, /^## /m);
     assert.doesNotMatch(execution.stdout, /Usage: `/);
@@ -206,7 +206,7 @@ test("CLI bare auth group renders service help", async () => {
 
 test("CLI init help names backend choices", async () => {
   const execution = await execFileAsync(process.execPath, [fixture, "init", "--help"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.match(execution.stdout, /--backend <value>\s+Registry backend: files or sqlite\. \(default: files\)/);
+  assert.match(execution.stdout, /--backend <value>\s+Registry backend: files or sqlite\. \(values: files, sqlite\) \(default: files\)/);
 });
 
 test("CLI preview help names preview URL input", async () => {
@@ -251,14 +251,14 @@ test("CLI watch help describes continuous sync behavior", async () => {
 test("CLI command help includes output format control", async () => {
   for (const args of [["--help"], ["sync", "--help"], ["sync-all", "--help"], ["google-docs", "--help"], ["google-docs", "login", "--help"]]) {
     const execution = await execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } });
-    if (args[0] === "--help") assert.match(execution.stdout, /--output <format>/);
+    if (args[0] === "--help") assert.match(execution.stdout, /--output <rich\|md\|markdown\|json>/);
     assert.doesNotMatch(execution.stdout, /--debug/);
   }
 });
 
 test("CLI root help keeps version separate from output control", async () => {
   const execution = await execFileAsync(process.execPath, [fixture, "--help"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.match(execution.stdout, /^Options: --output <format>\s+--version$/m);
+  assert.match(execution.stdout, /^Global Options: --output <rich\|md\|markdown\|json>\s+--version$/m);
   assert.doesNotMatch(execution.stdout, /^## /m);
   assert.doesNotMatch(execution.stdout, /Usage: `/);
 });
@@ -1929,4 +1929,29 @@ test("MCP launcher serves native toolcraft over stdio", async () => {
   assert.ok(responses[1].result.tools.some((tool) => tool.name === "asana__status"));
   assert.ok(responses[1].result.tools.some((tool) => tool.name === "zoom__login"));
   assert.equal(responses[1].result.tools.some((tool) => tool.name.startsWith("approvals")), false);
+});
+
+test("CLI Slack send preserves multiline Markdown and returns the message URL", async () => {
+  const markdown = "**hello**\n\n- first\n  - nested\n\n`<@U1>`";
+  const execution = await execFileAsync(process.execPath, [fixture, "slack", "send", "#kamil-reviews", markdown, "--output", "json"], { env: { ...process.env, NO_COLOR: "1" } });
+  assert.deepEqual(JSON.parse(execution.stdout), { channel: "#kamil-reviews", ts: "1234567890.000001", url: "https://example.slack.com/archives/C1/p1234567890000001", markdown });
+});
+
+test("CLI Slack send validates missing and excess message arguments", async () => {
+  for (const args of [[], ["C1"], ["C1", "Hello", "extra"]]) {
+    await assert.rejects(() => execFileAsync(process.execPath, [fixture, "slack", "send", ...args, "--output", "json"], { env: { ...process.env, NO_COLOR: "1" } }), (error) => {
+      assert.match(error.stdout + error.stderr, /Missing required argument|Too many arguments/);
+      return true;
+    });
+  }
+});
+
+test("MCP Slack send invokes the same sending operation", async () => {
+  const calls = [];
+  const send = async (destination, markdown) => { calls.push({ destination, markdown }); return { channel: "C1", ts: "1234567890.000001", url: "https://example.slack.com/sent" }; };
+  const server = createWireMcpServer(createRoot(createFakeWire(), "/workspace", auth, undefined, { allowPaste: false }, send));
+  await server.handleMessage("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } });
+  const result = await server.handleMessage("tools/call", { name: "slack__send", arguments: { destination: "C1", markdown: "**Hello**\nWorld" } });
+  assert.deepEqual(calls, [{ destination: "C1", markdown: "**Hello**\nWorld" }]);
+  assert.equal(JSON.parse(result.result.content[0].text).url, "https://example.slack.com/sent");
 });

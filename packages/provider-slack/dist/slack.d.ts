@@ -1,4 +1,14 @@
+import type { JsonObject } from "wire-core";
 import type { RuntimeCapabilities } from "wire-core";
+export declare function markdownToSlackBlocks(markdown: string): readonly JsonObject[];
+export declare function slackBlocksToMarkdown(blocks: readonly JsonObject[], users: ReadonlyMap<string, string>): string;
+export type SlackSentMessage = Readonly<{
+    channel: string;
+    ts: string;
+    url: string;
+    thread_ts?: string;
+}>;
+export declare function sendSlackMessage(runtime: RuntimeCapabilities, destination: string, markdown: string): Promise<SlackSentMessage>;
 export declare const slackService: Readonly<{
     name: string;
     matches(url: URL): boolean;

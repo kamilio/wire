@@ -76,4 +76,4 @@ function wireFixture() {
     },
   });
 }
-await runWireCli((currentDirectory) => createRoot(wireFixture(), currentDirectory, auth, readStandardInput), process.argv, "/workspace");
+await runWireCli((currentDirectory) => createRoot(wireFixture(), currentDirectory, auth, readStandardInput, { allowPaste: true }, async (destination, markdown) => ({ channel: destination, ts: "1234567890.000001", url: "https://example.slack.com/archives/C1/p1234567890000001", markdown })), process.argv, "/workspace");

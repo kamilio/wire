@@ -4,7 +4,7 @@ import { createMCPServer, runMCP } from "toolcraft/mcp";
 
 import type { WireRoot } from "./adapters/root.js";
 
-export function createWireMcpServer(root: WireRoot) {
+export function createWireMcpServer(root: WireRoot): ReturnType<typeof createMCPServer> {
   const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
   return createMCPServer(root, { name: "wire", version: packageJson.version, omitRootToolNamePrefix: true, approvals: false });
 }
