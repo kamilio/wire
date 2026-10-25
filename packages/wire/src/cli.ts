@@ -121,6 +121,7 @@ const fixedCommandPositionals = Object.freeze({
   watch: Object.freeze({ expected: 1, name: "file" }),
 });
 const authServices = new Set(["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"]);
+const slackResourceCommands = new Set(["preview", "attach", "sync"]);
 const authCommands = new Set(["login", "logout", "status"]);
 const removedCommandNames = Object.freeze({
   auth: "Use `wire <service> status`, `wire <service> login`, or `wire <service> logout`.",
@@ -238,6 +239,7 @@ function excessPositionals(argv: readonly string[]): Readonly<{ commandPath: str
   if (words === null || words.length === 0) return null;
   const command = words[0]!;
   if (command in fixedCommandPositionals) return Object.freeze({ commandPath: command, expected: fixedCommandPositionals[command as keyof typeof fixedCommandPositionals].expected, received: words.length - 1 });
+  if (command === "slack" && slackResourceCommands.has(words[1]!)) return { commandPath: `slack ${words[1]}`, expected: 1, received: words.length - 2 };
   if (command === "slack" && words[1] === "send") return Object.freeze({ commandPath: "slack send", expected: 2, received: words.length - 2 });
   if (authServices.has(command)) {
     const authCommand = words[1];
@@ -253,6 +255,7 @@ function missingPositionals(argv: readonly string[]): Readonly<{ commandPath: st
   const words = positionalWords(argv);
   if (words === null || words.length === 0) return null;
   const command = words[0]!;
+  if (command === "slack" && slackResourceCommands.has(words[1]!) && words.length < 3) return { commandPath: `slack ${words[1]}`, name: words[1] === "sync" ? "resource" : "url" };
   if (command === "slack" && words[1] === "send" && words.length < 4) return { commandPath: "slack send", name: words.length === 2 ? "destination" : "markdown" };
   if (!(command in fixedCommandPositionals)) return null;
   const positional = fixedCommandPositionals[command as keyof typeof fixedCommandPositionals];
@@ -289,7 +292,7 @@ function renderRemovedCommand(argv: readonly string[]): boolean {
 function renderUnknownAuthCommand(argv: readonly string[]): boolean {
   if (hasRootSeparator(argv)) return false;
   const words = positionalWords(argv);
-  if (words === null || words.length < 2 || !authServices.has(words[0]!) || authCommands.has(words[1]!) || words[0] === "slack" && words[1] === "send") return false;
+  if (words === null || words.length < 2 || !authServices.has(words[0]!) || authCommands.has(words[1]!) || words[0] === "slack" && (words[1] === "send" || slackResourceCommands.has(words[1]!))) return false;
   renderCliError(argv, `Unknown command: ${words[1]}`, `wire ${words[0]} --help`, `Unknown command: ${cliValue(words[1]!)}`);
   return true;
 }

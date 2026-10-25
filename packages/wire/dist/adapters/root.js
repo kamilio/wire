@@ -412,19 +412,35 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
         handler: ({ params }) => attachFromCliUrl(params.url),
         render: wirePresentation.attach,
     });
+    const preview = defineCommand({
+        name: "preview",
+        description: "Preview a source URL without writing files.",
+        positional: ["url"],
+        params: S.Object({ url: S.String({ description: "Supported source URL to preview." }) }),
+        handler: ({ params }) => userFacing(() => wire.view(params.url)),
+        render: wirePresentation.view,
+    });
+    const sync = defineCommand({
+        name: "sync",
+        description: "Two-way sync one registered resource.",
+        positional: ["resource"],
+        params: S.Object({ resource: S.String({ description: "Registered resource URL, resource ID, or Markdown path." }) }),
+        handler: ({ params }) => userFacing(() => wire.sync(params.resource, currentDirectory)),
+        render: wirePresentation.sync,
+    });
     const authCommand = (service) => {
         const title = serviceTitle(service);
         const group = authGroup(service, `Manage ${title} login.`, "Capture cookies once; normal commands reuse saved cookies.", auth, readInput, options);
-        if (service !== "slack" || sendSlack === undefined)
+        if (service !== "slack")
             return group;
-        return defineGroup({ name: "slack", description: "Read Slack channels and threads, send Markdown, and manage login.", children: [...group.children, defineCommand({
-                    name: "send",
-                    description: "Send Markdown to a channel name, channel ID, channel URL, or thread URL. Use a thread URL to reply. Tables and frontmatter are sent as code blocks.",
-                    positional: ["destination", "markdown"],
-                    params: S.Object({ destination: S.String({ description: "Slack channel name (with #), channel ID, channel URL, or message URL to reply to." }), markdown: S.String({ description: "Message in Markdown. Supports formatting, nested lists, code, quotes, links, and explicit Slack mentions such as <@U123>." }) }),
-                    handler: ({ params }) => userFacing(() => sendSlack(params.destination, params.markdown)),
-                    render: render((result) => `Sent: ${result.url}`),
-                })] });
+        return defineGroup({ name: "slack", description: "Read Slack channels, DMs, and threads, send Markdown, and manage login.", children: [preview, defaultAttach, sync, ...group.children, ...(sendSlack === undefined ? [] : [defineCommand({
+                        name: "send",
+                        description: "Send Markdown to a channel, @username, user ID, DM URL, or thread URL. Use a thread URL to reply. Tables and frontmatter are sent as code blocks.",
+                        positional: ["destination", "markdown"],
+                        params: S.Object({ destination: S.String({ description: "Slack channel name (with #), @username, user ID, conversation ID or URL, or thread URL to reply to." }), markdown: S.String({ description: "Message in Markdown. Supports formatting, nested lists, code, quotes, links, and explicit Slack mentions such as <@U123>." }) }),
+                        handler: ({ params }) => userFacing(() => sendSlack(params.destination, params.markdown)),
+                        render: render((result) => `Sent: ${result.url}`),
+                    })])] });
     };
     return defineGroup({
         name: "",
@@ -441,14 +457,7 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
                 handler: ({ params }) => userFacing(() => wire.init(currentDirectory, params.backend, registryPathForBackend(params.backend))),
                 render: wirePresentation.init,
             }),
-            defineCommand({
-                name: "preview",
-                description: "Preview a source URL without writing files.",
-                positional: ["url"],
-                params: S.Object({ url: S.String({ description: "Supported source URL to preview." }) }),
-                handler: ({ params }) => userFacing(() => wire.view(params.url)),
-                render: wirePresentation.view,
-            }),
+            preview,
             defineCommand({
                 name: "switch-db",
                 description: "Convert the workspace registry between sqlite and files.",
@@ -458,14 +467,7 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
                 handler: () => userFacing(() => wire.switchBackend(currentDirectory)),
                 render: wirePresentation.switchBackend,
             }),
-            defineCommand({
-                name: "sync",
-                description: "Two-way sync one registered resource.",
-                positional: ["resource"],
-                params: S.Object({ resource: S.String({ description: "Registered resource URL, resource ID, or Markdown path." }) }),
-                handler: ({ params }) => userFacing(() => wire.sync(params.resource, currentDirectory)),
-                render: wirePresentation.sync,
-            }),
+            sync,
             defineCommand({
                 name: "download",
                 description: "Download a source URL as local Markdown without tracking it.",

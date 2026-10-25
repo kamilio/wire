@@ -114,6 +114,39 @@ describe("Slack sending and reading", () => {
     expect(mocked.calls.map((call) => call.method)).toEqual(["search.modules.channels", "search.modules.channels", "chat.postMessage"]);
   });
 
+  it.each(["U1", "W1"])("opens a DM for user ID %s before posting", async (user) => {
+    const mocked = runtime((method, params) => {
+      if (method === "conversations.open") { expect(params.get("users")).toBe(user); return { channel: { id: "D1" } }; }
+      if (method === "chat.postMessage") { expect(params.get("channel")).toBe("D1"); return { channel: "D1", ts: "1234567890.000001" }; }
+      throw new Error(method);
+    });
+    expect(await sendSlackMessage(mocked.value, user, "Hello")).toMatchObject({ channel: "D1" });
+    expect(mocked.calls.map((call) => call.method)).toEqual(["conversations.open", "chat.postMessage"]);
+  });
+
+  it("resolves an exact @username across pages before opening a DM", async () => {
+    const mocked = runtime((method, params) => {
+      if (method === "users.list") return params.get("cursor") === "next" ? { members: [{ id: "U1", name: "alice" }], response_metadata: { next_cursor: "" } } : { members: [{ id: "U2", name: "alice-other" }, { id: "U3", name: "alice", deleted: true }], response_metadata: { next_cursor: "next" } };
+      if (method === "conversations.open") { expect(params.get("users")).toBe("U1"); return { channel: { id: "D1" } }; }
+      if (method === "chat.postMessage") { expect(params.get("channel")).toBe("D1"); return { channel: "D1", ts: "1234567890.000001" }; }
+      throw new Error(method);
+    });
+    expect(await sendSlackMessage(mocked.value, "@alice", "Hello")).toMatchObject({ channel: "D1" });
+    expect(mocked.calls.map((call) => call.method)).toEqual(["users.list", "users.list", "conversations.open", "chat.postMessage"]);
+  });
+
+  it.each([{ members: [] }, { members: [{ id: "U1", name: "alice" }, { id: "U2", name: "alice" }] }])("does not send to missing or ambiguous users", async ({ members }) => {
+    const mocked = runtime(() => ({ members }));
+    await expect(sendSlackMessage(mocked.value, "@alice", "Hello")).rejects.toThrow("Expected one Slack user");
+    expect(mocked.calls.map((call) => call.method)).toEqual(["users.list"]);
+  });
+
+  it("does not post when opening a DM fails", async () => {
+    const mocked = runtime(() => ({ ok: false, error: "user_not_found" }));
+    await expect(sendSlackMessage(mocked.value, "U1", "Hello")).rejects.toThrow("user_not_found");
+    expect(mocked.calls.map((call) => call.method)).toEqual(["conversations.open"]);
+  });
+
   it("replies to a thread URL", async () => {
     const mocked = runtime((method, params) => {
       if (method === "conversations.replies") return { messages: [{ ts: "1234567890.000001" }] };

@@ -196,7 +196,7 @@ test("CLI version flags render version", async () => {
 test("CLI bare auth group renders service help", async () => {
   for (const [service, title] of [["google-docs", "Google Docs/Sheets/Slides"], ["slack", "Slack"]]) {
     const execution = await execFileAsync(process.execPath, [fixture, service], { env: { ...process.env, NO_COLOR: "1" } });
-    assert.match(execution.stdout, service === "slack" ? /^slack (?:-|—) Read Slack channels and threads, send Markdown, and manage login\./m : new RegExp(`^${service} (?:-|—) Manage ${title} login\\.`, "m"));
+    assert.match(execution.stdout, service === "slack" ? /^slack (?:-|—) Read Slack channels, DMs, and threads, send Markdown, and manage login\./m : new RegExp(`^${service} (?:-|—) Manage ${title} login\\.`, "m"));
     assert.match(execution.stdout, new RegExp(`Usage: wire ${service} \\[command\\] \\[OPTIONS\\]`));
     assert.doesNotMatch(execution.stdout, /^## /m);
     assert.doesNotMatch(execution.stdout, /Usage: `/);
@@ -1903,7 +1903,7 @@ test("MCP exposes only Wire tools", async () => {
   const listed = await server.handleMessage("tools/list");
   assert.deepEqual(listed.result.tools.map((tool) => tool.name), [
     "attach", "init", "preview", "sync", "download", "detach", "open", "sync_all",
-    "asana__status", "asana__login", "asana__logout", "chatgpt__status", "chatgpt__login", "chatgpt__logout", "gmail__status", "gmail__login", "gmail__logout", "google_docs__status", "google_docs__login", "google_docs__logout", "notion__status", "notion__login", "notion__logout", "slack__status", "slack__login", "slack__logout", "zoom__status", "zoom__login", "zoom__logout",
+    "asana__status", "asana__login", "asana__logout", "chatgpt__status", "chatgpt__login", "chatgpt__logout", "gmail__status", "gmail__login", "gmail__logout", "google_docs__status", "google_docs__login", "google_docs__logout", "notion__status", "notion__login", "notion__logout", "slack__preview", "slack__attach", "slack__sync", "slack__status", "slack__login", "slack__logout", "zoom__status", "zoom__login", "zoom__logout",
   ]);
   const called = await server.handleMessage("tools/call", { name: "notion__status", arguments: {} });
   assert.deepEqual(JSON.parse(called.result.content[0].text), { service: "notion", identity: { service: "notion" } });
@@ -1954,4 +1954,20 @@ test("MCP Slack send invokes the same sending operation", async () => {
   const result = await server.handleMessage("tools/call", { name: "slack__send", arguments: { destination: "C1", markdown: "**Hello**\nWorld" } });
   assert.deepEqual(calls, [{ destination: "C1", markdown: "**Hello**\nWorld" }]);
   assert.equal(JSON.parse(result.result.content[0].text).url, "https://example.slack.com/sent");
+});
+
+
+test("CLI Slack preview, attach, and sync match their top-level operations", async () => {
+  for (const [command, value] of [["preview", "https://example.slack.com/archives/D1"], ["attach", "https://example.slack.com/archives/D1"], ["sync", "thread.md"]]) {
+    const run = (args) => execFileAsync(process.execPath, [fixture, ...args, "--output", "json"], { env: { ...process.env, NO_COLOR: "1" } });
+    assert.deepEqual(JSON.parse((await run(["slack", command, value])).stdout), JSON.parse((await run([command, value])).stdout));
+    for (const args of [[], [value, "extra"]]) {
+      await assert.rejects(() => run(["slack", command, ...args]), (error) => {
+        const result = JSON.parse(error.stdout);
+        assert.match(result.error.message, /Missing required argument|Too many arguments/);
+        assert.equal(result.error.usage, `wire slack ${command} --help`);
+        return true;
+      });
+    }
+  }
 });

@@ -338,6 +338,26 @@ export async function sendSlackMessage(runtime, destination, markdown) {
     }
     else if (/^[CDG][A-Z0-9]+$/.test(destination))
         channel = destination;
+    else if (/^[UW][A-Z0-9]+$/.test(destination) || destination.startsWith("@")) {
+        let user = destination;
+        if (destination.startsWith("@")) {
+            const name = destination.slice(1);
+            const found = [];
+            let cursor;
+            do {
+                const response = await request("users.list", { limit: "200", ...(cursor === undefined ? {} : { cursor }) });
+                for (const member of response["members"])
+                    if (member["name"] === name && member["deleted"] !== true)
+                        found.push(member["id"]);
+                cursor = response["response_metadata"]?.["next_cursor"];
+            } while (cursor !== undefined && cursor !== "");
+            if (found.length !== 1)
+                throw new Error(`Expected one Slack user named @${name}, found ${found.length}; use a user ID`);
+            user = found[0];
+        }
+        const opened = await request("conversations.open", { users: user });
+        channel = opened["channel"]["id"];
+    }
     else {
         const name = destination.replace(/^#/, "");
         const found = [];

@@ -284,7 +284,23 @@ export async function sendSlackMessage(runtime: RuntimeCapabilities, destination
       if (selected["thread_ts"] !== undefined) thread = selected["thread_ts"] as string;
     } else channel = channelId!;
   } else if (/^[CDG][A-Z0-9]+$/.test(destination)) channel = destination;
-  else {
+  else if (/^[UW][A-Z0-9]+$/.test(destination) || destination.startsWith("@")) {
+    let user = destination;
+    if (destination.startsWith("@")) {
+      const name = destination.slice(1);
+      const found: string[] = [];
+      let cursor: string | undefined;
+      do {
+        const response = await request("users.list", { limit: "200", ...(cursor === undefined ? {} : { cursor }) });
+        for (const member of response["members"] as readonly JsonObject[]) if (member["name"] === name && member["deleted"] !== true) found.push(member["id"] as string);
+        cursor = (response["response_metadata"] as JsonObject | undefined)?.["next_cursor"] as string | undefined;
+      } while (cursor !== undefined && cursor !== "");
+      if (found.length !== 1) throw new Error(`Expected one Slack user named @${name}, found ${found.length}; use a user ID`);
+      user = found[0]!;
+    }
+    const opened = await request("conversations.open", { users: user });
+    channel = (opened["channel"] as JsonObject)["id"] as string;
+  } else {
     const name = destination.replace(/^#/, "");
     const found: string[] = [];
     let page = 1;
