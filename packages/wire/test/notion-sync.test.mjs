@@ -69,6 +69,12 @@ function notionRuntime(page, submitted) {
       if (path === "getSpaces") return Response.json({ user: { space_view: { view: { spaceId: "space" } } } });
       if (path === "loadCachedPageChunkV2") return Response.json({ recordMap: { block: blockMap }, cursors: [] });
       if (path === "saveTransactionsFanout") {
+        for (const operation of bodyValue.transactions[0].operations) {
+          if (operation.path[0] === "properties") {
+            assert.equal(operation.command, "updateBlockPropertyValue", "Block property value updates must use high-level property operations");
+            assert.equal(operation.args.primitiveOp.command, "set");
+          }
+        }
         submitted.push(bodyValue.transactions[0].operations);
         return Response.json({ ok: true });
       }
@@ -254,7 +260,7 @@ test("notion table rows map local positional cells onto remote column ids", () =
   const diff = diffNotionBlockTrees(remote, local, sidecarBlocksFromNotionTree(remote), { spaceId: "space", userId: "user", currentTime: 1700000000000 });
   assert.deepEqual(diff.summary, { inserted: 0, updated: 1, deleted: 0, moved: 0 });
   assert.deepEqual(diff.operations.filter((operation) => operation.path[0] === "properties"), [
-    { pointer: { table: "block", id: "row", spaceId: "space" }, path: ["properties", "second-random"], command: "set", args: [["C"]] },
+    { pointer: { table: "block", id: "row", spaceId: "space" }, path: ["properties", "second-random"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: [["C"]] } } },
   ]);
 });
 
@@ -273,7 +279,7 @@ test("notion table column growth preserves remote column ids", () => {
   assert.deepEqual(diff.summary, { inserted: 0, updated: 2, deleted: 0, moved: 0 });
   assert.deepEqual(columnUpdate.args.table_block_column_order.slice(0, 2), ["first-random", "second-random"]);
   assert.deepEqual(cellUpdate.path, ["properties", columnUpdate.args.table_block_column_order[2]]);
-  assert.deepEqual(cellUpdate.args, [["C"]]);
+  assert.deepEqual(cellUpdate.args.primitiveOp.args, [["C"]]);
 });
 
 test("notion links preserve urls containing parentheses", () => {
@@ -370,13 +376,13 @@ test("notion diff operations preserve stable ids for local edits", () => {
   assert.deepEqual(diffNotionBlockTrees(base, parseNotionMarkdown("first\n\nsecond\n\nthird\n"), sidecarBlocksFromNotionTree(base), ambient), { operations: [], summary: { inserted: 0, updated: 0, deleted: 0, moved: 0 } });
   const updated = diffNotionBlockTrees(base, parseNotionMarkdown("first\n\nedited second\n\nthird\n"), sidecarBlocksFromNotionTree(base), ambient);
   assert.equal(updated.summary.updated, 1);
-  assert.equal(updated.operations.filter((operation) => operation.command === "set" && operation.path.join("/") === "properties/title")[0].pointer.id, base.children[1].id);
+  assert.equal(updated.operations.filter((operation) => operation.command === "updateBlockPropertyValue" && operation.path.join("/") === "properties/title")[0].pointer.id, base.children[1].id);
   const inserted = diffNotionBlockTrees(base, parseNotionMarkdown("first\n\nsecond\n\nnew\n\nthird\n"), sidecarBlocksFromNotionTree(base), ambient);
   assert.equal(inserted.summary.inserted, 1);
   assert.equal(inserted.operations.some((operation) => operation.command === "listAfter" && operation.args.after === base.children[1].id), true);
   const todoBase = remoteTree("- [ ] task\n");
   const checked = diffNotionBlockTrees(todoBase, parseNotionMarkdown("- [x] task\n"), sidecarBlocksFromNotionTree(todoBase), ambient);
-  assert.deepEqual(checked.operations.filter((operation) => operation.path.join("/") === "properties/checked")[0].args, [["Yes"]]);
+  assert.deepEqual(checked.operations.filter((operation) => operation.path.join("/") === "properties/checked")[0].args.primitiveOp.args, [["Yes"]]);
 });
 
 test("notion diff aligns pages and equations by canonical content near insertions", () => {
@@ -430,7 +436,8 @@ test("notion diff replaces stale properties when changing block types", () => {
   const result = diffNotionBlockTrees(base, parseNotionMarkdown("plain replacement"), sidecarBlocksFromNotionTree(base), ambient);
   const properties = result.operations.find((operation) => operation.pointer.id === base.children[0].id && operation.path.join("/") === "properties");
   assert.equal(result.summary.updated, 1);
-  assert.deepEqual(properties.args, { title: [["plain replacement"]] });
+  assert.equal(properties.command, "updateBlockPropertyValue");
+  assert.deepEqual(properties.args.primitiveOp.args, { title: [["plain replacement"]] });
 });
 
 test("notion diff reorders existing siblings without recreating blocks", () => {
@@ -594,7 +601,7 @@ test("notion synchronization hydrates stored user mention handles", async () => 
   assert.deepEqual(result.data.user_mentions, { "user-id": "owner" });
   assert.equal(submitted.length, 1);
   const titleUpdate = submitted[0].find((operation) => operation.path.join("/") === "properties/title" && operation.pointer.id === page.children[0].id);
-  assert.deepEqual(titleUpdate.args, [["Owner", [["b"]]], [" "], ["‣", [["u", "user-id"]]]]);
+  assert.deepEqual(titleUpdate.args.primitiveOp.args, [["Owner", [["b"]]], [" "], ["‣", [["u", "user-id"]]]]);
 });
 
 test("notion synchronization updates title without parsing unchanged opaque body", async () => {
@@ -637,4 +644,6 @@ test("notion synchronization updates title without parsing unchanged opaque body
   assert.equal(result.markdown.includes(":::notion-opaque"), true);
   assert.equal(submitted.length, 1);
   assert.deepEqual(submitted[0].map((operation) => operation.path.join("/")), ["properties/title", "last_edited_time"]);
+  assert.equal(submitted[0][0].command, "updateBlockPropertyValue");
+  assert.deepEqual(submitted[0][0].args.primitiveOp, { command: "set", args: [["New"]] });
 });

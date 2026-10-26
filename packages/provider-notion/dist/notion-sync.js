@@ -689,12 +689,12 @@ function emitUpdates(remote, local, blockId, spaceId, columnOrder) {
     const nextProperties = object(args["properties"] ?? {});
     if (typeChanged) {
         if (compact(remoteProperties) !== compact(nextProperties))
-            operations.push({ pointer: pointer(blockId, spaceId), path: ["properties"], command: "set", args: nextProperties });
+            operations.push({ pointer: pointer(blockId, spaceId), path: ["properties"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: nextProperties } } });
     }
     else {
         for (const key of Object.keys(nextProperties))
             if (compact(remoteProperties[key] ?? null) !== compact(nextProperties[key]))
-                operations.push({ pointer: pointer(blockId, spaceId), path: ["properties", key], command: "set", args: nextProperties[key] });
+                operations.push({ pointer: pointer(blockId, spaceId), path: ["properties", key], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: nextProperties[key] } } });
     }
     const nextFormat = object(args["format"] ?? {});
     if ((typeChanged || args["format"] !== undefined || remote["format"] !== undefined) && compact(remote["format"] ?? {}) !== compact(nextFormat))
@@ -1055,7 +1055,7 @@ export async function synchronizeNotionDocument(runtime, url, source, base, mark
         const titleRich = split.title === "" ? object(remote.tree.block["properties"])["title"] : titleRichText(split.title);
         const titleChanged = split.title !== "" && compact(object(remote.tree.block["properties"])["title"]) !== compact(titleRich);
         if (titleChanged)
-            await notionPost(runtime, "saveTransactionsFanout", remote.cookie, { requestId: randomUUID(), transactions: [{ id: randomUUID(), spaceId: remote.spaceId, operations: [{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "set", args: titleRich }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime.clock.now().getTime() }] }] }, remote.headers);
+            await notionPost(runtime, "saveTransactionsFanout", remote.cookie, { requestId: randomUUID(), transactions: [{ id: randomUUID(), spaceId: remote.spaceId, operations: [{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: titleRich } } }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime.clock.now().getTime() }] }] }, remote.headers);
         const outputTree = { ...remote.tree, block: { ...remote.tree.block, properties: { ...object(remote.tree.block["properties"]), title: titleRich } } };
         const output = renderNotionTreeToMarkdown(outputTree, mentions);
         return { title: output.split("\n")[0].replace(/^# */, ""), markdown: output, data: notionData(remote.tree.id, output, outputTree, mentions) };
@@ -1077,7 +1077,7 @@ export async function synchronizeNotionDocument(runtime, url, source, base, mark
     const operations = [...diffResult.operations];
     const titleRich = split.title === "" ? object(remote.tree.block["properties"])["title"] : titleRichText(split.title);
     if (split.title !== "" && compact(object(remote.tree.block["properties"])["title"]) !== compact(titleRich))
-        operations.unshift({ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "set", args: titleRich });
+        operations.unshift({ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: titleRich } } });
     if (operations.length > 0)
         await notionPost(runtime, "saveTransactionsFanout", remote.cookie, { requestId: randomUUID(), transactions: [{ id: randomUUID(), spaceId: remote.spaceId, operations }] }, remote.headers);
     const outputTree = { id: remote.tree.id, block: { ...remote.tree.block, properties: { ...object(remote.tree.block["properties"]), title: titleRich } }, children: localTree(localBlocks).map((node, index) => outputNode(node, remote.tree.children[index], remote.tree.id, remote, ambient.currentTime)) };
