@@ -39,6 +39,8 @@ function inlinePlain(nodes) {
             return node.alt;
         if (node.type === "break")
             return "\n";
+        if (node.type === "thematicBreak")
+            return "──────────";
         if (node.type === "footnoteReference")
             return `[${node.label}]`;
         throw new Error(`Unsupported Slack inline node: ${node.type}`);
@@ -313,12 +315,95 @@ async function slackSession(runtime) {
     const metadata = await runtime.cookies.metadata("slack");
     return { origin: metadata["origin"], token: metadata["token"], cookie: cookies.map((value) => `${value.name}=${value.value}`).join("; ") };
 }
-export async function sendSlackMessage(runtime, destination, markdown) {
-    const blocks = markdownToSlackBlocks(markdown);
+export async function lookupSlackUsers(runtime, query) {
+    query = query.trim();
+    if (query === "")
+        throw new Error("Slack user lookup requires an email or name");
+    const session = await slackSession(runtime);
+    const request = (method, parameters) => api(runtime, session.origin, session.token, session.cookie, method, parameters);
+    const email = /^[^@\s]+@[^@\s]+$/.test(query);
+    const found = [];
+    let cursor;
+    do {
+        const response = await request("users.list", { limit: "200", ...(cursor === undefined ? {} : { cursor }) });
+        for (const member of response["members"]) {
+            if (member["deleted"] === true)
+                continue;
+            const profile = member["profile"];
+            const names = [member["name"], member["real_name"], profile?.["display_name"], profile?.["real_name"], profile?.["email"]].filter((value) => typeof value === "string");
+            if (email ? profile?.["email"]?.toLowerCase() === query.toLowerCase() : query.startsWith("@") ? member["name"] === query.slice(1) : query.toLowerCase().split(/\s+/).every((word) => names.some((name) => name.toLowerCase().includes(word))))
+                found.push(member);
+        }
+        cursor = response["response_metadata"]?.["next_cursor"];
+    } while (cursor !== undefined && cursor !== "");
+    return found;
+}
+function slackMessageParts(markdown) {
+    const ast = parse(markdown).ast;
+    if (ast.type !== "root")
+        throw new Error("Expected Markdown document");
+    const bytes = Buffer.from(markdown);
+    const parts = [];
+    let start = 0;
+    for (const node of ast.children) {
+        if (node.type !== "thematicBreak" || bytes.subarray(node.range.start, node.range.end).toString().trim() !== "---")
+            continue;
+        parts.push(bytes.subarray(start, node.range.start).toString().trim());
+        start = node.range.end;
+    }
+    parts.push(bytes.subarray(start).toString().trim());
+    if (parts.some((part) => part === ""))
+        throw new Error("Slack thread sections must not be empty");
+    return parts;
+}
+async function resolveSlackEmailMentions(runtime, blocks, users) {
+    const resolve = async (element) => {
+        if (element["type"] === "link" && typeof element["text"] === "string" && element["text"].startsWith("@") && typeof element["url"] === "string" && element["url"].startsWith("mailto:")) {
+            const email = decodeURIComponent(element["url"].slice(7));
+            if (!/^[^@\s?]+@[^@\s?]+$/.test(email))
+                throw new Error(`Invalid mention email: ${email}`);
+            const key = email.toLowerCase();
+            if (!users.has(key)) {
+                const matches = await lookupSlackUsers(runtime, email);
+                if (matches.length !== 1)
+                    throw new Error(`Expected one Slack user for ${email}, found ${matches.length}`);
+                users.set(key, matches[0]["id"]);
+            }
+            return { type: "user", user_id: users.get(key), ...(element["style"] === undefined ? {} : { style: element["style"] }) };
+        }
+        if (Array.isArray(element["elements"])) {
+            const elements = [];
+            for (const child of element["elements"])
+                elements.push(await resolve(child));
+            return { ...element, elements };
+        }
+        return element;
+    };
+    const result = [];
+    for (const block of blocks)
+        result.push(await resolve(block));
+    return result;
+}
+export function sendSlackMessage(runtime, destination, markdown) {
+    return writeSlackMessage(runtime, destination, markdown, false);
+}
+export function editSlackMessage(runtime, url, markdown) {
+    return writeSlackMessage(runtime, url, markdown, true);
+}
+async function writeSlackMessage(runtime, destination, markdown, edit) {
+    markdown = markdown.replace(/\r\n?/g, "\n");
+    const parts = slackMessageParts(markdown);
+    const blocks = parts.map(markdownToSlackBlocks);
+    const users = new Map();
+    for (const [index, value] of blocks.entries())
+        blocks[index] = await resolveSlackEmailMentions(runtime, value, users);
+    if (edit && (!destination.startsWith("https://") || messageParts(new URL(destination)) === undefined))
+        throw new Error("Slack edit requires a message URL");
     const session = await slackSession(runtime);
     const request = (method, parameters) => api(runtime, session.origin, session.token, session.cookie, method, parameters);
     let channel;
     let thread;
+    let editTimestamp;
     if (destination.startsWith("https://")) {
         const url = new URL(destination);
         const message = messageParts(url);
@@ -327,6 +412,8 @@ export async function sendSlackMessage(runtime, destination, markdown) {
             throw new Error(`Unsupported Slack destination: ${destination}`);
         if (message !== undefined) {
             channel = message.channel;
+            if (edit)
+                editTimestamp = slackTimestamp(message.rawTimestamp);
             thread = url.searchParams.has("thread_ts") ? url.searchParams.get("thread_ts") : slackTimestamp(message.rawTimestamp);
             const response = await request("conversations.replies", { channel, ts: thread, limit: "1" });
             const selected = response["messages"][0];
@@ -338,22 +425,13 @@ export async function sendSlackMessage(runtime, destination, markdown) {
     }
     else if (/^[CDG][A-Z0-9]+$/.test(destination))
         channel = destination;
-    else if (/^[UW][A-Z0-9]+$/.test(destination) || destination.startsWith("@")) {
+    else if (/^[UW][A-Z0-9]+$/.test(destination) || destination.startsWith("@") || /^[^@\s]+@[^@\s]+$/.test(destination)) {
         let user = destination;
-        if (destination.startsWith("@")) {
-            const name = destination.slice(1);
-            const found = [];
-            let cursor;
-            do {
-                const response = await request("users.list", { limit: "200", ...(cursor === undefined ? {} : { cursor }) });
-                for (const member of response["members"])
-                    if (member["name"] === name && member["deleted"] !== true)
-                        found.push(member["id"]);
-                cursor = response["response_metadata"]?.["next_cursor"];
-            } while (cursor !== undefined && cursor !== "");
+        if (!/^[UW][A-Z0-9]+$/.test(destination)) {
+            const found = await lookupSlackUsers(runtime, destination);
             if (found.length !== 1)
-                throw new Error(`Expected one Slack user named @${name}, found ${found.length}; use a user ID`);
-            user = found[0];
+                throw new Error(`Expected one Slack user for ${destination}, found ${found.length}; use an email or user ID`);
+            user = found[0]["id"];
         }
         const opened = await request("conversations.open", { users: user });
         channel = opened["channel"]["id"];
@@ -375,10 +453,23 @@ export async function sendSlackMessage(runtime, destination, markdown) {
             throw new Error(`Expected one Slack channel named #${name}, found ${found.length}; use a channel ID or URL`);
         channel = found[0];
     }
-    const posted = await request("chat.postMessage", { channel, text: markdown, blocks: JSON.stringify(blocks), unfurl_links: "false", unfurl_media: "false", parse: "none", mrkdwn: "false", ...(thread === undefined ? {} : { thread_ts: thread }) });
-    const ts = posted["ts"];
-    const url = `${session.origin}/archives/${posted["channel"]}/p${ts.replace(".", "")}${thread === undefined ? "" : `?thread_ts=${thread}`}`;
-    return { channel: posted["channel"], ts, url, ...(thread === undefined ? {} : { thread_ts: thread }) };
+    const sent = [];
+    for (const [index, part] of parts.entries()) {
+        try {
+            const updating = index === 0 && edit;
+            const posted = await request(updating ? "chat.update" : "chat.postMessage", { channel, text: part, blocks: JSON.stringify(blocks[index]), unfurl_links: "false", unfurl_media: "false", parse: "none", mrkdwn: "false", ...(updating ? { ts: editTimestamp } : thread === undefined ? {} : { thread_ts: thread }) });
+            const ts = posted["ts"];
+            const url = `${session.origin}/archives/${posted["channel"]}/p${ts.replace(".", "")}${thread === undefined ? "" : `?thread_ts=${thread}`}`;
+            sent.push({ channel: posted["channel"], ts, url, ...(thread === undefined ? {} : { thread_ts: thread }) });
+            thread ??= ts;
+        }
+        catch (error) {
+            if (sent.length === 0)
+                throw error;
+            throw new Error(`Slack thread stopped after ${sent.length} message(s): ${sent.map((message) => message.url).join(", ")}. ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    return { ...sent[0], ...(sent.length === 1 ? {} : { replies: sent.slice(1) }) };
 }
 export const slackService = defineService({
     name: "slack",

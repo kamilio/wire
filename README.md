@@ -59,6 +59,19 @@ wire watch <file>        # sync a file whenever it changes
 
 Run `wire --help` for the full CLI.
 
+### People and Slack threads
+
+Use `[@Name](mailto:person@example.com)` to mention someone in Markdown. Wire resolves the email to a native user mention when syncing to Notion or sending/editing Slack messages. Ordinary email links and code stay literal. Missing or ambiguous users fail before writing.
+
+```sh
+wire slack users lookup person@example.com
+wire notion users lookup 'Full Name'
+wire slack send '#channel' 'Hello [@Name](mailto:person@example.com)'
+wire slack edit <message-url> '<replacement Markdown>'
+```
+
+In Slack, a top-level `---` with blank lines around it splits Markdown into messages: the first goes to the channel, and the rest reply in its thread. Sending to a thread URL puts all sections in that thread. Editing replaces the selected message and appends any later sections as replies; it does not replace existing replies. Separators inside code, frontmatter, quotes, or lists do not split the message. If posting stops partway through, the error lists the messages already written so you can continue without reposting them.
+
 ### ChatGPT archives
 
 ```sh

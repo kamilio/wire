@@ -395,7 +395,7 @@ function authGroup(service, description, loginDescription, auth, readInput, opti
             defineCommand({ name: "logout", description: `Delete saved ${title} cookies.`, params: S.Object({}), handler: () => auth.logout(service), render: wirePresentation.authLogout }),
         ] });
 }
-export function createRoot(wire, currentDirectory, auth, readInput, options = { allowPaste: true }, sendSlack) {
+export function createRoot(wire, currentDirectory, auth, readInput, options = { allowPaste: true }, sendSlack, lookupSlack, editSlack, lookupNotion) {
     const attachFromCliUrl = (url) => {
         const removedCommand = removedCliCommandNames[url];
         if (removedCommand !== undefined)
@@ -431,15 +431,34 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
     const authCommand = (service) => {
         const title = serviceTitle(service);
         const group = authGroup(service, `Manage ${title} login.`, "Capture cookies once; normal commands reuse saved cookies.", auth, readInput, options);
+        const lookup = service === "slack" ? lookupSlack : service === "notion" ? lookupNotion : undefined;
+        const users = lookup === undefined ? [] : [defineGroup({ name: "users", description: "Find people by email or name.", children: [defineCommand({
+                        name: "lookup",
+                        description: "Look up active users by exact email or name. Email lookup avoids ambiguous names.",
+                        positional: ["query"],
+                        params: S.Object({ query: S.String({ description: "Email address or name to look up." }) }),
+                        handler: ({ params }) => userFacing(() => lookup(params.query)),
+                        render: render((results) => results.length === 0 ? "No matching users" : results.map((user) => {
+                            const profile = user["profile"];
+                            return service === "slack" ? `${user["id"]}  ${user["real_name"] ?? user["name"]}  ${profile?.["email"] ?? ""}` : `${user["userId"]}  ${user["name"] ?? ""}  ${(user["aliases"] ?? []).join(", ")}`;
+                        }).join("\n")),
+                    })] })];
         if (service !== "slack")
-            return group;
-        return defineGroup({ name: "slack", description: "Read Slack channels, DMs, and threads, send Markdown, and manage login.", children: [preview, defaultAttach, sync, ...group.children, ...(sendSlack === undefined ? [] : [defineCommand({
+            return users.length === 0 ? group : defineGroup({ ...group, children: [...group.children, ...users] });
+        return defineGroup({ name: "slack", description: "Read Slack channels, DMs, and threads, send Markdown, and manage login.", children: [preview, defaultAttach, sync, ...group.children, ...users, ...(sendSlack === undefined ? [] : [defineCommand({
                         name: "send",
-                        description: "Send Markdown to a channel, @username, user ID, DM URL, or thread URL. Use a thread URL to reply. Tables and frontmatter are sent as code blocks.",
+                        description: "Send Markdown to a channel, email, @username, user ID, or URL. Top-level --- separators split it into a parent and thread replies; a thread URL replies there.",
                         positional: ["destination", "markdown"],
-                        params: S.Object({ destination: S.String({ description: "Slack channel name (with #), @username, user ID, conversation ID or URL, or thread URL to reply to." }), markdown: S.String({ description: "Message in Markdown. Supports formatting, nested lists, code, quotes, links, and explicit Slack mentions such as <@U123>." }) }),
+                        params: S.Object({ destination: S.String({ description: "Slack channel name (with #), email, @username, user ID, conversation ID or URL, or thread URL to reply to." }), markdown: S.String({ description: "Message in Markdown. Mention by email with [@Name](mailto:email), or use <@U123>. Separate thread messages with blank lines around ---." }) }),
                         handler: ({ params }) => userFacing(() => sendSlack(params.destination, params.markdown)),
-                        render: render((result) => `Sent: ${result.url}`),
+                        render: render((result) => `Sent: ${[result, ...result.replies ?? []].map((message) => message.url).join("\n")}`),
+                    })]), ...(editSlack === undefined ? [] : [defineCommand({
+                        name: "edit",
+                        description: "Edit a message by URL. Sections after --- are appended as thread replies.",
+                        positional: ["url", "markdown"],
+                        params: S.Object({ url: S.String({ description: "URL of your Slack message to edit." }), markdown: S.String({ description: "Replacement Markdown, with email mentions and optional --- thread separators." }) }),
+                        handler: ({ params }) => userFacing(() => editSlack(params.url, params.markdown)),
+                        render: render((result) => `Updated: ${[result, ...result.replies ?? []].map((message) => message.url).join("\n")}`),
                     })])] });
     };
     return defineGroup({

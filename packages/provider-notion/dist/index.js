@@ -4,4 +4,5 @@ export { buildNotionCreateOperations, diffNotionBlockTrees, fetchNotionDocument,
 export const notionProvider = Object.freeze({
     services: [notionService],
 });
+export { lookupNotionUsers } from "./notion-sync.js";
 //# sourceMappingURL=index.js.map

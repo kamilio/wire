@@ -42,6 +42,7 @@ function inlinePlain(nodes: readonly MdNode[]): string {
     if ("children" in node) return inlinePlain(node.children);
     if (node.type === "image") return node.alt;
     if (node.type === "break") return "\n";
+    if (node.type === "thematicBreak") return "──────────";
     if (node.type === "footnoteReference") return `[${node.label}]`;
     throw new Error(`Unsupported Slack inline node: ${node.type}`);
   }).join("");
@@ -263,14 +264,90 @@ async function slackSession(runtime: RuntimeCapabilities) {
   return { origin: metadata["origin"]!, token: metadata["token"]!, cookie: cookies.map((value) => `${value.name}=${value.value}`).join("; ") };
 }
 
-export type SlackSentMessage = Readonly<{ channel: string; ts: string; url: string; thread_ts?: string }>;
+export async function lookupSlackUsers(runtime: RuntimeCapabilities, query: string): Promise<readonly JsonObject[]> {
+  query = query.trim();
+  if (query === "") throw new Error("Slack user lookup requires an email or name");
+  const session = await slackSession(runtime);
+  const request = (method: string, parameters: Readonly<Record<string, string>>) => api(runtime, session.origin, session.token, session.cookie, method, parameters);
+  const email = /^[^@\s]+@[^@\s]+$/.test(query);
+  const found: JsonObject[] = [];
+  let cursor: string | undefined;
+  do {
+    const response = await request("users.list", { limit: "200", ...(cursor === undefined ? {} : { cursor }) });
+    for (const member of response["members"] as readonly JsonObject[]) {
+      if (member["deleted"] === true) continue;
+      const profile = member["profile"] as JsonObject | undefined;
+      const names = [member["name"], member["real_name"], profile?.["display_name"], profile?.["real_name"], profile?.["email"]].filter((value): value is string => typeof value === "string");
+      if (email ? (profile?.["email"] as string | undefined)?.toLowerCase() === query.toLowerCase() : query.startsWith("@") ? member["name"] === query.slice(1) : query.toLowerCase().split(/\s+/).every((word) => names.some((name) => name.toLowerCase().includes(word)))) found.push(member);
+    }
+    cursor = (response["response_metadata"] as JsonObject | undefined)?.["next_cursor"] as string | undefined;
+  } while (cursor !== undefined && cursor !== "");
+  return found;
+}
 
-export async function sendSlackMessage(runtime: RuntimeCapabilities, destination: string, markdown: string): Promise<SlackSentMessage> {
-  const blocks = markdownToSlackBlocks(markdown);
+function slackMessageParts(markdown: string): string[] {
+  const ast = parse(markdown).ast;
+  if (ast.type !== "root") throw new Error("Expected Markdown document");
+  const bytes = Buffer.from(markdown);
+  const parts: string[] = [];
+  let start = 0;
+  for (const node of ast.children) {
+    if (node.type !== "thematicBreak" || bytes.subarray(node.range!.start, node.range!.end).toString().trim() !== "---") continue;
+    parts.push(bytes.subarray(start, node.range!.start).toString().trim());
+    start = node.range!.end;
+  }
+  parts.push(bytes.subarray(start).toString().trim());
+  if (parts.some((part) => part === "")) throw new Error("Slack thread sections must not be empty");
+  return parts;
+}
+
+async function resolveSlackEmailMentions(runtime: RuntimeCapabilities, blocks: readonly JsonObject[], users: Map<string, string>): Promise<readonly JsonObject[]> {
+  const resolve = async (element: JsonObject): Promise<JsonObject> => {
+    if (element["type"] === "link" && typeof element["text"] === "string" && element["text"].startsWith("@") && typeof element["url"] === "string" && element["url"].startsWith("mailto:")) {
+      const email = decodeURIComponent(element["url"].slice(7));
+      if (!/^[^@\s?]+@[^@\s?]+$/.test(email)) throw new Error(`Invalid mention email: ${email}`);
+      const key = email.toLowerCase();
+      if (!users.has(key)) {
+        const matches = await lookupSlackUsers(runtime, email);
+        if (matches.length !== 1) throw new Error(`Expected one Slack user for ${email}, found ${matches.length}`);
+        users.set(key, matches[0]!["id"] as string);
+      }
+      return { type: "user", user_id: users.get(key)!, ...(element["style"] === undefined ? {} : { style: element["style"] }) };
+    }
+    if (Array.isArray(element["elements"])) {
+      const elements: JsonObject[] = [];
+      for (const child of element["elements"] as readonly JsonObject[]) elements.push(await resolve(child));
+      return { ...element, elements };
+    }
+    return element;
+  };
+  const result: JsonObject[] = [];
+  for (const block of blocks) result.push(await resolve(block));
+  return result;
+}
+
+export type SlackSentMessage = Readonly<{ channel: string; ts: string; url: string; thread_ts?: string; replies?: readonly SlackSentMessage[] }>;
+
+export function sendSlackMessage(runtime: RuntimeCapabilities, destination: string, markdown: string): Promise<SlackSentMessage> {
+  return writeSlackMessage(runtime, destination, markdown, false);
+}
+
+export function editSlackMessage(runtime: RuntimeCapabilities, url: string, markdown: string): Promise<SlackSentMessage> {
+  return writeSlackMessage(runtime, url, markdown, true);
+}
+
+async function writeSlackMessage(runtime: RuntimeCapabilities, destination: string, markdown: string, edit: boolean): Promise<SlackSentMessage> {
+  markdown = markdown.replace(/\r\n?/g, "\n");
+  const parts = slackMessageParts(markdown);
+  const blocks = parts.map(markdownToSlackBlocks);
+  const users = new Map<string, string>();
+  for (const [index, value] of blocks.entries()) blocks[index] = await resolveSlackEmailMentions(runtime, value, users);
+  if (edit && (!destination.startsWith("https://") || messageParts(new URL(destination)) === undefined)) throw new Error("Slack edit requires a message URL");
   const session = await slackSession(runtime);
   const request = (method: string, parameters: Readonly<Record<string, string>>) => api(runtime, session.origin, session.token, session.cookie, method, parameters);
   let channel: string;
   let thread: string | undefined;
+  let editTimestamp: string | undefined;
   if (destination.startsWith("https://")) {
     const url = new URL(destination);
     const message = messageParts(url);
@@ -278,25 +355,19 @@ export async function sendSlackMessage(runtime: RuntimeCapabilities, destination
     if (message === undefined && channelId === undefined) throw new Error(`Unsupported Slack destination: ${destination}`);
     if (message !== undefined) {
       channel = message.channel;
+      if (edit) editTimestamp = slackTimestamp(message.rawTimestamp);
       thread = url.searchParams.has("thread_ts") ? url.searchParams.get("thread_ts")! : slackTimestamp(message.rawTimestamp);
       const response = await request("conversations.replies", { channel, ts: thread, limit: "1" });
       const selected = (response["messages"] as readonly JsonObject[])[0]!;
       if (selected["thread_ts"] !== undefined) thread = selected["thread_ts"] as string;
     } else channel = channelId!;
   } else if (/^[CDG][A-Z0-9]+$/.test(destination)) channel = destination;
-  else if (/^[UW][A-Z0-9]+$/.test(destination) || destination.startsWith("@")) {
+  else if (/^[UW][A-Z0-9]+$/.test(destination) || destination.startsWith("@") || /^[^@\s]+@[^@\s]+$/.test(destination)) {
     let user = destination;
-    if (destination.startsWith("@")) {
-      const name = destination.slice(1);
-      const found: string[] = [];
-      let cursor: string | undefined;
-      do {
-        const response = await request("users.list", { limit: "200", ...(cursor === undefined ? {} : { cursor }) });
-        for (const member of response["members"] as readonly JsonObject[]) if (member["name"] === name && member["deleted"] !== true) found.push(member["id"] as string);
-        cursor = (response["response_metadata"] as JsonObject | undefined)?.["next_cursor"] as string | undefined;
-      } while (cursor !== undefined && cursor !== "");
-      if (found.length !== 1) throw new Error(`Expected one Slack user named @${name}, found ${found.length}; use a user ID`);
-      user = found[0]!;
+    if (!/^[UW][A-Z0-9]+$/.test(destination)) {
+      const found = await lookupSlackUsers(runtime, destination);
+      if (found.length !== 1) throw new Error(`Expected one Slack user for ${destination}, found ${found.length}; use an email or user ID`);
+      user = found[0]!["id"] as string;
     }
     const opened = await request("conversations.open", { users: user });
     channel = (opened["channel"] as JsonObject)["id"] as string;
@@ -314,10 +385,21 @@ export async function sendSlackMessage(runtime: RuntimeCapabilities, destination
     if (found.length !== 1) throw new Error(`Expected one Slack channel named #${name}, found ${found.length}; use a channel ID or URL`);
     channel = found[0]!;
   }
-  const posted = await request("chat.postMessage", { channel, text: markdown, blocks: JSON.stringify(blocks), unfurl_links: "false", unfurl_media: "false", parse: "none", mrkdwn: "false", ...(thread === undefined ? {} : { thread_ts: thread }) });
-  const ts = posted["ts"] as string;
-  const url = `${session.origin}/archives/${posted["channel"]}/p${ts.replace(".", "")}${thread === undefined ? "" : `?thread_ts=${thread}`}`;
-  return { channel: posted["channel"] as string, ts, url, ...(thread === undefined ? {} : { thread_ts: thread }) };
+  const sent: SlackSentMessage[] = [];
+  for (const [index, part] of parts.entries()) {
+    try {
+      const updating = index === 0 && edit;
+      const posted = await request(updating ? "chat.update" : "chat.postMessage", { channel, text: part, blocks: JSON.stringify(blocks[index]), unfurl_links: "false", unfurl_media: "false", parse: "none", mrkdwn: "false", ...(updating ? { ts: editTimestamp! } : thread === undefined ? {} : { thread_ts: thread }) });
+      const ts = posted["ts"] as string;
+      const url = `${session.origin}/archives/${posted["channel"]}/p${ts.replace(".", "")}${thread === undefined ? "" : `?thread_ts=${thread}`}`;
+      sent.push({ channel: posted["channel"] as string, ts, url, ...(thread === undefined ? {} : { thread_ts: thread }) });
+      thread ??= ts;
+    } catch (error) {
+      if (sent.length === 0) throw error;
+      throw new Error(`Slack thread stopped after ${sent.length} message(s): ${sent.map((message) => message.url).join(", ")}. ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return { ...sent[0]!, ...(sent.length === 1 ? {} : { replies: sent.slice(1) }) };
 }
 
 export const slackService = defineService<RuntimeCapabilities>({

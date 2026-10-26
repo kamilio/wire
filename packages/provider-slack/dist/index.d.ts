@@ -1,4 +1,4 @@
-export { slackService, markdownToSlackBlocks, slackBlocksToMarkdown, sendSlackMessage, type SlackSentMessage } from "./slack.js";
+export { slackService, markdownToSlackBlocks, slackBlocksToMarkdown, sendSlackMessage, editSlackMessage, lookupSlackUsers, type SlackSentMessage } from "./slack.js";
 export declare const slackProvider: Readonly<{
     services: readonly [Readonly<{
         name: string;

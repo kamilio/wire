@@ -1,5 +1,5 @@
 import { type Group } from "toolcraft";
-import { type FetchedDocument, type InitializedWire, type Resource, type SwitchedWireBackend, type Wire, type WireResult, type WireWatchSession } from "wire-core";
+import { type JsonObject, type FetchedDocument, type InitializedWire, type Resource, type SwitchedWireBackend, type Wire, type WireResult, type WireWatchSession } from "wire-core";
 import type { SlackSentMessage } from "provider-slack";
 import type { Auth, AuthResult, AuthService } from "../auth.js";
 export type WireRoot = Group;
@@ -30,6 +30,6 @@ type WirePresentation = Readonly<{
     }>;
 }>;
 export declare const wirePresentation: WirePresentation;
-export declare function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, readInput?: TextInputReader, options?: WireRootOptions, sendSlack?: (destination: string, markdown: string) => Promise<SlackSentMessage>): WireRoot;
+export declare function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, readInput?: TextInputReader, options?: WireRootOptions, sendSlack?: (destination: string, markdown: string) => Promise<SlackSentMessage>, lookupSlack?: (query: string) => Promise<readonly JsonObject[]>, editSlack?: (url: string, markdown: string) => Promise<SlackSentMessage>, lookupNotion?: (query: string) => Promise<readonly JsonObject[]>): WireRoot;
 export {};
 //# sourceMappingURL=root.d.ts.map

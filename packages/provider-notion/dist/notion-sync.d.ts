@@ -33,6 +33,7 @@ export type NotionDiffSummary = Readonly<{
     moved: number;
 }>;
 type UserMentions = Readonly<Record<string, string>>;
+type EmailMentions = Record<string, string>;
 export declare function parseNotionMarkdown(markdown: string): readonly NotionBlock[];
 export declare function buildNotionCreateOperations(blocks: readonly NotionBlock[], pageId: string, spaceId: string, userId: string, currentTime: number, createId?: () => string, initialTableColumnOrder?: readonly string[]): Readonly<{
     operations: readonly NotionOperation[];
@@ -48,7 +49,8 @@ export declare function diffNotionBlockTrees(remoteTree: NotionTree, localBlocks
     operations: readonly NotionOperation[];
     summary: NotionDiffSummary;
 }>;
-export declare function renderNotionTreeToMarkdown(tree: NotionTree, mentions?: UserMentions): string;
+export declare function renderNotionTreeToMarkdown(tree: NotionTree, mentions?: UserMentions, emailMentions?: EmailMentions): string;
+export declare function lookupNotionUsers(runtime: RuntimeCapabilities, query: string): Promise<readonly JsonObject[]>;
 export declare function fetchNotionDocument(runtime: RuntimeCapabilities, url: string, source: Source): Promise<FetchedDocument>;
 export declare function uploadNotionDocument(runtime: RuntimeCapabilities, markdown: string, _markdownPath: string): Promise<UploadedDocument>;
 export declare function synchronizeNotionDocument(runtime: RuntimeCapabilities, url: string, source: Source, base: JsonValue, markdown: string, _markdownPath: string): Promise<FetchedDocument>;

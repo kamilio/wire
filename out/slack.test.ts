@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { markdownToSlackBlocks, slackBlocksToMarkdown, sendSlackMessage, slackService } from "../packages/provider-slack/src/slack.js";
+import { markdownToSlackBlocks, slackBlocksToMarkdown, sendSlackMessage, editSlackMessage, lookupSlackUsers, slackService } from "../packages/provider-slack/src/slack.js";
 import type { JsonObject, RuntimeCapabilities } from "wire-core";
 
 const users = new Map<string, string>();
@@ -288,4 +288,68 @@ it("sends to workspace permalinks using an Enterprise session without forwarding
     throw new Error(method);
   });
   await expect(sendSlackMessage(mocked.value, "https://example.enterprise.slack.com/archives/C1/p1234567890000001", "Reply")).resolves.toMatchObject({ thread_ts: "1234567890.000001" });
+});
+
+
+describe("email lookup, mentions, and threads", () => {
+  it("looks up exact emails and paginates name matches without choosing one", async () => {
+    const mocked = runtime((method, params) => {
+      if (method === "users.list") return params.has("cursor") ? { members: [{ id: "U2", real_name: "Alice Jones" }], response_metadata: { next_cursor: "" } } : { members: [{ id: "U1", real_name: "Alice Smith", profile: { email: "alice@example.com" } }, { id: "U3", real_name: "Alice Old", deleted: true }], response_metadata: { next_cursor: "next" } };
+      throw new Error(method);
+    });
+    expect(await lookupSlackUsers(mocked.value, "alice@example.com")).toMatchObject([{ id: "U1" }]);
+    expect(await lookupSlackUsers(mocked.value, "alice")).toMatchObject([{ id: "U1" }, { id: "U2" }]);
+  });
+
+  it("resolves repeated email mentions once before posting any thread section", async () => {
+    const markdown = "**Hello [@Alice](mailto:alice@example.com)**\n\n---\n\n- [@Alice](mailto:alice@example.com)\n- [Email](mailto:alice@example.com)\n- `[@Alice](mailto:alice@example.com)`";
+    let posted = 0;
+    const mocked = runtime((method, params) => {
+      if (method === "users.list") return { members: [{ id: "U1", profile: { email: "alice@example.com" } }] };
+      if (method === "chat.postMessage") {
+        posted += 1;
+        const blocks = JSON.parse(params.get("blocks")!);
+        expect(JSON.stringify(blocks)).toContain('"type":"user","user_id":"U1"');
+        if (posted === 1) { expect(params.has("thread_ts")).toBe(false); expect(JSON.stringify(blocks)).toContain('"bold":true'); }
+        else { expect(params.get("thread_ts")).toBe("1234567890.000001"); expect(JSON.stringify(blocks)).toContain('"url":"mailto:alice@example.com","text":"Email"'); expect(JSON.stringify(blocks)).toContain('"code":true'); }
+        return { channel: "C1", ts: `1234567890.00000${posted}` };
+      }
+      throw new Error(method);
+    });
+    const result = await sendSlackMessage(mocked.value, "C1", markdown);
+    expect(result.replies).toHaveLength(1);
+    expect(mocked.calls.map((call) => call.method)).toEqual(["users.list", "chat.postMessage", "chat.postMessage"]);
+  });
+
+  it("rejects an unresolved mention in a later section before writing", async () => {
+    const mocked = runtime(() => ({ members: [] }));
+    await expect(sendSlackMessage(mocked.value, "C1", "First\n\n---\n\n[@Unknown](mailto:missing@example.com)")).rejects.toThrow("Expected one Slack user");
+    expect(mocked.calls.map((call) => call.method)).toEqual(["users.list"]);
+  });
+
+  it.each(["```\n---\n```", "---\ntitle: metadata\n---\n\nBody", "> ---", "- list\n\n  ---", "Heading\n---", "Before\n\n***\n\nAfter"])("does not split non-separator Markdown: %s", async (markdown) => {
+    const mocked = runtime((method) => { expect(method).toBe("chat.postMessage"); return { channel: "C1", ts: "1234567890.000001" }; });
+    const result = await sendSlackMessage(mocked.value, "C1", markdown);
+    expect(result.replies).toBeUndefined();
+    expect(mocked.calls).toHaveLength(1);
+  });
+
+  it("edits the selected reply, then appends sections to its parent thread", async () => {
+    const mocked = runtime((method, params) => {
+      if (method === "conversations.replies") return { messages: [{ ts: "1234567890.000001" }] };
+      if (method === "chat.update") { expect(params.get("ts")).toBe("1234567891.000001"); expect(params.has("thread_ts")).toBe(false); return { channel: "C1", ts: "1234567891.000001" }; }
+      if (method === "chat.postMessage") { expect(params.get("thread_ts")).toBe("1234567890.000001"); return { channel: "C1", ts: "1234567892.000001" }; }
+      throw new Error(method);
+    });
+    const result = await editSlackMessage(mocked.value, "https://example.slack.com/archives/C1/p1234567891000001?thread_ts=1234567890.000001", "Edited\n\n---\n\nAdded");
+    expect(result.replies).toHaveLength(1);
+    expect(mocked.calls.map((call) => call.method)).toEqual(["conversations.replies", "chat.update", "chat.postMessage"]);
+  });
+
+  it("reports completed messages on a partial failure without retrying", async () => {
+    let posted = 0;
+    const mocked = runtime(() => ++posted === 1 ? { channel: "C1", ts: "1234567890.000001" } : { ok: false, error: "rate_limited" });
+    await expect(sendSlackMessage(mocked.value, "C1", "First\n\n---\n\nSecond\n\n---\n\nThird")).rejects.toThrow("https://example.slack.com/archives/C1/p1234567890000001");
+    expect(mocked.calls).toHaveLength(2);
+  });
 });

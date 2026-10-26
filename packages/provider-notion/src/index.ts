@@ -6,3 +6,5 @@ export type { NotionBlock, NotionDiffSummary, NotionOperation, NotionRichText, N
 export const notionProvider = Object.freeze({
   services: [notionService] as const,
 });
+
+export { lookupNotionUsers } from "./notion-sync.js";

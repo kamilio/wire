@@ -5,6 +5,7 @@ import {
   buildNotionCreateOperations,
   diffNotionBlockTrees,
   fetchNotionDocument,
+  lookupNotionUsers,
   notionBlockContentHash,
   parseNotionMarkdown,
   renderNotionTreeToMarkdown,
@@ -676,4 +677,56 @@ test("notion sync refuses conflicting body edits before writing anything", async
   const submitted = [];
   await assert.rejects(synchronizeNotionDocument(notionRuntime(page, submitted), "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", notionSource, { markdown: "# Page\n\nOriginal body" }, "# Page\n\nLocal edit", "/workspace/page.md"), /Markdown and Notion changed since last sync/);
   assert.equal(submitted.length, 0);
+});
+
+
+test("Notion email mentions become native users, preserve formatting, and survive a second sync", async () => {
+  const page = remoteTree("Old body", "Root");
+  const submitted = [];
+  const runtime = notionRuntime(page, submitted);
+  const request = runtime.http.request;
+  let lookups = 0;
+  runtime.http.request = async (url, init) => {
+    if (String(url).endsWith("/getVisibleUsers")) { lookups += 1; return Response.json({ users: [{ userId: "alice", aliases: ["alice@example.com"] }] }); }
+    return request(url, init);
+  };
+  const markdown = "# Root\n\n- **[@Alice](mailto:alice@example.com)**\n- [Email](mailto:alice@example.com)\n- `[@Alice](mailto:alice@example.com)`\n\n| Owner |\n| --- |\n| [@Alice](mailto:alice@example.com) |";
+  const result = await synchronizeNotionDocument(runtime, "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", notionSource, { markdown: "# Root\n\nOld body" }, markdown, "/workspace/page.md");
+  assert.equal(lookups, 1);
+  assert.equal(result.markdown, markdown);
+  assert.deepEqual(result.data.email_mentions, { alice: "[@Alice](mailto:alice@example.com)" });
+  assert.match(JSON.stringify(submitted), /\["u","alice"\]/);
+  assert.match(JSON.stringify(submitted), /mailto:alice@example.com/);
+  const remoteMarkdown = body(markdown).replaceAll("[@Alice](mailto:alice@example.com)", '<span data-notion-mention="u" data-notion-id="alice">‣</span>');
+  const remote = remoteTree(remoteMarkdown.replace('`<span data-notion-mention="u" data-notion-id="alice">‣</span>`', '`[@Alice](mailto:alice@example.com)`'), "Root");
+  const secondSubmitted = [];
+  const secondRuntime = notionRuntime(remote, secondSubmitted);
+  const secondRequest = secondRuntime.http.request;
+  secondRuntime.http.request = async (url, init) => String(url).endsWith("/getVisibleUsers") ? Response.json({ users: [{ userId: "alice", aliases: ["alice@example.com"] }] }) : secondRequest(url, init);
+  const second = await synchronizeNotionDocument(secondRuntime, "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", notionSource, result.data, result.markdown, "/workspace/page.md");
+  assert.equal(second.markdown, markdown);
+  assert.equal(secondSubmitted.length, 0);
+});
+
+test("Notion rejects missing and ambiguous email mentions before writing", async () => {
+  for (const users of [[], [{ userId: "one", aliases: ["alice@example.com"] }, { userId: "two", aliases: ["alice@example.com"] }]]) {
+    const submitted = [];
+    const runtime = notionRuntime(remoteTree("Old body", "Root"), submitted);
+    const request = runtime.http.request;
+    runtime.http.request = async (url, init) => String(url).endsWith("/getVisibleUsers") ? Response.json({ users }) : request(url, init);
+    await assert.rejects(synchronizeNotionDocument(runtime, "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", notionSource, { markdown: "# Root\n\nOld body" }, "# Root\n\n[@Alice](mailto:alice@example.com)", "/workspace/page.md"), /Expected one Notion user/);
+    assert.equal(submitted.length, 0);
+  }
+});
+
+test("Notion user lookup matches email aliases and names", async () => {
+  const runtime = notionRuntime(remoteTree("", "Root"), []);
+  const request = runtime.http.request;
+  runtime.http.request = async (url, init) => {
+    if (String(url).endsWith("/getVisibleUsers")) return Response.json({ users: [{ userId: "alice", aliases: ["alice@example.com"] }, { userId: "bob", aliases: ["bob@example.com"] }] });
+    if (String(url).endsWith("/getRecordValues")) return Response.json({ results: [{ value: { name: "Alice Smith" } }, { value: { name: "Bob Jones" } }] });
+    return request(url, init);
+  };
+  assert.deepEqual(await lookupNotionUsers(runtime, "ALICE@example.com"), [{ userId: "alice", aliases: ["alice@example.com"] }]);
+  assert.deepEqual(await lookupNotionUsers(runtime, "Alice Smith"), [{ userId: "alice", aliases: ["alice@example.com"], name: "Alice Smith" }]);
 });

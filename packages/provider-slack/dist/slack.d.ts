@@ -2,13 +2,16 @@ import type { JsonObject } from "wire-core";
 import type { RuntimeCapabilities } from "wire-core";
 export declare function markdownToSlackBlocks(markdown: string): readonly JsonObject[];
 export declare function slackBlocksToMarkdown(blocks: readonly JsonObject[], users: ReadonlyMap<string, string>): string;
+export declare function lookupSlackUsers(runtime: RuntimeCapabilities, query: string): Promise<readonly JsonObject[]>;
 export type SlackSentMessage = Readonly<{
     channel: string;
     ts: string;
     url: string;
     thread_ts?: string;
+    replies?: readonly SlackSentMessage[];
 }>;
 export declare function sendSlackMessage(runtime: RuntimeCapabilities, destination: string, markdown: string): Promise<SlackSentMessage>;
+export declare function editSlackMessage(runtime: RuntimeCapabilities, url: string, markdown: string): Promise<SlackSentMessage>;
 export declare const slackService: Readonly<{
     name: string;
     matches(url: URL): boolean;

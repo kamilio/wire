@@ -2,7 +2,9 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
-import { sendSlackMessage } from "provider-slack";
+import { sendSlackMessage, editSlackMessage, lookupSlackUsers } from "provider-slack";
+
+import { lookupNotionUsers } from "provider-notion";
 
 import { createRoot } from "./adapters/root.js";
 import { composeAuth } from "./auth.js";
@@ -127,5 +129,5 @@ export function createExecutableRoot(environment: NodeEnvironment, currentDirect
     switchBackend: baseWire.switchBackend,
   });
   const wire = withWireHooks(configuredWire, { currentDirectory, home, environment: configuredEnvironment() });
-  return createRoot(wire, currentDirectory, auth, readStandardInput, options, (destination, markdown) => sendSlackMessage(runtime, destination, markdown));
+  return createRoot(wire, currentDirectory, auth, readStandardInput, options, (destination, markdown) => sendSlackMessage(runtime, destination, markdown), (query) => lookupSlackUsers(runtime, query), (url, markdown) => editSlackMessage(runtime, url, markdown), (query) => lookupNotionUsers(runtime, query));
 }

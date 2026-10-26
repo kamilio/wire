@@ -35,4 +35,5 @@ export declare const notionProvider: Readonly<{
         upload?(input: import("wire-core").RuntimeCapabilities, markdown: string, markdownPath: string): Promise<import("wire-core").UploadedDocument>;
     }>];
 }>;
+export { lookupNotionUsers } from "./notion-sync.js";
 //# sourceMappingURL=index.d.ts.map

@@ -1971,3 +1971,17 @@ test("CLI Slack preview, attach, and sync match their top-level operations", asy
     }
   }
 });
+
+
+test("CLI nested user lookup and edit dispatch through their operations", async () => {
+  for (const service of ["slack", "notion"]) {
+    const execution = await execFileAsync(process.execPath, [fixture, service, "users", "lookup", "alice@example.com", "--output", "json"], { env: { ...process.env, NO_COLOR: "1" } });
+    const users = JSON.parse(execution.stdout);
+    assert.equal(users.length, 1);
+    assert.equal(service === "slack" ? users[0].profile.email : users[0].aliases[0], "alice@example.com");
+    for (const args of [[], ["alice", "extra"]]) await assert.rejects(execFileAsync(process.execPath, [fixture, service, "users", "lookup", ...args, "--output", "json"]), (error) => /Missing required argument|Too many arguments/.test(error.stdout + error.stderr));
+  }
+  const markdown = "Hello [@Alice](mailto:alice@example.com)\n\n---\n\nReply";
+  const execution = await execFileAsync(process.execPath, [fixture, "slack", "edit", "https://example.slack.com/archives/C1/p1234567890000001", markdown, "--output", "json"], { env: { ...process.env, NO_COLOR: "1" } });
+  assert.equal(JSON.parse(execution.stdout).markdown, markdown);
+});
