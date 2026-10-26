@@ -67,7 +67,7 @@ function notionRuntime(page, submitted) {
       assert.equal(init.headers["notion-client-version"], "23.13.0.4595");
       const bodyValue = JSON.parse(init.body);
       if (path === "getSpaces") return Response.json({ user: { space_view: { view: { spaceId: "space" } } } });
-      if (path === "loadCachedPageChunkV2") return Response.json({ recordMap: { block: blockMap }, cursors: [] });
+      if (path === "getRecordValues") return Response.json({ results: bodyValue.requests.map(({ id }) => ({ value: blockMap[id].value.value })) });
       if (path === "saveTransactionsFanout") {
         for (const operation of bodyValue.transactions[0].operations) {
           if (operation.path[0] === "properties") {
@@ -475,7 +475,7 @@ test("notion document synchronization runs in TypeScript without process delegat
       if (path === undefined) return new Response("{}", { headers: { "content-type": "application/json" } });
       const body = init.body === undefined ? {} : JSON.parse(init.body);
       if (path === "getSpaces") return Response.json({ user: { space_view: { view: { spaceId: "space" } } } });
-      if (path === "loadCachedPageChunkV2") return Response.json({ recordMap: { block: blockMap }, cursors: [] });
+      if (path === "getRecordValues") return Response.json({ results: body.requests.map(({ id }) => ({ value: blockMap[id].value.value })) });
       if (path === "saveTransactionsFanout") {
         submitted.push(body.transactions[0].operations);
         return Response.json({ ok: true });
@@ -516,7 +516,7 @@ test("notion synchronization uses the fetched page workspace for transactions", 
       seenHeaders.push(init.headers);
       const body = init.body === undefined ? {} : JSON.parse(init.body);
       if (path === "getSpaces") return Response.json({ user: { space_view: { first: { spaceId: "first-space" }, page: { spaceId: "page-space" } } } });
-      if (path === "loadCachedPageChunkV2") return Response.json({ recordMap: { block: blockMap }, cursors: [] });
+      if (path === "getRecordValues") return Response.json({ results: body.requests.map(({ id }) => ({ value: blockMap[id].value.value })) });
       if (path === "saveTransactionsFanout") {
         submitted.push(body.transactions[0]);
         return Response.json({ ok: true });
@@ -545,7 +545,7 @@ test("notion synchronization preserves remote title when local Markdown omits H1
       if (path === undefined) return new Response("{}", { headers: { "content-type": "application/json" } });
       const bodyValue = init.body === undefined ? {} : JSON.parse(init.body);
       if (path === "getSpaces") return Response.json({ user: { space_view: { view: { spaceId: "space" } } } });
-      if (path === "loadCachedPageChunkV2") return Response.json({ recordMap: { block: blockMap }, cursors: [] });
+      if (path === "getRecordValues") return Response.json({ results: bodyValue.requests.map(({ id }) => ({ value: blockMap[id].value.value })) });
       if (path === "saveTransactionsFanout") {
         submitted.push(bodyValue.transactions[0].operations);
         return Response.json({ ok: true });
@@ -622,7 +622,7 @@ test("notion synchronization updates title without parsing unchanged opaque body
       if (path === undefined) return new Response("{}", { headers: { "content-type": "application/json" } });
       const bodyValue = init.body === undefined ? {} : JSON.parse(init.body);
       if (path === "getSpaces") return Response.json({ user: { space_view: { view: { spaceId: "space" } } } });
-      if (path === "loadCachedPageChunkV2") return Response.json({ recordMap: { block: blockMap }, cursors: [] });
+      if (path === "getRecordValues") return Response.json({ results: bodyValue.requests.map(({ id }) => ({ value: blockMap[id].value.value })) });
       if (path === "saveTransactionsFanout") {
         submitted.push(bodyValue.transactions[0].operations);
         return Response.json({ ok: true });
@@ -646,4 +646,34 @@ test("notion synchronization updates title without parsing unchanged opaque body
   assert.deepEqual(submitted[0].map((operation) => operation.path.join("/")), ["properties/title", "last_edited_time"]);
   assert.equal(submitted[0][0].command, "updateBlockPropertyValue");
   assert.deepEqual(submitted[0][0].args.primitiveOp, { command: "set", args: [["New"]] });
+});
+
+
+test("notion fetch and sync read current records instead of stale page chunks", async () => {
+  const oldPage = remoteTree("Old paragraph\n\nDeleted paragraph", "Old title");
+  const currentPage = remoteTree("Latest paragraph\n\n- parent\n  - added child", "Latest title");
+  const submitted = [];
+  const currentRuntime = notionRuntime(currentPage, submitted);
+  const staleRecords = Object.fromEntries([oldPage, ...oldPage.children].map((node) => [node.id, { value: { value: { ...node.block, id: node.id, content: node.children.map((child) => child.id), space_id: "space" } } }]));
+  const requests = [];
+  const runtime = { ...currentRuntime, http: { request: async (input, init) => {
+    const path = String(input).split("/api/v3/")[1];
+    requests.push(path);
+    if (path === "loadCachedPageChunkV2") return Response.json({ recordMap: { block: staleRecords }, cursors: [] });
+    return currentRuntime.http.request(input, init);
+  } } };
+  const url = "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370";
+  const expected = renderNotionTreeToMarkdown(currentPage);
+  assert.equal((await fetchNotionDocument(runtime, url, notionSource)).markdown, expected);
+  const base = renderNotionTreeToMarkdown(oldPage);
+  assert.equal((await synchronizeNotionDocument(runtime, url, notionSource, { markdown: base }, base, "/workspace/page.md")).markdown, expected);
+  assert.equal(requests.includes("loadCachedPageChunkV2"), false);
+  assert.equal(submitted.length, 0);
+});
+
+test("notion sync refuses conflicting body edits before writing anything", async () => {
+  const page = remoteTree("User's latest body", "Page");
+  const submitted = [];
+  await assert.rejects(synchronizeNotionDocument(notionRuntime(page, submitted), "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", notionSource, { markdown: "# Page\n\nOriginal body" }, "# Page\n\nLocal edit", "/workspace/page.md"), /Markdown and Notion changed since last sync/);
+  assert.equal(submitted.length, 0);
 });

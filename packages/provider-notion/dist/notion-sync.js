@@ -906,17 +906,9 @@ async function fetchTree(runtime, url, source) {
     const initialSpaceId = object(spaceView[Object.keys(spaceView)[0]])["spaceId"];
     const pageId = formatBlockId(source.identifier);
     let headers = { "x-notion-active-user-header": userId, "x-notion-space-id": initialSpaceId, referer: url, ...(csrf === undefined ? {} : { "x-csrf-token": csrf }) };
-    const blocks = new Map();
-    let stack = [];
-    let chunkNumber = 0;
-    do {
-        const data = await notionPost(runtime, "loadCachedPageChunkV2", cookie, { page: { id: pageId }, limit: 100, cursor: { stack }, chunkNumber, verticalColumns: false }, headers);
-        for (const [blockId, wrapper] of Object.entries(object(object(data["recordMap"])["block"])))
-            blocks.set(blockId, object(object(object(wrapper)["value"])["value"]));
-        const cursors = data["cursors"];
-        stack = cursors.length === 0 ? [] : cursors[0]["stack"];
-        chunkNumber += 1;
-    } while (stack.length > 0);
+    const pageData = await notionPost(runtime, "getRecordValues", cookie, { requests: [{ table: "block", id: pageId }] }, headers);
+    const page = object(pageData["results"][0]["value"]);
+    const blocks = new Map([[pageId, page]]);
     const spaceId = blocks.get(pageId)["space_id"];
     headers = { ...headers, "x-notion-space-id": spaceId };
     while (true) {
@@ -1035,6 +1027,8 @@ export async function synchronizeNotionDocument(runtime, url, source, base, mark
         const remoteTitleChanged = baseSplit.title !== currentSplit.title;
         const localBodyChanged = baseSplit.body !== split.body;
         const remoteBodyChanged = baseSplit.body !== currentSplit.body;
+        if (localTitleChanged && remoteTitleChanged && split.title !== "" && split.title !== currentSplit.title || localBodyChanged && remoteBodyChanged && split.body !== currentSplit.body)
+            throw new Error("Markdown and Notion changed since last sync");
         if ((localTitleChanged || localBodyChanged) && (remoteTitleChanged || remoteBodyChanged)) {
             split = { title: localTitleChanged ? split.title : currentSplit.title, body: localBodyChanged ? split.body : currentSplit.body };
             fieldMerged = true;

@@ -69,7 +69,7 @@ export function createNotionScenarioRuntime(tree) {
       if (path === undefined) return Response.json({});
       const payload = init.body === undefined ? {} : JSON.parse(init.body);
       if (path === "getSpaces") return Response.json({ user: { space_view: { view: { spaceId: "space" } } } });
-      if (path === "loadCachedPageChunkV2") return Response.json({ recordMap: { block: Object.fromEntries(Object.entries(records).map(([id, value]) => [id, { value: { value } }])) }, cursors: [] });
+      if (path === "getRecordValues") return Response.json({ results: payload.requests.map(({ id }) => ({ value: records[id] })) });
       if (path === "saveTransactionsFanout") {
         submitted.push(payload.transactions[0].operations);
         return Response.json({ ok: true });
@@ -244,7 +244,7 @@ export const notionSyncScenarios = [
   ["remote only body", "# Page\n\nbase", "# Page\n\nbase", "# Page\n\nremote", "# Page\n\nremote", 0, false],
   ["local only body", "# Page\n\nbase", "# Page\n\nlocal", "# Page\n\nbase", "# Page\n\nlocal", 1, false],
   ["same local and remote body", "# Page\n\nbase", "# Page\n\nshared", "# Page\n\nshared", "# Page\n\nshared", 0, false],
-  ["conflicting body", "# Page\n\nbase", "# Page\n\nlocal", "# Page\n\nremote", "# Page\n\nlocal", 1, false],
+  ["conflicting body", "# Page\n\nbase", "# Page\n\nlocal", "# Page\n\nremote", "", 0, true],
   ["local only title", "# Page\n\nbody", "# New Page\n\nbody", "# Page\n\nbody", "# New Page\n\nbody", 1, false],
   ["remote only title", "# Page\n\nbody", "# Page\n\nbody", "# Remote Page\n\nbody", "# Remote Page\n\nbody", 0, false],
   ["conflicting title", "# Page\n\nbody", "# Local Page\n\nbody", "# Remote Page\n\nbody", "", 0, true],

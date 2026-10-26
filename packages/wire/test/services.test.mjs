@@ -2321,15 +2321,15 @@ test("notion fetch renders canonical advanced Markdown", async () => {
     const body = JSON.parse(init.body);
     requests.push({ path, body });
     if (path === "getSpaces") return response({ user: { space_view: { view: { spaceId: "space" } } } });
-    if (path === "loadCachedPageChunkV2" && body.chunkNumber === 0) return response({ recordMap: { block: Object.fromEntries(Object.entries(blocks).filter(([id]) => !["row", "synced-text"].includes(id)).map(([id, value]) => [id, { value: { value } }])) }, cursors: [{ stack: [["cursor"]] }] });
-    if (path === "loadCachedPageChunkV2") return response({ recordMap: { block: {} }, cursors: [] });
     if (path === "getRecordValues") return response({ results: body.requests.map(({ id }) => ({ value: blocks[id] })) });
     throw new Error(path);
   }), "https://www.notion.so/Page-0123456789abcdef0123456789abcdef", serviceCatalog);
   const expected = "# Page\n\n- [ ] unchecked\n:::to-do\n:::checked false\n\n  :::text\n  child\n  :::\n:::\n\n- first\n  second\n\n````JavaScript\nconst ticks = ```;\n````\n\n| A | B\\|C<br>D |\n| --- | --- |\n\n### Details {toggle}\n  inside\n\n:::equation\nx^2 + y^2\n:::\n\n:::columns\n  :::column\n  0.5\n    column body\n  :::\n:::\n\n:::synced\n  shared\n:::\n\n:::page\nNested\n:::\n\n:::notion-format\n:::format {\"collection_pointer\":{\"id\":\"collection\",\"spaceId\":\"space\"}}\n:::notion-opaque\n{\n  \"alive\": true,\n  \"format\": {\n    \"collection_pointer\": {\n      \"id\": \"collection\",\n      \"spaceId\": \"space\"\n    }\n  },\n  \"id\": \"database\",\n  \"type\": \"collection_view\"\n}\n:::\n:::";
   assert.equal(document.markdown, expected);
-  assert.deepEqual(requests.map(({ path }) => path), ["getSpaces", "loadCachedPageChunkV2", "loadCachedPageChunkV2", "getRecordValues"]);
-  assert.deepEqual(requests[3].body.requests, [{ table: "block", id: "synced-text" }, { table: "block", id: "row" }]);
+  assert.deepEqual(requests.map(({ path }) => path), ["getSpaces", "getRecordValues", "getRecordValues", "getRecordValues", "getRecordValues"]);
+  assert.deepEqual(requests[1].body.requests, [{ table: "block", id: pageId }]);
+  assert.deepEqual(requests[4].body.requests, [{ table: "block", id: "column-text" }]);
+  assert.equal(requests.some(({ body }) => body.requests?.some(({ id }) => id === "nested-page-child")), false);
 });
 
 test("catalog source values remain registry-compatible", () => {
