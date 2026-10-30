@@ -68,6 +68,7 @@ export function createNotionScenarioRuntime(tree) {
       const path = String(input).split("/api/v3/")[1];
       if (path === undefined) return Response.json({});
       const payload = init.body === undefined ? {} : JSON.parse(init.body);
+      if (path === "getActivityLog") return Response.json({ recordMap: {}, activityIds: [] });
       if (path === "getSpaces") return Response.json({ user: { space_view: { view: { spaceId: "space" } } } });
       if (path === "getRecordValues") return Response.json({ results: payload.requests.map(({ id }) => ({ value: records[id] })) });
       if (path === "saveTransactionsFanout") {

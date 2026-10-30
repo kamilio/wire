@@ -968,6 +968,59 @@ async function resolveNotionEmailMentions(runtime, blocks, cookie, spaceId, head
         link[1] = id;
     }
 }
+async function fetchComments(runtime, tree, spaceId, cookie, headers) {
+    const records = { discussion: new Map(), comment: new Map(), notion_user: new Map() };
+    let startingAfterId;
+    while (true) {
+        const data = await notionPost(runtime, "getActivityLog", cookie, { spaceId, navigableBlock: { id: tree.id }, limit: 100, ...(startingAfterId === undefined ? {} : { startingAfterId }) }, headers);
+        const recordMap = object(data["recordMap"]);
+        for (const table of Object.keys(records)) {
+            if (recordMap[table] === undefined)
+                continue;
+            for (const [id, wrapper] of Object.entries(object(recordMap[table]))) {
+                const value = object(object(object(wrapper)["value"])["value"]);
+                const previous = records[table].get(id);
+                if (previous === undefined || value["version"] >= previous["version"])
+                    records[table].set(id, value);
+            }
+        }
+        const activityIds = data["activityIds"];
+        if (activityIds.length < 100)
+            break;
+        startingAfterId = activityIds[activityIds.length - 1];
+    }
+    const blockIds = new Set(sidecarBlocksFromNotionTree(tree).map((block) => block.id));
+    const discussions = [...records["discussion"].values()].filter((discussion) => blockIds.has(discussion["parent_id"]) && discussion["alive"] !== false);
+    for (const table of ["comment", "notion_user"]) {
+        const ids = table === "comment" ? discussions.flatMap((discussion) => discussion["comments"]) : [...records["comment"].values()].filter((comment) => comment["alive"] === true).map((comment) => comment["created_by_id"]);
+        const missing = [...new Set(ids)].filter((id) => !records[table].has(id));
+        if (missing.length === 0)
+            continue;
+        const data = await notionPost(runtime, "getRecordValues", cookie, { requests: missing.map((id) => ({ table, id })) }, headers);
+        for (const [index, result] of data["results"].entries())
+            records[table].set(missing[index], object(result["value"]));
+    }
+    const threads = discussions.map((discussion) => {
+        const comments = discussion["comments"].map((id) => records["comment"].get(id)).filter((comment) => comment["alive"] === true);
+        if (comments.length === 0)
+            return "";
+        const context = discussion["context"] === undefined ? "" : renderRichText(discussion["context"]);
+        const link = `https://www.notion.so/${tree.id.replaceAll("-", "")}#${discussion["parent_id"].replaceAll("-", "")}`;
+        return [
+            `### [${discussion["parent_id"] === tree.id ? "Page comment" : "Inline comment"}](${link})${discussion["resolved"] === true ? " (resolved)" : ""}`,
+            ...(context === "" ? [] : [context.split("\n").map((line) => `> ${line}`).join("\n")]),
+            ...comments.map((comment) => `**${escapeInlineMarkdown(records["notion_user"].get(comment["created_by_id"])["name"])}** — ${new Date(comment["created_time"]).toISOString()}\n\n${renderRichText(comment["text"])}`),
+        ].join("\n\n");
+    }).filter((thread) => thread !== "");
+    return threads.length === 0 ? "" : `\n\n<!-- wire:notion-comments -->\n\n## Comments (read-only)\n\n${threads.join("\n\n")}\n\n<!-- /wire:notion-comments -->`;
+}
+function withoutComments(markdown) {
+    return markdown.replace(/\n\n<!-- wire:notion-comments -->[\s\S]*?<!-- \/wire:notion-comments -->/g, "");
+}
+function notionDocument(pageId, tree, mentions, emailMentions, comments) {
+    const markdown = renderNotionTreeToMarkdown(tree, mentions, emailMentions) + comments;
+    return { title: markdown.split("\n")[0].replace(/^# */, ""), markdown, data: notionData(pageId, markdown, tree, mentions, emailMentions) };
+}
 async function fetchTree(runtime, url, source) {
     const cookies = await runtime.cookies.loadSaved("notion");
     if (cookies === null)
@@ -1020,15 +1073,16 @@ async function fetchTree(runtime, url, source) {
             return { id: idValue, block, children: [] };
         return { id: idValue, block, children: (block["content"] ?? []).filter((child) => blocks.get(child)?.["alive"] !== false).map(build) };
     };
-    return { tree: build(pageId), userId, spaceId, cookie, headers };
+    const tree = build(pageId);
+    const comments = await fetchComments(runtime, tree, spaceId, cookie, headers);
+    return { tree, userId, spaceId, cookie, headers, comments };
 }
 export async function fetchNotionDocument(runtime, url, source) {
-    const { tree } = await fetchTree(runtime, url, source);
-    const markdown = renderNotionTreeToMarkdown(tree);
-    return { title: markdown.split("\n")[0].replace(/^# */, ""), markdown, data: notionData(source.identifier, markdown, tree, undefined) };
+    const { tree, comments } = await fetchTree(runtime, url, source);
+    return notionDocument(source.identifier, tree, undefined, {}, comments);
 }
 export async function uploadNotionDocument(runtime, markdown, _markdownPath) {
-    const split = splitTitle(markdown);
+    const split = splitTitle(withoutComments(markdown));
     if (split.title === "")
         throw new Error("Markdown document requires a first heading");
     const cookies = await runtime.cookies.loadSaved("notion");
@@ -1095,8 +1149,8 @@ export async function synchronizeNotionDocument(runtime, url, source, base, mark
     const mentions = baseUserMentions(baseObject);
     const emailMentions = { ...baseObject["email_mentions"] };
     const currentMarkdown = renderNotionTreeToMarkdown(remote.tree, mentions, emailMentions);
-    const baseMarkdown = baseObject["markdown"];
-    let split = splitTitle(markdown);
+    const baseMarkdown = baseObject["markdown"] === undefined ? undefined : withoutComments(baseObject["markdown"]);
+    let split = splitTitle(withoutComments(markdown));
     const currentSplit = splitTitle(currentMarkdown);
     const baseSplit = baseMarkdown === undefined ? undefined : splitTitle(baseMarkdown);
     let fieldMerged = false;
@@ -1118,29 +1172,28 @@ export async function synchronizeNotionDocument(runtime, url, source, base, mark
             const localTitleChanged = baseSplit.title !== split.title;
             const remoteTitleChanged = baseSplit.title !== currentSplit.title;
             if (!localTitleChanged && remoteTitleChanged)
-                return { title: currentSplit.title, markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions, emailMentions) };
+                return notionDocument(remote.tree.id, remote.tree, mentions, emailMentions, remote.comments);
             if (localTitleChanged && remoteTitleChanged && split.title !== currentSplit.title)
                 throw new Error("Markdown and Notion changed since last sync");
             if (localTitleChanged && remoteTitleChanged)
-                return { title: currentSplit.title, markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions, emailMentions) };
+                return notionDocument(remote.tree.id, remote.tree, mentions, emailMentions, remote.comments);
         }
         const titleRich = split.title === "" ? object(remote.tree.block["properties"])["title"] : titleRichText(split.title);
         const titleChanged = split.title !== "" && compact(object(remote.tree.block["properties"])["title"]) !== compact(titleRich);
         if (titleChanged)
             await notionPost(runtime, "saveTransactionsFanout", remote.cookie, { requestId: randomUUID(), transactions: [{ id: randomUUID(), spaceId: remote.spaceId, operations: [{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: titleRich } } }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime.clock.now().getTime() }] }] }, remote.headers);
         const outputTree = { ...remote.tree, block: { ...remote.tree.block, properties: { ...object(remote.tree.block["properties"]), title: titleRich } } };
-        const output = renderNotionTreeToMarkdown(outputTree, mentions, emailMentions);
-        return { title: output.split("\n")[0].replace(/^# */, ""), markdown: output, data: notionData(remote.tree.id, output, outputTree, mentions, emailMentions) };
+        return notionDocument(remote.tree.id, outputTree, mentions, emailMentions, remote.comments);
     }
     if (baseMarkdown !== undefined) {
         const localChanged = baseMarkdown !== targetMarkdown;
         const remoteChanged = baseMarkdown !== currentMarkdown;
         if (!localChanged && remoteChanged)
-            return { title: currentMarkdown.split("\n")[0].replace(/^# */, ""), markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions, emailMentions) };
+            return notionDocument(remote.tree.id, remote.tree, mentions, emailMentions, remote.comments);
         if (localChanged && remoteChanged && targetMarkdown !== currentMarkdown && !fieldMerged)
             throw new Error("Markdown and Notion changed since last sync");
         if (localChanged && remoteChanged && targetMarkdown === currentMarkdown)
-            return { title: currentMarkdown.split("\n")[0].replace(/^# */, ""), markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions, emailMentions) };
+            return notionDocument(remote.tree.id, remote.tree, mentions, emailMentions, remote.comments);
     }
     const localBody = mentions === undefined ? split.body : hydrateUserMentions(split.body, mentions);
     const localBlocks = parseNotionMarkdown(localBody);
@@ -1154,7 +1207,6 @@ export async function synchronizeNotionDocument(runtime, url, source, base, mark
     if (operations.length > 0)
         await notionPost(runtime, "saveTransactionsFanout", remote.cookie, { requestId: randomUUID(), transactions: [{ id: randomUUID(), spaceId: remote.spaceId, operations }] }, remote.headers);
     const outputTree = { id: remote.tree.id, block: { ...remote.tree.block, properties: { ...object(remote.tree.block["properties"]), title: titleRich } }, children: localTree(localBlocks).map((node, index) => outputNode(node, remote.tree.children[index], remote.tree.id, remote, ambient.currentTime)) };
-    const output = renderNotionTreeToMarkdown(outputTree, mentions, emailMentions);
-    return { title: output.split("\n")[0].replace(/^# */, ""), markdown: output, data: notionData(remote.tree.id, output, outputTree, mentions, emailMentions) };
+    return notionDocument(remote.tree.id, outputTree, mentions, emailMentions, remote.comments);
 }
 //# sourceMappingURL=notion-sync.js.map

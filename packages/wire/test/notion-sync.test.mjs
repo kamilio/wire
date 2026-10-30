@@ -67,6 +67,7 @@ function notionRuntime(page, submitted) {
       assert.equal(init.headers["user-agent"], "Mozilla/5.0");
       assert.equal(init.headers["notion-client-version"], "23.13.0.4595");
       const bodyValue = JSON.parse(init.body);
+      if (path === "getActivityLog") return Response.json({ recordMap: {}, activityIds: [] });
       if (path === "getSpaces") return Response.json({ user: { space_view: { view: { spaceId: "space" } } } });
       if (path === "getRecordValues") return Response.json({ results: bodyValue.requests.map(({ id }) => ({ value: blockMap[id].value.value })) });
       if (path === "saveTransactionsFanout") {
@@ -475,6 +476,7 @@ test("notion document synchronization runs in TypeScript without process delegat
       const path = String(input).split("/api/v3/")[1];
       if (path === undefined) return new Response("{}", { headers: { "content-type": "application/json" } });
       const body = init.body === undefined ? {} : JSON.parse(init.body);
+      if (path === "getActivityLog") return Response.json({ recordMap: {}, activityIds: [] });
       if (path === "getSpaces") return Response.json({ user: { space_view: { view: { spaceId: "space" } } } });
       if (path === "getRecordValues") return Response.json({ results: body.requests.map(({ id }) => ({ value: blockMap[id].value.value })) });
       if (path === "saveTransactionsFanout") {
@@ -516,6 +518,7 @@ test("notion synchronization uses the fetched page workspace for transactions", 
       if (path === undefined) return new Response("{}", { headers: { "content-type": "application/json" } });
       seenHeaders.push(init.headers);
       const body = init.body === undefined ? {} : JSON.parse(init.body);
+      if (path === "getActivityLog") return Response.json({ recordMap: {}, activityIds: [] });
       if (path === "getSpaces") return Response.json({ user: { space_view: { first: { spaceId: "first-space" }, page: { spaceId: "page-space" } } } });
       if (path === "getRecordValues") return Response.json({ results: body.requests.map(({ id }) => ({ value: blockMap[id].value.value })) });
       if (path === "saveTransactionsFanout") {
@@ -545,6 +548,7 @@ test("notion synchronization preserves remote title when local Markdown omits H1
       const path = String(input).split("/api/v3/")[1];
       if (path === undefined) return new Response("{}", { headers: { "content-type": "application/json" } });
       const bodyValue = init.body === undefined ? {} : JSON.parse(init.body);
+      if (path === "getActivityLog") return Response.json({ recordMap: {}, activityIds: [] });
       if (path === "getSpaces") return Response.json({ user: { space_view: { view: { spaceId: "space" } } } });
       if (path === "getRecordValues") return Response.json({ results: bodyValue.requests.map(({ id }) => ({ value: blockMap[id].value.value })) });
       if (path === "saveTransactionsFanout") {
@@ -622,6 +626,7 @@ test("notion synchronization updates title without parsing unchanged opaque body
       const path = String(input).split("/api/v3/")[1];
       if (path === undefined) return new Response("{}", { headers: { "content-type": "application/json" } });
       const bodyValue = init.body === undefined ? {} : JSON.parse(init.body);
+      if (path === "getActivityLog") return Response.json({ recordMap: {}, activityIds: [] });
       if (path === "getSpaces") return Response.json({ user: { space_view: { view: { spaceId: "space" } } } });
       if (path === "getRecordValues") return Response.json({ results: bodyValue.requests.map(({ id }) => ({ value: blockMap[id].value.value })) });
       if (path === "saveTransactionsFanout") {
@@ -729,4 +734,78 @@ test("Notion user lookup matches email aliases and names", async () => {
   };
   assert.deepEqual(await lookupNotionUsers(runtime, "ALICE@example.com"), [{ userId: "alice", aliases: ["alice@example.com"] }]);
   assert.deepEqual(await lookupNotionUsers(runtime, "Alice Smith"), [{ userId: "alice", aliases: ["alice@example.com"], name: "Alice Smith" }]);
+});
+
+
+test("notion comments include paginated threads and replies without becoming page edits", async () => {
+  const page = remoteTree("Original body", "Root");
+  const submitted = [];
+  const requested = [];
+  const wrap = (value) => ({ value: { value } });
+  const firstComment = { id: "first", version: 2, text: [["First ", [["b"]]], ["comment"]], alive: true, created_by_id: "alice", created_time: 1000 };
+  const reply = { id: "reply", version: 1, text: [["Latest reply\nSecond line"]], alive: true, created_by_id: "bob", created_time: 2000 };
+  const inline = { id: "inline", version: 2, parent_id: page.children[0].id, context: [["Original body"]], resolved: false, comments: ["first", "reply", "deleted"] };
+  const pageThread = { id: "page-thread", version: 1, parent_id: page.id, resolved: true, comments: ["page-comment"] };
+  const activityPages = [
+    { activityIds: Array.from({ length: 100 }, (_, index) => `activity-${index}`), recordMap: {
+      discussion: { inline: wrap(inline) },
+      comment: { first: wrap(firstComment), deleted: wrap({ id: "deleted", version: 1, alive: false, text: [["Deleted comment"]] }) },
+      notion_user: { alice: wrap({ id: "alice", version: 1, name: "Alice" }) },
+    } },
+    { activityIds: ["last"], recordMap: {
+      discussion: { inline: wrap({ ...inline, version: 1, comments: ["first"] }), page: wrap(pageThread), unrelated: wrap({ id: "unrelated", version: 1, parent_id: "other-page", comments: ["secret"] }) },
+      comment: { first: wrap(firstComment), "page-comment": wrap({ ...firstComment, id: "page-comment", text: [["Resolved page comment"]] }) },
+    } },
+  ];
+  const values = { comment: { reply }, notion_user: { bob: { id: "bob", name: "Bob" } } };
+  const baseRuntime = notionRuntime(page, submitted);
+  const runtime = { ...baseRuntime, http: { request: async (input, init) => {
+    const path = String(input).split("/api/v3/")[1];
+    if (path === "getActivityLog") {
+      const payload = JSON.parse(init.body);
+      assert.equal(payload.spaceId, "space");
+      assert.equal(payload.navigableBlock.id, page.id);
+      assert.equal(init.headers["x-notion-space-id"], "space");
+      if (payload.startingAfterId !== undefined) assert.equal(payload.startingAfterId, "activity-99");
+      return Response.json(activityPages[payload.startingAfterId === undefined ? 0 : 1]);
+    }
+    if (path === "getRecordValues") {
+      const { requests } = JSON.parse(init.body);
+      if (requests[0].table === "block") return baseRuntime.http.request(input, init);
+      requested.push(...requests);
+      return Response.json({ results: requests.map(({ table, id }) => ({ value: values[table][id] })) });
+    }
+    return baseRuntime.http.request(input, init);
+  } } };
+  const url = "https://www.notion.so/34e199a9a61f8012acf4f79101bae370";
+  const fetched = await fetchNotionDocument(runtime, url, notionSource);
+  assert.equal(fetched.title, "Root");
+  assert.match(fetched.markdown, /## Comments \(read-only\)/);
+  assert.match(fetched.markdown, /> Original body/);
+  assert.match(fetched.markdown, /\*\*Alice\*\* — 1970-01-01T00:00:01.000Z/);
+  assert.match(fetched.markdown, /\*\*First\*\* comment/);
+  assert.match(fetched.markdown, /\*\*Bob\*\* — 1970-01-01T00:00:02.000Z/);
+  assert.match(fetched.markdown, /Latest reply\nSecond line/);
+  assert.match(fetched.markdown, /Page comment.*\(resolved\)/);
+  assert.equal(fetched.markdown.includes("Deleted comment"), false);
+  assert.equal(fetched.markdown.includes("secret"), false);
+  assert.equal(fetched.markdown.match(/Latest reply/g).length, 1);
+  assert.deepEqual(requested, [{ table: "comment", id: "reply" }, { table: "notion_user", id: "bob" }]);
+  assert.equal(fetched.data.markdown, fetched.markdown);
+  assert.deepEqual(fetched.data.blocks.map((block) => block.type), ["page", "text"]);
+  const oldMarkdown = fetched.markdown.replace("Latest reply", "Older reply");
+  const refreshed = await synchronizeNotionDocument(runtime, url, notionSource, { markdown: oldMarkdown }, oldMarkdown, "/workspace/page.md");
+  assert.equal(refreshed.markdown, fetched.markdown);
+  assert.deepEqual(submitted, []);
+  const upgraded = await synchronizeNotionDocument(runtime, url, notionSource, { markdown: "# Root\n\nOriginal body" }, "# Root\n\nOriginal body", "/workspace/page.md");
+  assert.equal(upgraded.markdown, fetched.markdown);
+  assert.deepEqual(submitted, []);
+  const edited = await synchronizeNotionDocument(runtime, url, notionSource, { markdown: oldMarkdown }, oldMarkdown.replace("Original body", "Edited body").replace("Older reply", "Local comment edit"), "/workspace/page.md");
+  assert.match(edited.markdown, /^# Root\n\nEdited body/);
+  assert.match(edited.markdown, /Latest reply/);
+  assert.equal(edited.markdown.includes("Local comment edit"), false);
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0].some((operation) => operation.command === "set" && operation.path.length === 0), false);
+  assert.equal(submitted[0].every((operation) => operation.pointer.table === "block"), true);
+  assert.deepEqual(submitted[0].find((operation) => operation.path.join("/") === "properties/title").args.primitiveOp.args, [["Edited body"]]);
 });
