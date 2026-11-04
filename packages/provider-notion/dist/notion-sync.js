@@ -1132,7 +1132,8 @@ export async function uploadNotionDocument(runtime, markdown, _markdownPath) {
         children: localTree(localBlocks).map((node) => outputNode(node, undefined, pageId, { spaceId, userId }, currentTime)),
     };
     const output = renderNotionTreeToMarkdown(pageTree, undefined, emailMentions);
-    return { url: `https://www.notion.so/${compactPageId}`, title: split.title, markdown: output, data: notionData(compactPageId, output, pageTree, undefined, emailMentions) };
+    const slug = split.title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    return { url: slug === "" ? `https://www.notion.so/${compactPageId}` : `https://www.notion.so/${slug}-${compactPageId}`, title: split.title, markdown: output, data: notionData(compactPageId, output, pageTree, undefined, emailMentions) };
 }
 function splitTitle(markdown) {
     const lines = markdown.replace(/^\ufeff/, "").split("\n");

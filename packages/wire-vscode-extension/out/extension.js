@@ -11546,8 +11546,8 @@ function hydrateUserMentions(markdownText3, mentions) {
 function baseUserMentions(base) {
   return base["user_mentions"];
 }
-function notionData(pageId, markdown, tree, mentions, emailMentions = {}) {
-  return { page_id: pageId, markdown, blocks: sidecarBlocksFromNotionTree(tree), ...mentions === void 0 ? {} : { user_mentions: mentions }, ...Object.keys(emailMentions).length === 0 ? {} : { email_mentions: emailMentions } };
+function notionData(pageId, markdown, tree, mentions) {
+  return mentions === void 0 ? { page_id: pageId, markdown, blocks: sidecarBlocksFromNotionTree(tree) } : { page_id: pageId, markdown, blocks: sidecarBlocksFromNotionTree(tree), user_mentions: mentions };
 }
 function lineIndent(line) {
   return Math.floor(line.match(/^ */)[0].length / 2);
@@ -11933,9 +11933,9 @@ function emitUpdates(remote, local, blockId, spaceId, columnOrder) {
   const remoteProperties = object4(remote["properties"] ?? {});
   const nextProperties = object4(args["properties"] ?? {});
   if (typeChanged) {
-    if (compact(remoteProperties) !== compact(nextProperties)) operations.push({ pointer: pointer(blockId, spaceId), path: ["properties"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: nextProperties } } });
+    if (compact(remoteProperties) !== compact(nextProperties)) operations.push({ pointer: pointer(blockId, spaceId), path: ["properties"], command: "set", args: nextProperties });
   } else {
-    for (const key2 of Object.keys(nextProperties)) if (compact(remoteProperties[key2] ?? null) !== compact(nextProperties[key2])) operations.push({ pointer: pointer(blockId, spaceId), path: ["properties", key2], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: nextProperties[key2] } } });
+    for (const key2 of Object.keys(nextProperties)) if (compact(remoteProperties[key2] ?? null) !== compact(nextProperties[key2])) operations.push({ pointer: pointer(blockId, spaceId), path: ["properties", key2], command: "set", args: nextProperties[key2] });
   }
   const nextFormat = object4(args["format"] ?? {});
   if ((typeChanged || args["format"] !== void 0 || remote["format"] !== void 0) && compact(remote["format"] ?? {}) !== compact(nextFormat)) operations.push({ pointer: pointer(blockId, spaceId), path: ["format"], command: "set", args: nextFormat });
@@ -12100,51 +12100,20 @@ function renderNode(tree, indent, parentType = "") {
   if (["bulleted_list", "numbered_list", "to_do"].includes(parentType)) return [`${prefix}:::text`, ...title2.split("\n").map((line) => `${prefix}${line}`), `${prefix}:::`];
   return title2.split("\n").map((line) => `${prefix}${escapeBlockMarkdownLine(line)}`);
 }
-function renderNotionTreeToMarkdown(tree, mentions, emailMentions = {}) {
+function renderNotionTreeToMarkdown(tree, mentions) {
   const title2 = renderRichText(object4(tree.block["properties"])["title"]);
   const compactTypes = /* @__PURE__ */ new Set(["bulleted_list", "numbered_list", "to_do"]);
   const body2 = tree.children.flatMap((child, index) => [
     ...index === 0 || tree.children[index - 1].block["type"] === child.block["type"] && compactTypes.has(child.block["type"]) ? [] : [""],
     ...renderNode(child, 0)
   ]);
-  let markdown = [`# ${title2}`, ...body2.length === 0 ? [] : ["", ...body2]].join("\n").trim();
-  for (const [id, link] of Object.entries(emailMentions)) markdown = markdown.replace(new RegExp(`<span data-notion-mention="u" data-notion-id="${escapeRegExp(escapeHtml(id))}">.*?</span>`, "g"), () => link);
+  const markdown = [`# ${title2}`, ...body2.length === 0 ? [] : ["", ...body2]].join("\n").trim();
   return mentions === void 0 ? markdown : renderUserMentions(markdown, mentions);
 }
 async function notionPost(runtime2, path, cookie, body2, headers) {
   const response = await runtime2.http.request(`https://www.notion.so/api/v3/${path}`, { method: "POST", headers: { cookie, "content-type": "application/json", "notion-client-version": "23.13.0.4595", "user-agent": "Mozilla/5.0", ...headers }, body: JSON.stringify(body2) });
   if (!response.ok) throw new Error(`POST ${path} failed: ${response.status} ${await response.text()}`);
   return await response.json();
-}
-async function resolveNotionEmailMentions(runtime2, blocks, cookie, spaceId, headers, mentions) {
-  const segments = [];
-  const visit = (value) => {
-    if (Array.isArray(value)) {
-      if (typeof value[0] === "string" && value[0].startsWith("@") && Array.isArray(value[1]) && value[1].some((mark) => Array.isArray(mark) && mark[0] === "a" && typeof mark[1] === "string" && mark[1].startsWith("mailto:"))) segments.push(value);
-      else for (const child of value) visit(child);
-    } else if (value !== null && typeof value === "object") for (const child of Object.values(value)) visit(child);
-  };
-  for (const block of blocks) {
-    if (block.type === "code" || block.properties["notion_opaque"] !== void 0) continue;
-    visit(block.rich_text);
-    visit(block.properties);
-  }
-  if (segments.length === 0) return;
-  const response = await notionPost(runtime2, "getVisibleUsers", cookie, { spaceId }, headers);
-  const users = response["users"];
-  for (const segment2 of segments) {
-    const marks = segment2[1];
-    const link = marks.find((mark) => mark[0] === "a" && mark[1].startsWith("mailto:"));
-    const email = decodeURIComponent(link[1].slice(7));
-    if (!/^[^@\s?]+@[^@\s?]+$/.test(email)) throw new Error(`Invalid mention email: ${email}`);
-    const matches = users.filter((user) => user["aliases"]?.some((alias) => alias.toLowerCase() === email.toLowerCase()));
-    if (matches.length !== 1) throw new Error(`Expected one Notion user for ${email}, found ${matches.length}`);
-    const id = matches[0]["userId"];
-    mentions[id] = `[${escapeInlineMarkdown(segment2[0])}](mailto:${email})`;
-    segment2[0] = "\u2023";
-    link[0] = "u";
-    link[1] = id;
-  }
 }
 async function fetchTree(runtime2, url, source) {
   const cookies = await runtime2.cookies.loadSaved("notion");
@@ -12158,9 +12127,16 @@ async function fetchTree(runtime2, url, source) {
   const initialSpaceId = object4(spaceView[Object.keys(spaceView)[0]])["spaceId"];
   const pageId = formatBlockId(source.identifier);
   let headers = { "x-notion-active-user-header": userId, "x-notion-space-id": initialSpaceId, referer: url, ...csrf === void 0 ? {} : { "x-csrf-token": csrf } };
-  const pageData = await notionPost(runtime2, "getRecordValues", cookie, { requests: [{ table: "block", id: pageId }] }, headers);
-  const page = object4(pageData["results"][0]["value"]);
-  const blocks = /* @__PURE__ */ new Map([[pageId, page]]);
+  const blocks = /* @__PURE__ */ new Map();
+  let stack = [];
+  let chunkNumber = 0;
+  do {
+    const data = await notionPost(runtime2, "loadCachedPageChunkV2", cookie, { page: { id: pageId }, limit: 100, cursor: { stack }, chunkNumber, verticalColumns: false }, headers);
+    for (const [blockId, wrapper] of Object.entries(object4(object4(data["recordMap"])["block"]))) blocks.set(blockId, object4(object4(object4(wrapper)["value"])["value"]));
+    const cursors = data["cursors"];
+    stack = cursors.length === 0 ? [] : cursors[0]["stack"];
+    chunkNumber += 1;
+  } while (stack.length > 0);
   const spaceId = blocks.get(pageId)["space_id"];
   headers = { ...headers, "x-notion-space-id": spaceId };
   while (true) {
@@ -12237,8 +12213,6 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
     }
   };
   const localBlocks = parseNotionMarkdown(split.body);
-  const emailMentions = {};
-  await resolveNotionEmailMentions(runtime2, localBlocks, cookie, spaceId, headers, emailMentions);
   const operations = [pageOperation, ...buildNotionCreateOperations(localBlocks, pageId, spaceId, userId, currentTime).operations];
   await notionPost(runtime2, "saveTransactionsFanout", cookie, { requestId: (0, import_node_crypto4.randomUUID)(), transactions: [{ id: (0, import_node_crypto4.randomUUID)(), spaceId, operations }] }, headers);
   const pageTree = {
@@ -12246,8 +12220,9 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
     block: pageOperation.args,
     children: localTree(localBlocks).map((node) => outputNode(node, void 0, pageId, { spaceId, userId }, currentTime))
   };
-  const output = renderNotionTreeToMarkdown(pageTree, void 0, emailMentions);
-  return { url: `https://www.notion.so/${compactPageId}`, title: split.title, markdown: output, data: notionData(compactPageId, output, pageTree, void 0, emailMentions) };
+  const output = renderNotionTreeToMarkdown(pageTree);
+  const slug = split.title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return { url: slug === "" ? `https://www.notion.so/${compactPageId}` : `https://www.notion.so/${slug}-${compactPageId}`, title: split.title, markdown: output, data: notionData(compactPageId, output, pageTree, void 0) };
 }
 function splitTitle(markdown) {
   const lines = markdown.replace(/^\ufeff/, "").split("\n");
@@ -12260,8 +12235,7 @@ async function synchronizeNotionDocument(runtime2, url, source, base, markdown, 
   const remote = await fetchTree(runtime2, url, source);
   const baseObject = object4(base);
   const mentions = baseUserMentions(baseObject);
-  const emailMentions = { ...baseObject["email_mentions"] };
-  const currentMarkdown = renderNotionTreeToMarkdown(remote.tree, mentions, emailMentions);
+  const currentMarkdown = renderNotionTreeToMarkdown(remote.tree, mentions);
   const baseMarkdown = baseObject["markdown"];
   let split = splitTitle(markdown);
   const currentSplit = splitTitle(currentMarkdown);
@@ -12272,7 +12246,6 @@ async function synchronizeNotionDocument(runtime2, url, source, base, markdown, 
     const remoteTitleChanged = baseSplit.title !== currentSplit.title;
     const localBodyChanged = baseSplit.body !== split.body;
     const remoteBodyChanged = baseSplit.body !== currentSplit.body;
-    if (localTitleChanged && remoteTitleChanged && split.title !== "" && split.title !== currentSplit.title || localBodyChanged && remoteBodyChanged && split.body !== currentSplit.body) throw new Error("Markdown and Notion changed since last sync");
     if ((localTitleChanged || localBodyChanged) && (remoteTitleChanged || remoteBodyChanged)) {
       split = { title: localTitleChanged ? split.title : currentSplit.title, body: localBodyChanged ? split.body : currentSplit.body };
       fieldMerged = true;
@@ -12284,36 +12257,35 @@ ${split.body}`;
     if (baseSplit !== void 0) {
       const localTitleChanged = baseSplit.title !== split.title;
       const remoteTitleChanged = baseSplit.title !== currentSplit.title;
-      if (!localTitleChanged && remoteTitleChanged) return { title: currentSplit.title, markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions, emailMentions) };
+      if (!localTitleChanged && remoteTitleChanged) return { title: currentSplit.title, markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions) };
       if (localTitleChanged && remoteTitleChanged && split.title !== currentSplit.title) throw new Error("Markdown and Notion changed since last sync");
-      if (localTitleChanged && remoteTitleChanged) return { title: currentSplit.title, markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions, emailMentions) };
+      if (localTitleChanged && remoteTitleChanged) return { title: currentSplit.title, markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions) };
     }
     const titleRich2 = split.title === "" ? object4(remote.tree.block["properties"])["title"] : titleRichText(split.title);
     const titleChanged = split.title !== "" && compact(object4(remote.tree.block["properties"])["title"]) !== compact(titleRich2);
-    if (titleChanged) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto4.randomUUID)(), transactions: [{ id: (0, import_node_crypto4.randomUUID)(), spaceId: remote.spaceId, operations: [{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: titleRich2 } } }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime2.clock.now().getTime() }] }] }, remote.headers);
+    if (titleChanged) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto4.randomUUID)(), transactions: [{ id: (0, import_node_crypto4.randomUUID)(), spaceId: remote.spaceId, operations: [{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "set", args: titleRich2 }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime2.clock.now().getTime() }] }] }, remote.headers);
     const outputTree2 = { ...remote.tree, block: { ...remote.tree.block, properties: { ...object4(remote.tree.block["properties"]), title: titleRich2 } } };
-    const output2 = renderNotionTreeToMarkdown(outputTree2, mentions, emailMentions);
-    return { title: output2.split("\n")[0].replace(/^# */, ""), markdown: output2, data: notionData(remote.tree.id, output2, outputTree2, mentions, emailMentions) };
+    const output2 = renderNotionTreeToMarkdown(outputTree2, mentions);
+    return { title: output2.split("\n")[0].replace(/^# */, ""), markdown: output2, data: notionData(remote.tree.id, output2, outputTree2, mentions) };
   }
   if (baseMarkdown !== void 0) {
     const localChanged = baseMarkdown !== targetMarkdown;
     const remoteChanged = baseMarkdown !== currentMarkdown;
-    if (!localChanged && remoteChanged) return { title: currentMarkdown.split("\n")[0].replace(/^# */, ""), markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions, emailMentions) };
+    if (!localChanged && remoteChanged) return { title: currentMarkdown.split("\n")[0].replace(/^# */, ""), markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions) };
     if (localChanged && remoteChanged && targetMarkdown !== currentMarkdown && !fieldMerged) throw new Error("Markdown and Notion changed since last sync");
-    if (localChanged && remoteChanged && targetMarkdown === currentMarkdown) return { title: currentMarkdown.split("\n")[0].replace(/^# */, ""), markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions, emailMentions) };
+    if (localChanged && remoteChanged && targetMarkdown === currentMarkdown) return { title: currentMarkdown.split("\n")[0].replace(/^# */, ""), markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions) };
   }
   const localBody = mentions === void 0 ? split.body : hydrateUserMentions(split.body, mentions);
   const localBlocks = parseNotionMarkdown(localBody);
-  await resolveNotionEmailMentions(runtime2, localBlocks, remote.cookie, remote.spaceId, remote.headers, emailMentions);
   const ambient = { spaceId: remote.spaceId, userId: remote.userId, currentTime: runtime2.clock.now().getTime() };
   const diffResult = diffNotionBlockTrees(remote.tree, localBlocks, sidecarBlocksFromNotionTree(remote.tree), ambient);
   const operations = [...diffResult.operations];
   const titleRich = split.title === "" ? object4(remote.tree.block["properties"])["title"] : titleRichText(split.title);
-  if (split.title !== "" && compact(object4(remote.tree.block["properties"])["title"]) !== compact(titleRich)) operations.unshift({ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: titleRich } } });
+  if (split.title !== "" && compact(object4(remote.tree.block["properties"])["title"]) !== compact(titleRich)) operations.unshift({ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "set", args: titleRich });
   if (operations.length > 0) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto4.randomUUID)(), transactions: [{ id: (0, import_node_crypto4.randomUUID)(), spaceId: remote.spaceId, operations }] }, remote.headers);
   const outputTree = { id: remote.tree.id, block: { ...remote.tree.block, properties: { ...object4(remote.tree.block["properties"]), title: titleRich } }, children: localTree(localBlocks).map((node, index) => outputNode(node, remote.tree.children[index], remote.tree.id, remote, ambient.currentTime)) };
-  const output = renderNotionTreeToMarkdown(outputTree, mentions, emailMentions);
-  return { title: output.split("\n")[0].replace(/^# */, ""), markdown: output, data: notionData(remote.tree.id, output, outputTree, mentions, emailMentions) };
+  const output = renderNotionTreeToMarkdown(outputTree, mentions);
+  return { title: output.split("\n")[0].replace(/^# */, ""), markdown: output, data: notionData(remote.tree.id, output, outputTree, mentions) };
 }
 
 // ../provider-notion/src/notion.ts
