@@ -57,6 +57,8 @@ wire detach <resource>   # download once, then stop tracking it
 wire watch <file>        # sync a file whenever it changes
 ```
 
+For a Notion page with subpages, `wire download <url>` saves a directory with an `index.md` for each page. Open the root index and follow the local links. Ordinary links and mentions stay remote. Pages without subpages still download as one Markdown file.
+
 Run `wire --help` for the full CLI.
 
 ### People and Slack threads

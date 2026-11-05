@@ -7367,7 +7367,7 @@ module.exports = __toCommonJS(extension_exports);
 var import_node_child_process3 = require("node:child_process");
 var import_node_fs4 = require("node:fs");
 var import_promises7 = require("node:fs/promises");
-var import_node_path5 = require("node:path");
+var import_node_path6 = require("node:path");
 var import_node_util2 = require("node:util");
 var vscode = __toESM(require("vscode"));
 
@@ -11294,6 +11294,7 @@ var googleDocsProvider = Object.freeze({
 
 // ../provider-notion/src/notion-sync.ts
 var import_node_crypto4 = require("node:crypto");
+var import_node_path5 = require("node:path");
 function object4(value) {
   return value;
 }
@@ -11546,8 +11547,8 @@ function hydrateUserMentions(markdownText3, mentions) {
 function baseUserMentions(base) {
   return base["user_mentions"];
 }
-function notionData(pageId, markdown, tree, mentions) {
-  return mentions === void 0 ? { page_id: pageId, markdown, blocks: sidecarBlocksFromNotionTree(tree) } : { page_id: pageId, markdown, blocks: sidecarBlocksFromNotionTree(tree), user_mentions: mentions };
+function notionData(pageId, markdown, tree, mentions, emailMentions = {}) {
+  return { page_id: pageId, markdown, blocks: sidecarBlocksFromNotionTree(tree), ...mentions === void 0 ? {} : { user_mentions: mentions }, ...Object.keys(emailMentions).length === 0 ? {} : { email_mentions: emailMentions } };
 }
 function lineIndent(line) {
   return Math.floor(line.match(/^ */)[0].length / 2);
@@ -11933,9 +11934,9 @@ function emitUpdates(remote, local, blockId, spaceId, columnOrder) {
   const remoteProperties = object4(remote["properties"] ?? {});
   const nextProperties = object4(args["properties"] ?? {});
   if (typeChanged) {
-    if (compact(remoteProperties) !== compact(nextProperties)) operations.push({ pointer: pointer(blockId, spaceId), path: ["properties"], command: "set", args: nextProperties });
+    if (compact(remoteProperties) !== compact(nextProperties)) operations.push({ pointer: pointer(blockId, spaceId), path: ["properties"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: nextProperties } } });
   } else {
-    for (const key2 of Object.keys(nextProperties)) if (compact(remoteProperties[key2] ?? null) !== compact(nextProperties[key2])) operations.push({ pointer: pointer(blockId, spaceId), path: ["properties", key2], command: "set", args: nextProperties[key2] });
+    for (const key2 of Object.keys(nextProperties)) if (compact(remoteProperties[key2] ?? null) !== compact(nextProperties[key2])) operations.push({ pointer: pointer(blockId, spaceId), path: ["properties", key2], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: nextProperties[key2] } } });
   }
   const nextFormat = object4(args["format"] ?? {});
   if ((typeChanged || args["format"] !== void 0 || remote["format"] !== void 0) && compact(remote["format"] ?? {}) !== compact(nextFormat)) operations.push({ pointer: pointer(blockId, spaceId), path: ["format"], command: "set", args: nextFormat });
@@ -12046,31 +12047,32 @@ function diffNotionBlockTrees(remoteTree, localBlocks, _sidecarBlocks, ambient) 
   if (operations.length > 0 && !operations.some((operation) => operation.path.length === 1 && operation.path[0] === "last_edited_time")) operations.push({ pointer: pointer(remoteTree.id, ambient.spaceId), path: ["last_edited_time"], command: "set", args: ambient.currentTime });
   return { operations, summary };
 }
-function renderNode(tree, indent, parentType = "") {
+function renderNode(tree, indent, parentType = "", download = false) {
   const prefix = "  ".repeat(indent);
   const type = tree.block["type"] === "text" && object4(tree.block["format"] ?? {})["toggleable"] === true ? "toggle" : tree.block["type"];
+  const children = () => tree.children.flatMap((child) => renderNode(child, indent + 1, type, download));
   const properties = object4(tree.block["properties"] ?? {});
   const title2 = properties["title"] === void 0 ? "" : renderRichText(properties["title"]);
   const format = object4(tree.block["format"] ?? {});
   if (["header", "sub_header", "sub_sub_header"].includes(type)) {
     const marker = type === "header" ? "#" : type === "sub_header" ? "##" : "###";
-    return [`${prefix}${marker} ${title2}${format["toggleable"] === true ? " {toggle}" : ""}`, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
+    return [`${prefix}${marker} ${title2}${format["toggleable"] === true ? " {toggle}" : ""}`, ...children()];
   }
   if (type === "bulleted_list") {
     const lines = title2.split("\n");
-    return [`${prefix}- ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${escapeBlockMarkdownLine(line)}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
+    return [`${prefix}- ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${escapeBlockMarkdownLine(line)}`), ...children()];
   }
   if (type === "numbered_list") {
     const lines = title2.split("\n");
-    return [`${prefix}1. ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}   ${escapeBlockMarkdownLine(line)}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
+    return [`${prefix}1. ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}   ${escapeBlockMarkdownLine(line)}`), ...children()];
   }
   if (type === "to_do") {
     const checked = richTextText(properties["checked"] ?? [["No"]]) === "Yes";
-    if (title2 === "") return [`${prefix}:::to-do`, `${prefix}:::checked ${JSON.stringify(checked)}`, prefix, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type)), `${prefix}:::`];
+    if (title2 === "") return [`${prefix}:::to-do`, `${prefix}:::checked ${JSON.stringify(checked)}`, prefix, ...children(), `${prefix}:::`];
     const lines = title2.split("\n");
-    return [`${prefix}- [${checked ? "x" : " "}] ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${escapeBlockMarkdownLine(line)}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
+    return [`${prefix}- [${checked ? "x" : " "}] ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${escapeBlockMarkdownLine(line)}`), ...children()];
   }
-  if (type === "quote") return [...title2.split("\n").map((line) => `${prefix}> ${escapeBlockMarkdownLine(line)}`), ...tree.children.flatMap((child) => renderNode(child, indent + 1, type))];
+  if (type === "quote") return [...title2.split("\n").map((line) => `${prefix}> ${escapeBlockMarkdownLine(line)}`), ...children()];
   if (type === "divider") return [`${prefix}---`];
   if (type === "code") {
     const code = richTextText(properties["title"]);
@@ -12079,16 +12081,16 @@ function renderNode(tree, indent, parentType = "") {
     const language = richTextText(properties["language"]).replace("Plain Text", "");
     return [`${prefix}${fence}${language}`, ...code.split("\n").map((line) => `${prefix}${line}`), `${prefix}${fence}`];
   }
-  if (type === "image") return [`${prefix}![${escapeInlineMarkdown(richTextText(properties["alt_text"]))}](${encodeURI(richTextText(properties["source"]))})`];
+  if (type === "image") return [`${prefix}![${escapeInlineMarkdown(richTextText(properties["alt_text"] ?? []))}](${encodeURI(richTextText(properties["source"]))})`];
   if (type === "equation") return [`${prefix}:::equation`, ...title2.split("\n").map((line) => `${prefix}${line}`), `${prefix}:::`];
-  if (type === "page") return [`${prefix}:::page`, `${prefix}${title2}`, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type)), `${prefix}:::`];
-  if (type === "column_list") return [`${prefix}:::columns`, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type)), `${prefix}:::`];
-  if (type === "column") return [`${prefix}:::column`, ...format["column_ratio"] === void 0 ? [] : [`${prefix}${format["column_ratio"]}`], ...tree.children.flatMap((child) => renderNode(child, indent + 1, type)), `${prefix}:::`];
-  if (type === "transclusion_container") return [`${prefix}:::synced`, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type)), `${prefix}:::`];
-  if (type === "callout" || type === "toggle") return [`${prefix}:::${type}`, `${prefix}${title2}`, ...tree.children.flatMap((child) => renderNode(child, indent + 1, type)), `${prefix}:::`];
+  if (type === "page") return [`${prefix}:::page`, `${prefix}${title2}`, ...children(), `${prefix}:::`];
+  if (type === "column_list") return [`${prefix}:::columns`, ...children(), `${prefix}:::`];
+  if (type === "column") return [`${prefix}:::column`, ...format["column_ratio"] === void 0 ? [] : [`${prefix}${format["column_ratio"]}`], ...children(), `${prefix}:::`];
+  if (type === "transclusion_container") return [`${prefix}:::synced`, ...children(), `${prefix}:::`];
+  if (type === "callout" || type === "toggle") return [`${prefix}:::${type}`, `${prefix}${title2}`, ...children(), `${prefix}:::`];
   if (type === "table") {
     const columns = object4(tree.block["format"])["table_block_column_order"];
-    const rows = tree.children.map((child) => columns.map((column) => renderRichText(object4(child.block["properties"])[column]).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/<br>/g, "\\<br>").replace(/\n/g, "<br>")));
+    const rows = tree.children.map((child) => columns.map((column) => renderRichText(object4(child.block["properties"] ?? {})[column] ?? []).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/<br>/g, "\\<br>").replace(/\n/g, "<br>")));
     return rows.flatMap((row, index) => index === 0 ? [`${prefix}| ${row.join(" | ")} |`, `${prefix}| ${columns.map(() => "---").join(" | ")} |`] : [`${prefix}| ${row.join(" | ")} |`]);
   }
   if (type !== "text") {
@@ -12096,24 +12098,116 @@ function renderNode(tree, indent, parentType = "") {
     if (tree.block["format"] !== void 0) return [`${prefix}:::notion-format`, `${prefix}:::format ${compact(tree.block["format"])}`, ...opaque, `${prefix}:::`];
     return opaque;
   }
-  if (title2 === "") return [`${prefix}:::text`, `${prefix}:::`];
-  if (["bulleted_list", "numbered_list", "to_do"].includes(parentType)) return [`${prefix}:::text`, ...title2.split("\n").map((line) => `${prefix}${line}`), `${prefix}:::`];
-  return title2.split("\n").map((line) => `${prefix}${escapeBlockMarkdownLine(line)}`);
+  const nested = download ? children() : [];
+  if (title2 === "") return [`${prefix}:::text`, `${prefix}:::`, ...nested];
+  if (["bulleted_list", "numbered_list", "to_do"].includes(parentType)) return [`${prefix}:::text`, ...title2.split("\n").map((line) => `${prefix}${line}`), `${prefix}:::`, ...nested];
+  return [...title2.split("\n").map((line) => `${prefix}${escapeBlockMarkdownLine(line)}`), ...nested];
 }
-function renderNotionTreeToMarkdown(tree, mentions) {
+function renderNotionTreeToMarkdown(tree, mentions, emailMentions = {}, download = false) {
   const title2 = renderRichText(object4(tree.block["properties"])["title"]);
   const compactTypes = /* @__PURE__ */ new Set(["bulleted_list", "numbered_list", "to_do"]);
   const body2 = tree.children.flatMap((child, index) => [
     ...index === 0 || tree.children[index - 1].block["type"] === child.block["type"] && compactTypes.has(child.block["type"]) ? [] : [""],
-    ...renderNode(child, 0)
+    ...renderNode(child, 0, "", download)
   ]);
-  const markdown = [`# ${title2}`, ...body2.length === 0 ? [] : ["", ...body2]].join("\n").trim();
+  let markdown = [`# ${title2}`, ...body2.length === 0 ? [] : ["", ...body2]].join("\n").trim();
+  for (const [id, link] of Object.entries(emailMentions)) markdown = markdown.replace(new RegExp(`<span data-notion-mention="u" data-notion-id="${escapeRegExp(escapeHtml(id))}">.*?</span>`, "g"), () => link);
   return mentions === void 0 ? markdown : renderUserMentions(markdown, mentions);
 }
 async function notionPost(runtime2, path, cookie, body2, headers) {
   const response = await runtime2.http.request(`https://www.notion.so/api/v3/${path}`, { method: "POST", headers: { cookie, "content-type": "application/json", "notion-client-version": "23.13.0.4595", "user-agent": "Mozilla/5.0", ...headers }, body: JSON.stringify(body2) });
   if (!response.ok) throw new Error(`POST ${path} failed: ${response.status} ${await response.text()}`);
   return await response.json();
+}
+async function resolveNotionEmailMentions(runtime2, blocks, cookie, spaceId, headers, mentions) {
+  const segments = [];
+  const visit = (value) => {
+    if (Array.isArray(value)) {
+      if (typeof value[0] === "string" && value[0].startsWith("@") && Array.isArray(value[1]) && value[1].some((mark) => Array.isArray(mark) && mark[0] === "a" && typeof mark[1] === "string" && mark[1].startsWith("mailto:"))) segments.push(value);
+      else for (const child of value) visit(child);
+    } else if (value !== null && typeof value === "object") for (const child of Object.values(value)) visit(child);
+  };
+  for (const block of blocks) {
+    if (block.type === "code" || block.properties["notion_opaque"] !== void 0) continue;
+    visit(block.rich_text);
+    visit(block.properties);
+  }
+  if (segments.length === 0) return;
+  const response = await notionPost(runtime2, "getVisibleUsers", cookie, { spaceId }, headers);
+  const users = response["users"];
+  for (const segment2 of segments) {
+    const marks = segment2[1];
+    const link = marks.find((mark) => mark[0] === "a" && mark[1].startsWith("mailto:"));
+    const email = decodeURIComponent(link[1].slice(7));
+    if (!/^[^@\s?]+@[^@\s?]+$/.test(email)) throw new Error(`Invalid mention email: ${email}`);
+    const matches = users.filter((user) => user["aliases"]?.some((alias) => alias.toLowerCase() === email.toLowerCase()));
+    if (matches.length !== 1) throw new Error(`Expected one Notion user for ${email}, found ${matches.length}`);
+    const id = matches[0]["userId"];
+    mentions[id] = `[${escapeInlineMarkdown(segment2[0])}](mailto:${email})`;
+    segment2[0] = "\u2023";
+    link[0] = "u";
+    link[1] = id;
+  }
+}
+async function fetchComments(runtime2, tree, spaceId, cookie, headers) {
+  const records = { discussion: /* @__PURE__ */ new Map(), comment: /* @__PURE__ */ new Map(), notion_user: /* @__PURE__ */ new Map() };
+  let startingAfterId;
+  while (true) {
+    const data = await notionPost(runtime2, "getActivityLog", cookie, { spaceId, navigableBlock: { id: tree.id }, limit: 100, ...startingAfterId === void 0 ? {} : { startingAfterId } }, headers);
+    const recordMap = object4(data["recordMap"]);
+    for (const table of Object.keys(records)) {
+      if (recordMap[table] === void 0) continue;
+      for (const [id, wrapper] of Object.entries(object4(recordMap[table]))) {
+        const value = object4(object4(object4(wrapper)["value"])["value"]);
+        const previous = records[table].get(id);
+        if (previous === void 0 || value["version"] >= previous["version"]) records[table].set(id, value);
+      }
+    }
+    const activityIds = data["activityIds"];
+    if (activityIds.length < 100) break;
+    startingAfterId = activityIds[activityIds.length - 1];
+  }
+  const blockIds = new Set(sidecarBlocksFromNotionTree(tree).map((block) => block.id));
+  const discussions = [...records["discussion"].values()].filter((discussion) => blockIds.has(discussion["parent_id"]) && discussion["alive"] !== false);
+  for (const table of ["comment", "notion_user"]) {
+    const ids = table === "comment" ? discussions.flatMap((discussion) => discussion["comments"]) : [...records["comment"].values()].filter((comment) => comment["alive"] === true).map((comment) => comment["created_by_id"]);
+    const missing = [...new Set(ids)].filter((id) => !records[table].has(id));
+    if (missing.length === 0) continue;
+    const data = await notionPost(runtime2, "getRecordValues", cookie, { requests: missing.map((id) => ({ table, id })) }, headers);
+    for (const [index, result] of data["results"].entries()) records[table].set(missing[index], object4(result["value"]));
+  }
+  return renderComments(tree.id, discussions, records["comment"], records["notion_user"]);
+}
+function renderComments(pageId, discussions, commentsById, users) {
+  const threads = discussions.map((discussion) => {
+    const comments = discussion["comments"].map((id) => commentsById.get(id)).filter((comment) => comment["alive"] === true);
+    if (comments.length === 0) return "";
+    const context2 = discussion["context"] === void 0 ? "" : renderRichText(discussion["context"]);
+    const link = `https://www.notion.so/${pageId.replaceAll("-", "")}#${discussion["parent_id"].replaceAll("-", "")}`;
+    return [
+      `### [${discussion["parent_id"] === pageId ? "Page comment" : "Inline comment"}](${link})${discussion["resolved"] === true ? " (resolved)" : ""}`,
+      ...context2 === "" ? [] : [context2.split("\n").map((line) => `> ${line}`).join("\n")],
+      ...comments.map((comment) => `**${escapeInlineMarkdown(users.get(comment["created_by_id"])["name"])}** \u2014 ${new Date(comment["created_time"]).toISOString()}
+
+${renderRichText(comment["text"])}`)
+    ].join("\n\n");
+  }).filter((thread) => thread !== "");
+  return threads.length === 0 ? "" : `
+
+<!-- wire:notion-comments -->
+
+## Comments (read-only)
+
+${threads.join("\n\n")}
+
+<!-- /wire:notion-comments -->`;
+}
+function withoutComments(markdown) {
+  return markdown.replace(/\n\n<!-- wire:notion-comments -->[\s\S]*?<!-- \/wire:notion-comments -->/g, "");
+}
+function notionDocument(pageId, tree, mentions, emailMentions, comments) {
+  const markdown = renderNotionTreeToMarkdown(tree, mentions, emailMentions) + comments;
+  return { title: markdown.split("\n")[0].replace(/^# */, ""), markdown, data: notionData(pageId, markdown, tree, mentions, emailMentions) };
 }
 async function fetchTree(runtime2, url, source) {
   const cookies = await runtime2.cookies.loadSaved("notion");
@@ -12127,16 +12221,9 @@ async function fetchTree(runtime2, url, source) {
   const initialSpaceId = object4(spaceView[Object.keys(spaceView)[0]])["spaceId"];
   const pageId = formatBlockId(source.identifier);
   let headers = { "x-notion-active-user-header": userId, "x-notion-space-id": initialSpaceId, referer: url, ...csrf === void 0 ? {} : { "x-csrf-token": csrf } };
-  const blocks = /* @__PURE__ */ new Map();
-  let stack = [];
-  let chunkNumber = 0;
-  do {
-    const data = await notionPost(runtime2, "loadCachedPageChunkV2", cookie, { page: { id: pageId }, limit: 100, cursor: { stack }, chunkNumber, verticalColumns: false }, headers);
-    for (const [blockId, wrapper] of Object.entries(object4(object4(data["recordMap"])["block"]))) blocks.set(blockId, object4(object4(object4(wrapper)["value"])["value"]));
-    const cursors = data["cursors"];
-    stack = cursors.length === 0 ? [] : cursors[0]["stack"];
-    chunkNumber += 1;
-  } while (stack.length > 0);
+  const pageData = await notionPost(runtime2, "getRecordValues", cookie, { requests: [{ table: "block", id: pageId }] }, headers);
+  const page = object4(pageData["results"][0]["value"]);
+  const blocks = /* @__PURE__ */ new Map([[pageId, page]]);
   const spaceId = blocks.get(pageId)["space_id"];
   headers = { ...headers, "x-notion-space-id": spaceId };
   while (true) {
@@ -12168,15 +12255,104 @@ async function fetchTree(runtime2, url, source) {
     if (idValue !== pageId && block["type"] === "page") return { id: idValue, block, children: [] };
     return { id: idValue, block, children: (block["content"] ?? []).filter((child) => blocks.get(child)?.["alive"] !== false).map(build) };
   };
-  return { tree: build(pageId), userId, spaceId, cookie, headers };
+  const tree = build(pageId);
+  const comments = await fetchComments(runtime2, tree, spaceId, cookie, headers);
+  return { tree, userId, spaceId, cookie, headers, comments };
 }
 async function fetchNotionDocument(runtime2, url, source) {
-  const { tree } = await fetchTree(runtime2, url, source);
-  const markdown = renderNotionTreeToMarkdown(tree);
-  return { title: markdown.split("\n")[0].replace(/^# */, ""), markdown, data: notionData(source.identifier, markdown, tree, void 0) };
+  const { tree, comments } = await fetchTree(runtime2, url, source);
+  return notionDocument(source.identifier, tree, void 0, {}, comments);
+}
+async function downloadNotionDirectory(runtime2, url, source, write) {
+  const cookies = await runtime2.cookies.loadSaved("notion");
+  if (cookies === null) throw notionAuthError();
+  const cookie = cookies.map(({ name, value }) => `${name}=${value}`).join("; ");
+  const headers = { "x-notion-active-user-header": cookies.find(({ name }) => name === "notion_user_id").value, referer: url };
+  const rootId = formatBlockId(source.identifier);
+  const blocks = /* @__PURE__ */ new Map();
+  const read = async (table, ids, records) => {
+    for (let start = 0; start < ids.length; start += 100) {
+      const spaceId = blocks.get(rootId)?.["space_id"];
+      const requests = ids.slice(start, start + 100).map((id) => ({ pointer: { table, id, ...spaceId === void 0 ? {} : { spaceId } }, version: -1 }));
+      const data = await notionPost(runtime2, "syncRecordValues", cookie, { requests }, headers);
+      const returned = object4(object4(data["recordMap"])[table] ?? {});
+      for (const { pointer: { id } } of requests) {
+        if (returned[id] === void 0) continue;
+        const value = object4(object4(returned[id])["value"])["value"];
+        if (value !== void 0) records.set(id, object4(value));
+      }
+    }
+  };
+  const seen = /* @__PURE__ */ new Set([rootId]);
+  let pending = [rootId];
+  while (pending.length > 0) {
+    await read("block", pending, blocks);
+    const next = [];
+    for (const id of pending) {
+      const block = blocks.get(id);
+      if (block === void 0 || block["alive"] === false) continue;
+      for (const child of block["content"] ?? []) {
+        if (seen.has(child)) continue;
+        seen.add(child);
+        next.push(child);
+      }
+    }
+    pending = next;
+  }
+  const root = blocks.get(rootId);
+  if (root === void 0 || root["alive"] === false) throw new Error(`Notion page is unavailable: ${url}`);
+  if (![...blocks.values()].some((block) => block !== root && block["alive"] !== false && block["type"] === "page")) return null;
+  const discussions = /* @__PURE__ */ new Map(), comments = /* @__PURE__ */ new Map(), users = /* @__PURE__ */ new Map();
+  const live = [...blocks.values()].filter((block) => block["alive"] !== false);
+  await read("discussion", [...new Set(live.flatMap((block) => block["discussions"] ?? []))], discussions);
+  await read("comment", [...new Set([...discussions.values()].flatMap((discussion) => discussion["comments"]))], comments);
+  for (const table of ["notion_user", "bot"]) {
+    const authors = [...comments.values()].filter((comment) => comment["alive"] === true && comment["created_by_table"] === table);
+    await read(table, [...new Set(authors.map((comment) => text2(comment["created_by_id"])))], users);
+  }
+  const paths = /* @__PURE__ */ new Map();
+  const directoryName = (page) => {
+    const slug = markdownFilename(richTextText(object4(page["properties"] ?? {})["title"] ?? [])).slice(0, -3);
+    return `${[...slug].slice(0, 48).join("")}-${text2(page["id"]).replaceAll("-", "")}`;
+  };
+  const exportPage = async (page, directory) => {
+    const id = text2(page["id"]);
+    const path = import_node_path5.posix.join(directory, "index.md");
+    paths.set(id, path);
+    const threads = [];
+    const build = async (blockId, pageRoot) => {
+      const block = blocks.get(blockId);
+      if (block === void 0 || !pageRoot && block["type"] === "page") {
+        let label = "Unavailable Notion block";
+        let href = `https://www.notion.so/${blockId.replaceAll("-", "")}`;
+        if (block !== void 0) {
+          label = richTextText(object4(block["properties"] ?? {})["title"] ?? []) || "Untitled";
+          if (!paths.has(blockId)) {
+            const child = await exportPage(block, import_node_path5.posix.join(directory, directoryName(block)));
+            await write(child.path, child.markdown);
+          }
+          href = import_node_path5.posix.relative(directory, paths.get(blockId));
+        }
+        return { id: blockId, block: { type: "text", properties: { title: [[label, [["a", href]]]] } }, children: [] };
+      }
+      for (const threadId of block["discussions"] ?? []) {
+        const thread = discussions.get(threadId);
+        if (thread !== void 0 && thread["alive"] !== false) threads.push(thread);
+      }
+      const children = [];
+      for (const child of block["content"] ?? []) {
+        if (blocks.get(child)?.["alive"] !== false) children.push(await build(child, false));
+      }
+      return { id: blockId, block, children };
+    };
+    const tree = await build(id, true);
+    const markdown = renderNotionTreeToMarkdown(tree, void 0, {}, true) + renderComments(id, threads, comments, users);
+    return { path, title: richTextText(object4(page["properties"])["title"]), markdown, data: { page_id: id } };
+  };
+  return exportPage(root, directoryName(root));
 }
 async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
-  const split = splitTitle(markdown);
+  const split = splitTitle(withoutComments(markdown));
   if (split.title === "") throw new Error("Markdown document requires a first heading");
   const cookies = await runtime2.cookies.loadSaved("notion");
   if (cookies === null) throw notionAuthError();
@@ -12213,6 +12389,8 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
     }
   };
   const localBlocks = parseNotionMarkdown(split.body);
+  const emailMentions = {};
+  await resolveNotionEmailMentions(runtime2, localBlocks, cookie, spaceId, headers, emailMentions);
   const operations = [pageOperation, ...buildNotionCreateOperations(localBlocks, pageId, spaceId, userId, currentTime).operations];
   await notionPost(runtime2, "saveTransactionsFanout", cookie, { requestId: (0, import_node_crypto4.randomUUID)(), transactions: [{ id: (0, import_node_crypto4.randomUUID)(), spaceId, operations }] }, headers);
   const pageTree = {
@@ -12220,9 +12398,9 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
     block: pageOperation.args,
     children: localTree(localBlocks).map((node) => outputNode(node, void 0, pageId, { spaceId, userId }, currentTime))
   };
-  const output = renderNotionTreeToMarkdown(pageTree);
+  const output = renderNotionTreeToMarkdown(pageTree, void 0, emailMentions);
   const slug = split.title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return { url: slug === "" ? `https://www.notion.so/${compactPageId}` : `https://www.notion.so/${slug}-${compactPageId}`, title: split.title, markdown: output, data: notionData(compactPageId, output, pageTree, void 0) };
+  return { url: slug === "" ? `https://www.notion.so/${compactPageId}` : `https://www.notion.so/${slug}-${compactPageId}`, title: split.title, markdown: output, data: notionData(compactPageId, output, pageTree, void 0, emailMentions) };
 }
 function splitTitle(markdown) {
   const lines = markdown.replace(/^\ufeff/, "").split("\n");
@@ -12235,9 +12413,10 @@ async function synchronizeNotionDocument(runtime2, url, source, base, markdown, 
   const remote = await fetchTree(runtime2, url, source);
   const baseObject = object4(base);
   const mentions = baseUserMentions(baseObject);
-  const currentMarkdown = renderNotionTreeToMarkdown(remote.tree, mentions);
-  const baseMarkdown = baseObject["markdown"];
-  let split = splitTitle(markdown);
+  const emailMentions = { ...baseObject["email_mentions"] };
+  const currentMarkdown = renderNotionTreeToMarkdown(remote.tree, mentions, emailMentions);
+  const baseMarkdown = baseObject["markdown"] === void 0 ? void 0 : withoutComments(baseObject["markdown"]);
+  let split = splitTitle(withoutComments(markdown));
   const currentSplit = splitTitle(currentMarkdown);
   const baseSplit = baseMarkdown === void 0 ? void 0 : splitTitle(baseMarkdown);
   let fieldMerged = false;
@@ -12246,6 +12425,7 @@ async function synchronizeNotionDocument(runtime2, url, source, base, markdown, 
     const remoteTitleChanged = baseSplit.title !== currentSplit.title;
     const localBodyChanged = baseSplit.body !== split.body;
     const remoteBodyChanged = baseSplit.body !== currentSplit.body;
+    if (localTitleChanged && remoteTitleChanged && split.title !== "" && split.title !== currentSplit.title || localBodyChanged && remoteBodyChanged && split.body !== currentSplit.body) throw new Error("Markdown and Notion changed since last sync");
     if ((localTitleChanged || localBodyChanged) && (remoteTitleChanged || remoteBodyChanged)) {
       split = { title: localTitleChanged ? split.title : currentSplit.title, body: localBodyChanged ? split.body : currentSplit.body };
       fieldMerged = true;
@@ -12257,35 +12437,34 @@ ${split.body}`;
     if (baseSplit !== void 0) {
       const localTitleChanged = baseSplit.title !== split.title;
       const remoteTitleChanged = baseSplit.title !== currentSplit.title;
-      if (!localTitleChanged && remoteTitleChanged) return { title: currentSplit.title, markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions) };
+      if (!localTitleChanged && remoteTitleChanged) return notionDocument(remote.tree.id, remote.tree, mentions, emailMentions, remote.comments);
       if (localTitleChanged && remoteTitleChanged && split.title !== currentSplit.title) throw new Error("Markdown and Notion changed since last sync");
-      if (localTitleChanged && remoteTitleChanged) return { title: currentSplit.title, markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions) };
+      if (localTitleChanged && remoteTitleChanged) return notionDocument(remote.tree.id, remote.tree, mentions, emailMentions, remote.comments);
     }
     const titleRich2 = split.title === "" ? object4(remote.tree.block["properties"])["title"] : titleRichText(split.title);
     const titleChanged = split.title !== "" && compact(object4(remote.tree.block["properties"])["title"]) !== compact(titleRich2);
-    if (titleChanged) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto4.randomUUID)(), transactions: [{ id: (0, import_node_crypto4.randomUUID)(), spaceId: remote.spaceId, operations: [{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "set", args: titleRich2 }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime2.clock.now().getTime() }] }] }, remote.headers);
+    if (titleChanged) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto4.randomUUID)(), transactions: [{ id: (0, import_node_crypto4.randomUUID)(), spaceId: remote.spaceId, operations: [{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: titleRich2 } } }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime2.clock.now().getTime() }] }] }, remote.headers);
     const outputTree2 = { ...remote.tree, block: { ...remote.tree.block, properties: { ...object4(remote.tree.block["properties"]), title: titleRich2 } } };
-    const output2 = renderNotionTreeToMarkdown(outputTree2, mentions);
-    return { title: output2.split("\n")[0].replace(/^# */, ""), markdown: output2, data: notionData(remote.tree.id, output2, outputTree2, mentions) };
+    return notionDocument(remote.tree.id, outputTree2, mentions, emailMentions, remote.comments);
   }
   if (baseMarkdown !== void 0) {
     const localChanged = baseMarkdown !== targetMarkdown;
     const remoteChanged = baseMarkdown !== currentMarkdown;
-    if (!localChanged && remoteChanged) return { title: currentMarkdown.split("\n")[0].replace(/^# */, ""), markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions) };
+    if (!localChanged && remoteChanged) return notionDocument(remote.tree.id, remote.tree, mentions, emailMentions, remote.comments);
     if (localChanged && remoteChanged && targetMarkdown !== currentMarkdown && !fieldMerged) throw new Error("Markdown and Notion changed since last sync");
-    if (localChanged && remoteChanged && targetMarkdown === currentMarkdown) return { title: currentMarkdown.split("\n")[0].replace(/^# */, ""), markdown: currentMarkdown, data: notionData(remote.tree.id, currentMarkdown, remote.tree, mentions) };
+    if (localChanged && remoteChanged && targetMarkdown === currentMarkdown) return notionDocument(remote.tree.id, remote.tree, mentions, emailMentions, remote.comments);
   }
   const localBody = mentions === void 0 ? split.body : hydrateUserMentions(split.body, mentions);
   const localBlocks = parseNotionMarkdown(localBody);
+  await resolveNotionEmailMentions(runtime2, localBlocks, remote.cookie, remote.spaceId, remote.headers, emailMentions);
   const ambient = { spaceId: remote.spaceId, userId: remote.userId, currentTime: runtime2.clock.now().getTime() };
   const diffResult = diffNotionBlockTrees(remote.tree, localBlocks, sidecarBlocksFromNotionTree(remote.tree), ambient);
   const operations = [...diffResult.operations];
   const titleRich = split.title === "" ? object4(remote.tree.block["properties"])["title"] : titleRichText(split.title);
-  if (split.title !== "" && compact(object4(remote.tree.block["properties"])["title"]) !== compact(titleRich)) operations.unshift({ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "set", args: titleRich });
+  if (split.title !== "" && compact(object4(remote.tree.block["properties"])["title"]) !== compact(titleRich)) operations.unshift({ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: titleRich } } });
   if (operations.length > 0) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto4.randomUUID)(), transactions: [{ id: (0, import_node_crypto4.randomUUID)(), spaceId: remote.spaceId, operations }] }, remote.headers);
   const outputTree = { id: remote.tree.id, block: { ...remote.tree.block, properties: { ...object4(remote.tree.block["properties"]), title: titleRich } }, children: localTree(localBlocks).map((node, index) => outputNode(node, remote.tree.children[index], remote.tree.id, remote, ambient.currentTime)) };
-  const output = renderNotionTreeToMarkdown(outputTree, mentions);
-  return { title: output.split("\n")[0].replace(/^# */, ""), markdown: output, data: notionData(remote.tree.id, output, outputTree, mentions) };
+  return notionDocument(remote.tree.id, outputTree, mentions, emailMentions, remote.comments);
 }
 
 // ../provider-notion/src/notion.ts
@@ -12295,6 +12474,7 @@ var notionService = defineService({
   matches: (url) => (url.hostname === "www.notion.so" || url.hostname === "notion.so" || url.hostname === "app.notion.com" || url.hostname.endsWith(".notion.site")) && notionPageId.test(url.href),
   parse: (url) => Object.freeze({ service: "notion", identifier: notionPageId.exec(url.href)[0].replaceAll("-", "").toLowerCase(), type: "document" }),
   fetch: fetchNotionDocument,
+  download: downloadNotionDirectory,
   synchronize: (runtime2, url, source, base, markdown, markdownPath) => synchronizeNotionDocument(runtime2, url, source, base, markdown, markdownPath),
   upload: uploadNotionDocument
 });
@@ -13187,7 +13367,7 @@ var authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack
 var wireStatus;
 function operationPath(value, path) {
   if (value.startsWith("http://") || value.startsWith("https://")) return path;
-  return (0, import_node_path5.isAbsolute)(value) ? value : (0, import_node_path5.resolve)(path, value);
+  return (0, import_node_path6.isAbsolute)(value) ? value : (0, import_node_path6.resolve)(path, value);
 }
 async function commandEnvironment(path) {
   const home = process.env["HOME"];
@@ -13210,7 +13390,7 @@ function runtime(values2) {
     exists: async (path) => (0, import_node_fs4.existsSync)(path),
     readText: (path) => (0, import_promises7.readFile)(path, "utf8"),
     writeText: async (path, contents) => {
-      await (0, import_promises7.mkdir)((0, import_node_path5.dirname)(path), { recursive: true });
+      await (0, import_promises7.mkdir)((0, import_node_path6.dirname)(path), { recursive: true });
       await (0, import_promises7.writeFile)(path, contents, "utf8");
     },
     delete: (path) => (0, import_promises7.rm)(path)
@@ -13259,7 +13439,7 @@ async function wire(path) {
       readText: capabilities.filesystem.readText,
       writeText: capabilities.filesystem.writeText,
       writeBytes: async (path2, contents) => {
-        await (0, import_promises7.mkdir)((0, import_node_path5.dirname)(path2), { recursive: true });
+        await (0, import_promises7.mkdir)((0, import_node_path6.dirname)(path2), { recursive: true });
         await (0, import_promises7.writeFile)(path2, contents);
       }
     },
@@ -13336,7 +13516,7 @@ function selectedPath(uri) {
 }
 function selectedDirectory(uri) {
   const path = selectedPath(uri);
-  return (0, import_node_fs4.existsSync)(path) && (0, import_node_fs4.statSync)(path).isDirectory() ? path : (0, import_node_path5.dirname)(path);
+  return (0, import_node_fs4.existsSync)(path) && (0, import_node_fs4.statSync)(path).isDirectory() ? path : (0, import_node_path6.dirname)(path);
 }
 function projectDirectory() {
   const root = repositoryRoot();
@@ -13349,8 +13529,8 @@ function resourceFile(uri) {
   return path;
 }
 function pathInsideDirectory(directory, path) {
-  const normalizedDirectory = (0, import_node_path5.resolve)(directory);
-  const normalizedPath = (0, import_node_path5.resolve)(path);
+  const normalizedDirectory = (0, import_node_path6.resolve)(directory);
+  const normalizedPath = (0, import_node_path6.resolve)(path);
   return normalizedPath === normalizedDirectory || normalizedPath.startsWith(`${normalizedDirectory}/`);
 }
 async function saveDocument(path) {
@@ -13416,17 +13596,17 @@ async function previewUrl() {
 async function syncFile(uri) {
   const path = resourceFile(uri);
   await saveDocument(path);
-  const result = await wireProgress("Syncing", async () => (await wire(operationPath(path, (0, import_node_path5.dirname)(path)))).sync(path, (0, import_node_path5.dirname)(path)));
+  const result = await wireProgress("Syncing", async () => (await wire(operationPath(path, (0, import_node_path6.dirname)(path)))).sync(path, (0, import_node_path6.dirname)(path)));
   await showWireResultStatus(result);
 }
 async function detachFile(uri) {
   const path = resourceFile(uri);
-  const result = await wireProgress("Detaching", async () => (await wire(operationPath(path, (0, import_node_path5.dirname)(path)))).detach(path, (0, import_node_path5.dirname)(path)));
+  const result = await wireProgress("Detaching", async () => (await wire(operationPath(path, (0, import_node_path6.dirname)(path)))).detach(path, (0, import_node_path6.dirname)(path)));
   await showWireResultStatus(result);
 }
 async function openResource(uri) {
   const path = resourceFile(uri);
-  const resource = await wireProgress("Opening", async () => (await wire(operationPath(path, (0, import_node_path5.dirname)(path)))).openResource(path, (0, import_node_path5.dirname)(path)));
+  const resource = await wireProgress("Opening", async () => (await wire(operationPath(path, (0, import_node_path6.dirname)(path)))).openResource(path, (0, import_node_path6.dirname)(path)));
   showWireStatus(`Wire - Opened: ${title(resource)}`);
 }
 async function syncDirectory(uri) {
@@ -13476,7 +13656,7 @@ async function authLogout() {
   showWireStatus(`Wire - Logged out: ${service}`);
 }
 async function compileAndReload() {
-  const root = (0, import_node_path5.resolve)(__dirname, "..");
+  const root = (0, import_node_path6.resolve)(__dirname, "..");
   await execFileAsync2("node", ["bump-version.mjs", "patch"], { cwd: root });
   await execFileAsync2("npm", ["run", "compile"], { cwd: root });
   await vscode.commands.executeCommand("workbench.action.reloadWindow");

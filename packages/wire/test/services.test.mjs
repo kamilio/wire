@@ -2339,3 +2339,57 @@ test("catalog source values remain registry-compatible", () => {
   assert.deepEqual(parseSourceUrl("https://docs.google.com/forms/d/id/edit", serviceCatalog), { service: "google-forms", identifier: "id", type: "form" });
   for (const service of serviceCatalog) assert.equal(Object.isFrozen(service), true);
 });
+
+test("notion directory downloads follow contained pages and link each local copy", async () => {
+  const root = "01234567-89ab-cdef-0123-456789abcdef";
+  const page = (id, title, content) => ({ id, type: "page", properties: { title: [[title]] }, content, space_id: "space" });
+  const tables = {
+    block: {
+      [root]: page(root, "Resources", ["section", "b", "missing", "deleted"]),
+      section: { type: "toggle", content: ["a"], properties: { title: [["Section"]] } },
+      a: page("a", "../Guide", ["text", "b"]),
+      b: page("b", "../Guide", ["image"]),
+      text: { type: "text", properties: { title: [["Open", [["a", "https://www.notion.so/outside"]]]] }, discussions: ["thread"] },
+      image: { type: "image", properties: { source: [["https://example.com/pic.png"]] } },
+      deleted: { ...page("deleted", "Deleted", ["discard"]), alive: false },
+    },
+    discussion: { thread: { parent_id: "text", comments: ["reply"] } },
+    comment: { reply: { alive: true, created_by_table: "bot", created_by_id: "bot-id", created_time: 1000, text: [["Hello"]] } },
+    bot: { "bot-id": { name: "Helper" } },
+  };
+  const requested = [];
+  const input = runtime(async (url, init) => {
+    assert.equal(String(url).split("/").pop(), "syncRecordValues");
+    const { requests } = JSON.parse(init.body);
+    const { table } = requests[0].pointer;
+    const records = {};
+    for (const { pointer: { id } } of requests) {
+      requested.push(id);
+      if (id !== "missing") records[id] = { value: { value: tables[table][id] } };
+    }
+    return Response.json({ recordMap: { [table]: records } });
+  });
+  const url = `https://app.notion.com/p/workspace/Resources-${root.replaceAll("-", "")}`;
+  const notion = serviceCatalog.find((service) => service.name === "notion");
+  const files = new Map();
+  const result = await notion.download(input, url, notion.parse(new URL(url)), async (path, text) => {
+    assert.equal(files.has(path), false);
+    files.set(path, text);
+  });
+  const directory = `resources-${root.replaceAll("-", "")}`;
+  assert.equal(result.path, `${directory}/index.md`);
+  assert.match(result.markdown, /\[\.\.\/Guide\]\(guide-a\/index.md\)/);
+  assert.match(result.markdown, /\[\.\.\/Guide\]\(guide-a\/guide-b\/index.md\)/);
+  assert.match(result.markdown, /Unavailable Notion block/);
+  assert.doesNotMatch(result.markdown, /Deleted|Hello/);
+  assert.equal(files.size, 2);
+  const child = files.get(`${directory}/guide-a/index.md`);
+  assert.match(child, /\[Open\]\(https:\/\/www.notion.so\/outside\)/);
+  assert.match(child, /\*\*Helper\*\*[\s\S]*Hello/);
+  assert.equal(files.get(`${directory}/guide-a/guide-b/index.md`), "# ../Guide\n\n![](https://example.com/pic.png)");
+  assert.equal(requested.filter((id) => id === "b").length, 1);
+  assert.equal(requested.includes("discard"), false);
+  assert.equal(requested.includes("outside"), false);
+  tables.block[root] = page(root, "Leaf", ["image"]);
+  assert.equal(await notion.download(input, url, notion.parse(new URL(url)), assert.fail), null);
+});

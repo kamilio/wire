@@ -1,4 +1,4 @@
-import type { FetchedDocument, JsonObject, JsonValue, Source, UploadedDocument } from "wire-core";
+import type { DownloadedDocument, DownloadWriter, FetchedDocument, JsonObject, JsonValue, Source, UploadedDocument } from "wire-core";
 import type { RuntimeCapabilities } from "wire-core";
 export type NotionRichText = JsonValue[][];
 export type NotionBlock = Readonly<{
@@ -49,9 +49,10 @@ export declare function diffNotionBlockTrees(remoteTree: NotionTree, localBlocks
     operations: readonly NotionOperation[];
     summary: NotionDiffSummary;
 }>;
-export declare function renderNotionTreeToMarkdown(tree: NotionTree, mentions?: UserMentions, emailMentions?: EmailMentions): string;
+export declare function renderNotionTreeToMarkdown(tree: NotionTree, mentions?: UserMentions, emailMentions?: EmailMentions, download?: boolean): string;
 export declare function lookupNotionUsers(runtime: RuntimeCapabilities, query: string): Promise<readonly JsonObject[]>;
 export declare function fetchNotionDocument(runtime: RuntimeCapabilities, url: string, source: Source): Promise<FetchedDocument>;
+export declare function downloadNotionDirectory(runtime: RuntimeCapabilities, url: string, source: Source, write: DownloadWriter): Promise<DownloadedDocument | null>;
 export declare function uploadNotionDocument(runtime: RuntimeCapabilities, markdown: string, _markdownPath: string): Promise<UploadedDocument>;
 export declare function synchronizeNotionDocument(runtime: RuntimeCapabilities, url: string, source: Source, base: JsonValue, markdown: string, _markdownPath: string): Promise<FetchedDocument>;
 export {};
