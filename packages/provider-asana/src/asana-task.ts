@@ -1,3 +1,4 @@
+import { asanaHttp } from "./asana-http.js";
 import { defineService } from "wire-core";
 import type { JsonObject, JsonValue } from "wire-core";
 import type { RuntimeCapabilities } from "wire-core";
@@ -20,7 +21,7 @@ async function asana(runtime: RuntimeCapabilities, path: string, parameters: Rea
   for (const [name, value] of Object.entries(parameters)) url.searchParams.set(name, value);
   const cookies = await runtime.cookies.loadSaved("asana");
   if (cookies === null) throw asanaAuthError();
-  const response = await runtime.http.request(url, {
+  const response = await asanaHttp(runtime, url, {
     headers: {
       Cookie: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; "),
       Accept: "application/json",

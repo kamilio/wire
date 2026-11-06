@@ -1,3 +1,4 @@
+import { asanaHttp } from "./asana-http.js";
 import { asanaChanges, asanaConflicts, asanaDocument, asanaSnapshot, parseAsanaMarkdown, renderAsanaMarkdown, type AsanaChange, type AsanaDocument, type AsanaEntity } from "./asana-sync.js";
 import { defineService } from "wire-core";
 import type { FetchedDocument, JsonObject, JsonValue, Source } from "wire-core";
@@ -26,7 +27,7 @@ async function request(runtime: RuntimeCapabilities, method: string, path: strin
   if (parameters !== undefined) for (const [name, value] of Object.entries(parameters)) url.searchParams.set(name, value);
   const cookies = await runtime.cookies.loadSaved("asana");
   if (cookies === null) throw asanaAuthError();
-  const response = await runtime.http.request(url, {
+  const response = await asanaHttp(runtime, url, {
     method,
     headers: {
       Cookie: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; "),

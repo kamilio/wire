@@ -122,6 +122,20 @@ test("asana task adapter renders task and paginated activity", async () => {
   assert.equal("Authorization" in headers[0], false);
 });
 
+test("Asana retries the throttled activity page without duplicating earlier comments", async () => {
+  let tries = 0;
+  const document = await fetchSource(runtime(async (input) => {
+    const url = new URL(input);
+    if (!url.pathname.endsWith("/stories")) return response({ data: { name: "Task", completed: false, assignee: null, notes: "", permalink_url: "https://app.asana.com/task" } });
+    if (!url.searchParams.has("offset")) return response({ data: [{ created_at: "2026-06-10", created_by: null, text: "First comment" }], next_page: { offset: "next" } });
+    if (++tries === 1) return new Response(null, { status: 429, headers: { "Retry-After": "0" } });
+    return response({ data: [{ created_at: "2026-06-11", created_by: null, text: "Second comment" }], next_page: null });
+  }), "https://app.asana.com/0/1/2/f", serviceCatalog);
+  assert.equal(tries, 2);
+  assert.equal(document.markdown.match(/First comment/g)?.length, 1);
+  assert.equal(document.markdown.match(/Second comment/g)?.length, 1);
+});
+
 test("asana task adapter renders activity without an actor", async () => {
   const document = await fetchSource(runtime(async (input) => {
     const url = new URL(String(input));

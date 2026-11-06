@@ -1,3 +1,4 @@
+import { asanaHttp } from "./asana-http.js";
 import { asanaChanges, asanaConflicts, asanaDocument, asanaSnapshot, parseAsanaMarkdown, renderAsanaMarkdown } from "./asana-sync.js";
 import { defineService } from "wire-core";
 const projectViews = new Set(["board", "calendar", "files", "forms", "gantt", "list", "overview", "timeline", "workflow"]);
@@ -25,7 +26,7 @@ async function request(runtime, method, path, parameters, data) {
     const cookies = await runtime.cookies.loadSaved("asana");
     if (cookies === null)
         throw asanaAuthError();
-    const response = await runtime.http.request(url, {
+    const response = await asanaHttp(runtime, url, {
         method,
         headers: {
             Cookie: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; "),

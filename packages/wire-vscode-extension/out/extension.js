@@ -9231,6 +9231,18 @@ function withWireHooks(wire2, options) {
   });
 }
 
+// ../provider-asana/src/asana-http.ts
+async function asanaHttp(runtime2, url, init) {
+  for (let attempt = 0; ; attempt++) {
+    const response = await runtime2.http.request(url, init);
+    if (response.status !== 429 || (init.method ?? "GET") !== "GET" || attempt === 3) return response;
+    const header = response.headers.get("retry-after");
+    if (header === null || !/^\d+$/.test(header) || Number(header) > 120) return response;
+    await response.body?.cancel();
+    await new Promise((resolve5) => setTimeout(resolve5, Number(header) * 1e3));
+  }
+}
+
 // ../provider-asana/src/asana-sync.ts
 function gidFromUrl(value) {
   const parts = new URL(value).pathname.split("/").filter(Boolean);
@@ -9428,7 +9440,7 @@ async function request(runtime2, method, path, parameters, data) {
   if (parameters !== void 0) for (const [name, value] of Object.entries(parameters)) url.searchParams.set(name, value);
   const cookies = await runtime2.cookies.loadSaved("asana");
   if (cookies === null) throw asanaAuthError();
-  const response = await runtime2.http.request(url, {
+  const response = await asanaHttp(runtime2, url, {
     method,
     headers: {
       Cookie: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; "),
@@ -9604,7 +9616,7 @@ async function asana(runtime2, path, parameters) {
   for (const [name, value] of Object.entries(parameters)) url.searchParams.set(name, value);
   const cookies = await runtime2.cookies.loadSaved("asana");
   if (cookies === null) throw asanaAuthError2();
-  const response = await runtime2.http.request(url, {
+  const response = await asanaHttp(runtime2, url, {
     headers: {
       Cookie: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; "),
       Accept: "application/json",
