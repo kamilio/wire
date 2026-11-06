@@ -1,5 +1,7 @@
+import { scrapeZoom } from "./zoom-hub.js";
 export { zoomHubService } from "./zoom-hub.js";
 export declare const zoomProvider: Readonly<{
+    scrape: typeof scrapeZoom;
     services: readonly [Readonly<{
         name: string;
         matches(url: URL): boolean;

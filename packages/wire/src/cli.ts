@@ -243,6 +243,7 @@ function excessPositionals(argv: readonly string[]): Readonly<{ commandPath: str
   if (command === "slack" && slackResourceCommands.has(words[1]!)) return { commandPath: `slack ${words[1]}`, expected: 1, received: words.length - 2 };
   if ((command === "slack" || command === "notion" || command === "asana") && words[1] === "users" && words[2] === "lookup") return { commandPath: `${command} users lookup`, expected: 1, received: words.length - 3 };
   if (command === "slack" && (words[1] === "send" || words[1] === "edit")) return { commandPath: `slack ${words[1]}`, expected: 2, received: words.length - 2 };
+  if (command === "zoom" && words[1] === "scrape") return { commandPath: "zoom scrape", expected: 0, received: words.length - 2 };
   if (authServices.has(command)) {
     const authCommand = words[1];
     if (authCommand === undefined || !authCommands.has(authCommand)) return null;
@@ -297,7 +298,7 @@ function renderRemovedCommand(argv: readonly string[]): boolean {
 function renderUnknownAuthCommand(argv: readonly string[]): boolean {
   if (hasRootSeparator(argv)) return false;
   const words = positionalWords(argv);
-  if (words === null || words.length < 2 || !authServices.has(words[0]!) || authCommands.has(words[1]!) || words[0] === "asana" && (words[1] === "projects" || words[1] === "tasks" || words[1] === "comments") || (words[0] === "slack" || words[0] === "notion" || words[0] === "asana") && words[1] === "users" || words[0] === "slack" && (words[1] === "send" || words[1] === "edit" || slackResourceCommands.has(words[1]!))) return false;
+  if (words === null || words.length < 2 || !authServices.has(words[0]!) || authCommands.has(words[1]!) || (words[0] === "zoom" && words[1] === "scrape") || words[0] === "asana" && (words[1] === "projects" || words[1] === "tasks" || words[1] === "comments") || (words[0] === "slack" || words[0] === "notion" || words[0] === "asana") && words[1] === "users" || words[0] === "slack" && (words[1] === "send" || words[1] === "edit" || slackResourceCommands.has(words[1]!))) return false;
   renderCliError(argv, `Unknown command: ${words[1]}`, `wire ${words[0]} --help`, `Unknown command: ${cliValue(words[1]!)}`);
   return true;
 }

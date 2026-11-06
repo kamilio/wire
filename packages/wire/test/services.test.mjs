@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createCookiesCapability, fetchSource, listAsanaProjects, listAsanaTasks, lookupAsanaUsers, markdownFilename, parseSourceUrl, synchronizeSource } from "../dist/index.js";
-import { serviceCatalog } from "../dist/index.js";
+import { serviceCatalog, zoomProvider } from "../dist/index.js";
 
 function response(value, text, init = {}) {
   return new Response(text ?? JSON.stringify(value), { ...init, headers: { "content-type": "application/json", ...init.headers } });
@@ -2440,4 +2440,78 @@ test("notion directory downloads follow contained pages and link each local copy
   assert.equal(requested.includes("outside"), false);
   tables.block[root] = page(root, "Leaf", ["image"]);
   assert.equal(await notion.download(input, url, notion.parse(new URL(url)), assert.fail), null);
+});
+
+test("zoom scrape spans pages and empty windows, preserves files, and refreshes only changed transcripts", async () => {
+  const files = new Map();
+  let clock = Date.UTC(2011, 2, 12);
+  let revision = "first";
+  let denied = false;
+  const file = id => ({ id, title: "Same title", fileLink: "https://hub.zoom.us/doc/" + id, owner: { ownerName: "Owner" }, createdInfo: { time: "created" }, updatedInfo: { time: revision }, meetingNotes: { meetingId: id, mainMeetingId: id } });
+  const fetched = [];
+  const windows = [];
+  const source = runtime(async (input, init) => {
+    const u = new URL(input);
+    if (u.pathname.endsWith("/nak")) return new Response("a.b.c");
+    if (u.pathname.endsWith("/recent")) return response(u.searchParams.has("pagingToken")
+      ? { recentFiles: [{ file: file("b") }], nextPagingToken: "" }
+      : { recentFiles: [{ file: file("a") }], nextPagingToken: "next" });
+    if (u.pathname.endsWith("/list_my_meetings")) {
+      const { startTime, endTime, pageNum } = JSON.parse(init.body);
+      windows.push([startTime, endTime, pageNum]);
+      const oldest = startTime === Date.UTC(2011, 0, 1);
+      return response({ meetings: oldest ? Array.from({ length: pageNum ? 1 : 6 }, (_, i) => ({ meetingId: String(i) })) : [], hasNext: oldest && !pageNum });
+    }
+    if (u.pathname.endsWith("/batch_get_meeting_assets")) {
+      const { meetingIds } = JSON.parse(init.body);
+      assert.ok(meetingIds.length <= 5);
+      return response({ meetingAssetsMap: { meeting: { createFromMeeting: [{ doc: file("a") }, { doc: file("c") }] } } });
+    }
+    if (u.pathname.endsWith("/transcript_status")) return response({ aicTranscript: { exist: true, canAccess: !denied } });
+    assert.match(u.pathname, /transcripts\/v2$/);
+    fetched.push(u.searchParams.get("fileId"));
+    return response({ speakers: [], meetingStartTime: "1", items: [{ userId: "1", startTime: "0", text: revision }] });
+  });
+  const rt = { ...source, clock: { ...source.clock, now: () => new Date(clock += 1001) }, filesystem: {
+    exists: async p => files.has(p), readText: async p => files.get(p), writeText: async (p, body) => files.set(p, body),
+  } };
+  const run = () => zoomProvider.scrape(rt, "/archive");
+  assert.equal((await run()).downloaded, 3);
+  assert.deepEqual(fetched, ["a", "b", "c"]);
+  assert.equal(windows.length, 4);
+  assert.equal(windows[1][1] + 1, windows[0][0]);
+  assert.equal(windows[2][1] + 1, windows[1][0]);
+  assert.equal((await run()).unchanged, 3);
+  assert.equal(fetched.length, 3);
+  files.set("/archive/zoom/b.md", "my edit");
+  files.set("/archive/zoom/old.md", "no longer listed");
+  revision = "second";
+  const original = files.get("/archive/zoom/a.md");
+  denied = true;
+  assert.deepEqual(await run(), { downloaded: 0, unchanged: 0, unavailable: 2, locallyModified: 1 });
+  assert.equal(files.get("/archive/zoom/a.md"), original);
+  denied = false;
+  assert.equal((await run()).downloaded, 2);
+  assert.match(files.get("/archive/zoom/a.md"), /second/);
+  assert.equal(files.get("/archive/zoom/b.md"), "my edit");
+  assert.equal(files.get("/archive/zoom/old.md"), "no longer listed");
+});
+
+test("zoom scrape paces requests, retries 429, and honors a saved Retry-After across runs", async () => {
+  let metadata = { hub_jwt: "a.b.c", hub_jwt_expires: String(Date.now() + 600_000) };
+  const times = [];
+  const source = runtime(async () => {
+    times.push(Date.now());
+    if (times.length === 1) return new Response(null, { status: 429, headers: { "retry-after": "2" } });
+    if (times.length === 2) return response({ recentFiles: [], nextPagingToken: "" });
+    const now = Date.now();
+    return new Response(null, { status: 429, headers: { date: new Date(now).toUTCString(), "retry-after": new Date(now + 120_000).toUTCString() } });
+  });
+  const rt = { ...source, clock: { ...source.clock, now: () => new Date() }, cookies: { ...source.cookies, metadata: async () => metadata, save: async (_service, _jar, updated) => { metadata = updated; } } };
+  await assert.rejects(zoomProvider.scrape(rt, "/archive"), /rate limited; retry after/);
+  assert.ok(times[1] - times[0] >= 1990);
+  assert.ok(times[2] - times[1] >= 990);
+  assert.ok(Number(metadata.hub_retry_at) >= times[2] + 119_000);
+  await assert.rejects(zoomProvider.scrape(rt, "/archive"), /rate limited; retry after/);
+  assert.equal(times.length, 3);
 });

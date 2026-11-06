@@ -31,4 +31,10 @@ export declare const zoomHubService: Readonly<{
     }>>;
     upload?(input: RuntimeCapabilities, markdown: string, markdownPath: string): Promise<import("wire-core").UploadedDocument>;
 }>;
+export declare function scrapeZoom(runtime: RuntimeCapabilities, directory: string): Promise<{
+    downloaded: number;
+    unchanged: number;
+    unavailable: number;
+    locallyModified: number;
+}>;
 //# sourceMappingURL=zoom-hub.d.ts.map

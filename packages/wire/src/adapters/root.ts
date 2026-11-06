@@ -2,12 +2,13 @@ import { UserError, defineCommand, defineGroup, S, type Group } from "toolcraft"
 
 import { defaultWireBackend, registryPathForBackend, type JsonObject, type FetchedDocument, type InitializedWire, type Resource, type SwitchedWireBackend, type Wire, type WireBackend, type WireResult, type WireWatchSession } from "wire-core";
 import type { listAsanaProjects, listAsanaTasks, moveAsanaTask, showAsanaProject } from "provider-asana";
+import type { zoomProvider } from "provider-zoom";
 import type { SlackSentMessage } from "provider-slack";
 import type { Auth, AuthResult, AuthService } from "../auth.js";
 
 export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
-export type WireRootOptions = Readonly<{ allowPaste: boolean }>;
+export type WireRootOptions = Readonly<{ allowPaste: boolean; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
 
 const authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
 const removedCliCommandNames = Object.freeze({
@@ -208,6 +209,7 @@ function wireUserErrorMessage(message: string): boolean {
     || /^Asana API /.test(message)
     || /^(GET|POST|PUT|DELETE) \/.* failed: \d+ /.test(message)
     || /^(Invalid Asana project heading|Asana section appears|Asana milestone appears|Asana task appears|Asana subtask appears|Unsupported Asana Markdown|Duplicate Asana identity|Missing Asana project heading|Asana project identity changed|Unknown Asana identity|Conflicting Asana edits)/.test(message)
+    || /^Zoom Hub rate limited; retry after /.test(message)
     || /^ChatGPT conversation download failed\. Run `wire chatgpt login`\./.test(message)
     || /^Gmail API .+ failed: HTTP \d+ /.test(message)
     || /^Slack API [\w.]+ failed: /.test(message)
@@ -557,6 +559,11 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
         render: render<JsonObject>((comment) => `Updated comment ${comment["gid"]}`),
       })] })] : []),
     ] });
+    if (service === "zoom" && options.scrapeZoom) return defineGroup({ ...group, children: [...group.children, defineCommand({
+      name: "scrape", scope: ["cli"], description: "Sync available Zoom Hub transcripts into ./zoom without deleting existing files.", params: S.Object({}),
+      handler: () => userFacing(options.scrapeZoom!),
+      render: render<Awaited<ReturnType<typeof zoomProvider.scrape>>>(v => `Zoom: ${v.downloaded} downloaded, ${v.unchanged} unchanged, ${v.unavailable} unavailable, ${v.locallyModified} locally modified.`),
+    })] });
     if (service !== "slack") return users.length === 0 ? group : defineGroup({ ...group, children: [...group.children, ...users] });
     return defineGroup({ name: "slack", description: "Read Slack channels, DMs, and threads, send Markdown, and manage login.", children: [preview, defaultAttach, sync, ...group.children, ...users, ...(sendSlack === undefined ? [] : [defineCommand({
       name: "send",
