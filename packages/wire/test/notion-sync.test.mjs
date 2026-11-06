@@ -809,3 +809,25 @@ test("notion comments include paginated threads and replies without becoming pag
   assert.equal(submitted[0].every((operation) => operation.pointer.table === "block"), true);
   assert.deepEqual(submitted[0].find((operation) => operation.path.join("/") === "properties/title").args.primitiveOp.args, [["Edited body"]]);
 });
+
+test("Notion retries the throttled record read without replaying a write", async () => {
+  const runtime = notionRuntime(remoteTree("Old body", "Root"), []);
+  const request = runtime.http.request;
+  const reads = [];
+  let writes = 0;
+  runtime.http.request = async (url, init) => {
+    if (String(url).endsWith("/getRecordValues")) {
+      reads.push(init.body);
+      if (reads.length === 1) return new Response("try again", { status: 429, headers: { "retry-after": "0" } });
+    }
+    if (String(url).endsWith("/saveTransactionsFanout")) {
+      writes++;
+      return new Response("try later", { status: 429, headers: { "retry-after": "0" } });
+    }
+    return request(url, init);
+  };
+  await assert.rejects(synchronizeNotionDocument(runtime, "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", notionSource, { markdown: "# Root\n\nOld body" }, "# Root\n\nNew body", "/workspace/page.md"), /saveTransactionsFanout failed: 429/);
+  assert.ok(reads.length >= 2);
+  assert.equal(reads[0], reads[1]);
+  assert.equal(writes, 1);
+});

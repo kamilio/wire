@@ -847,9 +847,17 @@ export function renderNotionTreeToMarkdown(tree: NotionTree, mentions?: UserMent
 }
 
 async function notionPost(runtime: RuntimeCapabilities, path: string, cookie: string, body: JsonObject, headers: HeadersInit): Promise<JsonObject> {
-  const response = await runtime.http.request(`https://www.notion.so/api/v3/${path}`, { method: "POST", headers: { cookie, "content-type": "application/json", "notion-client-version": "23.13.0.4595", "user-agent": "Mozilla/5.0", ...headers }, body: JSON.stringify(body) });
-  if (!response.ok) throw new Error(`POST ${path} failed: ${response.status} ${await response.text()}`);
-  return await response.json() as JsonObject;
+  const url = `https://www.notion.so/api/v3/${path}`;
+  const init = { method: "POST", headers: { cookie, "content-type": "application/json", "notion-client-version": "23.13.0.4595", "user-agent": "Mozilla/5.0", ...headers }, body: JSON.stringify(body) };
+  const read = ["getActivityLog", "getRecordValues", "getSpaces", "getVisibleUsers", "syncRecordValues"].includes(path);
+  for (let attempt = 0; ; attempt++) {
+    const response = await runtime.http.request(url, init);
+    if (response.ok) return await response.json() as JsonObject;
+    const delay = response.headers.get("retry-after");
+    if (response.status !== 429 || !read || attempt === 3 || delay === null || !/^\d+$/.test(delay) || Number(delay) > 120) throw new Error(`POST ${path} failed: ${response.status} ${await response.text()}`);
+    await response.body?.cancel();
+    await new Promise<void>((resolve) => setTimeout(resolve, Number(delay) * 1000));
+  }
 }
 
 async function findNotionUsers(runtime: RuntimeCapabilities, query: string, cookie: string, spaceId: string, headers: HeadersInit): Promise<readonly JsonObject[]> {

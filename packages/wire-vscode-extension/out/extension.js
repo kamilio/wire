@@ -12127,9 +12127,17 @@ function renderNotionTreeToMarkdown(tree, mentions, emailMentions = {}, download
   return mentions === void 0 ? markdown : renderUserMentions(markdown, mentions);
 }
 async function notionPost(runtime2, path, cookie, body2, headers) {
-  const response = await runtime2.http.request(`https://www.notion.so/api/v3/${path}`, { method: "POST", headers: { cookie, "content-type": "application/json", "notion-client-version": "23.13.0.4595", "user-agent": "Mozilla/5.0", ...headers }, body: JSON.stringify(body2) });
-  if (!response.ok) throw new Error(`POST ${path} failed: ${response.status} ${await response.text()}`);
-  return await response.json();
+  const url = `https://www.notion.so/api/v3/${path}`;
+  const init = { method: "POST", headers: { cookie, "content-type": "application/json", "notion-client-version": "23.13.0.4595", "user-agent": "Mozilla/5.0", ...headers }, body: JSON.stringify(body2) };
+  const read = ["getActivityLog", "getRecordValues", "getSpaces", "getVisibleUsers", "syncRecordValues"].includes(path);
+  for (let attempt = 0; ; attempt++) {
+    const response = await runtime2.http.request(url, init);
+    if (response.ok) return await response.json();
+    const delay2 = response.headers.get("retry-after");
+    if (response.status !== 429 || !read || attempt === 3 || delay2 === null || !/^\d+$/.test(delay2) || Number(delay2) > 120) throw new Error(`POST ${path} failed: ${response.status} ${await response.text()}`);
+    await response.body?.cancel();
+    await new Promise((resolve5) => setTimeout(resolve5, Number(delay2) * 1e3));
+  }
 }
 async function resolveNotionEmailMentions(runtime2, blocks, cookie, spaceId, headers, mentions) {
   const segments = [];
