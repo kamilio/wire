@@ -230,20 +230,36 @@ async function transcript(runtime: RuntimeCapabilities, { docsRequest }: ZoomCli
     if (!(status["exist"] as boolean) || !(status["canAccess"] as boolean)) {
       const result = { ...base, transcript: "", state: status["exist"] as boolean ? "denied" : "missing" };
       const markdown = [`# ${result.title}`, "", `- Transcript state: ${result.state}`, `- Recording ID: ${result.recording_id}`, `- Meeting ID: ${result.meeting_id}`, `- Main meeting ID: ${result.main_meeting_id}`, `- Owner: ${result.owner}`, `- Zoom document: ${result.source_url}`].join("\n");
-      return Object.freeze({ title: result.title, markdown, data: result });
+      return { document: Object.freeze({ title: result.title, markdown, data: result }), archive: null };
     }
   }
   const transcriptResponse = await docsRequest(`https://us01docs.zoom.us/api/bridge/meeting/transcripts/v2?meetingId=${encodeURIComponent(meetingId)}&fileId=${encodeURIComponent(identifier)}`, (token) => ({ headers: hubHeaders(token) }));
   const raw = await zoomJson(transcriptResponse, "transcript");
   const speakers = raw["speakers"] as readonly JsonObject[];
   const speakerMap = new Map(speakers.map((speaker) => [speaker["userId"] as string, speaker["username"] as string]));
-  const transcript = (raw["items"] as readonly JsonObject[]).map((item) => {
-    const userId = item["userId"] as string;
-    return `- [${item["startTime"] as string}] **${speakerMap.get(userId) ?? userId}:** ${item["text"] as string}`;
-  }).join("\n");
+  const segments = (raw["items"] as readonly JsonObject[]).map(item => {
+    const speaker_id = item["userId"] as string;
+    return { start: item["startTime"] as string, end: item["endTime"] as string, speaker_id, speaker: speakerMap.get(speaker_id) ?? speaker_id, text: item["text"] as string };
+  });
+  const turns: string[] = [];
+  let previous: string | undefined;
+  let length = 0;
+  for (const segment of segments) {
+    const text = segment.text.trim();
+    if (!text) continue;
+    if (segment.speaker_id === previous && length + text.length < 600) {
+      turns[turns.length - 1] += " " + text;
+      length += 1 + text.length;
+    } else {
+      turns.push(`- [${segment.start.replace(/\.000$/, "")}] **${segment.speaker}:** ${text}`);
+      previous = segment.speaker_id;
+      length = text.length;
+    }
+  }
+  const transcript = turns.join("\n\n");
   const result = { ...base, meeting_start_time: new Date(Number(raw["meetingStartTime"])).toISOString().replace("Z", "+00:00"), participants: speakers.map((speaker) => speaker["username"] as string), transcript, raw, state: "ready" };
   const lines = [`# ${result.title}`, "", `- Meeting start: ${formatMeetingStartTime(result.meeting_start_time, runtime.clock.localTimezone())}`, `- Owner: ${result.owner}`, `- Zoom document: ${result.source_url}`, "", "## Transcript", "", result.transcript];
-  return Object.freeze({ title: transcriptTitle(result.title, result.meeting_start_time, runtime.clock.localTimezone()), markdown: lines.join("\n"), data: result });
+  return { document: Object.freeze({ title: transcriptTitle(result.title, result.meeting_start_time, runtime.clock.localTimezone()), markdown: lines.join("\n"), data: result }), archive: { ...base, meeting_start_time: result.meeting_start_time, participants: result.participants, segments } };
 }
 
 export const zoomHubService = defineService<RuntimeCapabilities>({
@@ -257,7 +273,7 @@ export const zoomHubService = defineService<RuntimeCapabilities>({
     const files = (await zoomJson(fileResponse, "file batch_get"))["successItems"] as readonly JsonObject[];
     if (files.length === 0) throw new Error(`Zoom Hub file ${source.identifier} was not returned by batch_get`);
     const document = files[0]!;
-    return transcript(runtime, client, source.identifier, document);
+    return (await transcript(runtime, client, source.identifier, document)).document;
   },
 });
 
@@ -276,20 +292,25 @@ export async function scrapeZoom(runtime: RuntimeCapabilities, directory: string
     seen.add(id);
     const path = join(directory, "zoom", encodeURIComponent(id) + ".md");
     const version = (file["updatedInfo"] as JsonObject)["time"];
+    const jsonPath = join(directory, "zoom", encodeURIComponent(id) + ".json");
+    const hasJson = await runtime.filesystem.exists(jsonPath);
     if (await runtime.filesystem.exists(path)) {
       const contents = await runtime.filesystem.readText(path);
-      const marker = /\n\n<!-- wire:zoom (\S+) ([a-f0-9]{64}) -->\n$/.exec(contents);
+      const marker = /\n\n<!-- wire:zoom (\S+) ([a-f0-9]{64})(?: ([a-f0-9]{64}))? -->\n$/.exec(contents);
       if (!marker || digest(contents.slice(0, marker.index)) !== marker[2]) { counts.locallyModified++; return; }
-      if (version === marker[1]) { counts.unchanged++; return; }
-    }
+      if (hasJson && digest(await runtime.filesystem.readText(jsonPath)) !== marker[3]) { counts.locallyModified++; return; }
+      if (hasJson && version === marker[1]) { counts.unchanged++; return; }
+    } else if (hasJson) { counts.locallyModified++; return; }
     let doc;
     try { doc = await transcript(runtime, client, id, file); }
     catch (error) {
       if (!(error instanceof UnavailableDocument)) throw error;
       counts.unavailable++; return;
     }
-    if (doc.data.state !== "ready" || !doc.data.transcript) { counts.unavailable++; return; }
-    await runtime.filesystem.writeText(path, doc.markdown + `\n\n<!-- wire:zoom ${version} ${digest(doc.markdown)} -->\n`);
+    if (!doc.archive || !doc.document.data.transcript) { counts.unavailable++; return; }
+    const json = JSON.stringify(doc.archive, null, 2) + "\n";
+    await runtime.filesystem.writeText(path, doc.document.markdown + `\n\n<!-- wire:zoom ${version} ${digest(doc.document.markdown)} ${digest(json)} -->\n`);
+    await runtime.filesystem.writeText(jsonPath, json);
     counts.downloaded++;
   };
   let token = "";

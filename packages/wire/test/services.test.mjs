@@ -2470,7 +2470,10 @@ test("zoom scrape spans pages and empty windows, preserves files, and refreshes 
     if (u.pathname.endsWith("/transcript_status")) return response({ aicTranscript: { exist: true, canAccess: !denied } });
     assert.match(u.pathname, /transcripts\/v2$/);
     fetched.push(u.searchParams.get("fileId"));
-    return response({ speakers: [], meetingStartTime: "1", items: [{ userId: "1", startTime: "0", text: revision }] });
+    return response({ speakers: [{ userId: "1", username: "Alice" }], meetingStartTime: "1", items: [
+      { userId: "1", startTime: "00:00:01.000", endTime: "00:00:02.000", text: revision },
+      { userId: "1", startTime: "00:00:02.000", endTime: "00:00:04.000", text: "continued" },
+    ] });
   });
   const rt = { ...source, clock: { ...source.clock, now: () => new Date(clock += 1001) }, filesystem: {
     exists: async p => files.has(p), readText: async p => files.get(p), writeText: async (p, body) => files.set(p, body),
@@ -2478,11 +2481,20 @@ test("zoom scrape spans pages and empty windows, preserves files, and refreshes 
   const run = () => zoomProvider.scrape(rt, "/archive");
   assert.equal((await run()).downloaded, 3);
   assert.deepEqual(fetched, ["a", "b", "c"]);
+  assert.match(files.get("/archive/zoom/a.md"), /- \[00:00:01\] \*\*Alice:\*\* first continued/);
+  assert.deepEqual(JSON.parse(files.get("/archive/zoom/a.json")).segments, [
+    { start: "00:00:01.000", end: "00:00:02.000", speaker_id: "1", speaker: "Alice", text: "first" },
+    { start: "00:00:02.000", end: "00:00:04.000", speaker_id: "1", speaker: "Alice", text: "continued" },
+  ]);
   assert.equal(windows.length, 4);
   assert.equal(windows[1][1] + 1, windows[0][0]);
   assert.equal(windows[2][1] + 1, windows[1][0]);
   assert.equal((await run()).unchanged, 3);
   assert.equal(fetched.length, 3);
+  files.delete("/archive/zoom/a.json");
+  files.set("/archive/zoom/a.md", files.get("/archive/zoom/a.md").replace(/ [a-f0-9]{64} -->/, " -->"));
+  assert.equal((await run()).downloaded, 1);
+  assert.equal(JSON.parse(files.get("/archive/zoom/a.json")).recording_id, "a");
   files.set("/archive/zoom/b.md", "my edit");
   files.set("/archive/zoom/old.md", "no longer listed");
   revision = "second";
@@ -2495,6 +2507,9 @@ test("zoom scrape spans pages and empty windows, preserves files, and refreshes 
   assert.match(files.get("/archive/zoom/a.md"), /second/);
   assert.equal(files.get("/archive/zoom/b.md"), "my edit");
   assert.equal(files.get("/archive/zoom/old.md"), "no longer listed");
+  files.set("/archive/zoom/a.json", "my JSON edit");
+  assert.equal((await run()).locallyModified, 2);
+  assert.equal(files.get("/archive/zoom/a.json"), "my JSON edit");
 });
 
 test("zoom scrape paces requests, retries 429, and honors a saved Retry-After across runs", async () => {
