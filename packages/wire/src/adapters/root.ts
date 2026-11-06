@@ -433,7 +433,7 @@ type AsanaExplorer = {
   };
 };
 
-export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, readInput?: TextInputReader, options: WireRootOptions = { allowPaste: true }, sendSlack?: (destination: string, markdown: string) => Promise<SlackSentMessage>, lookupSlack?: (query: string) => Promise<readonly JsonObject[]>, editSlack?: (url: string, markdown: string) => Promise<SlackSentMessage>, lookupNotion?: (query: string) => Promise<readonly JsonObject[]>, asana?: AsanaExplorer): WireRoot {
+export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, readInput?: TextInputReader, options: WireRootOptions = { allowPaste: true }, sendSlack?: (destination: string, markdown: string) => Promise<SlackSentMessage>, lookupSlack?: (query: string) => Promise<readonly JsonObject[]>, editSlack?: (url: string, markdown: string) => Promise<SlackSentMessage>, lookupNotion?: (query: string) => Promise<readonly JsonObject[]>, asana?: AsanaExplorer, latticeRoot?: () => Promise<string>): WireRoot {
   const attachFromCliUrl = (url: string) => {
     const removedCommand = removedCliCommandNames[url as keyof typeof removedCliCommandNames];
     if (removedCommand !== undefined) throw new UserError(`Unknown command: ${url}. ${removedCommand}`);
@@ -587,6 +587,10 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
     scope: ["cli", "mcp", "sdk"],
     children: [
       defaultAttach,
+      ...(latticeRoot ? [defineGroup({ name: "lattice", scope: ["cli"], description: "Read Lattice feedback and performance reviews.", children: [
+        defineCommand({ name: "scrape", hidden: true, scope: ["cli"], description: "Download Lattice history.", params: S.Object({}),
+          handler: () => userFacing(async () => wire.downloadSource(await latticeRoot(), currentDirectory)), render: wirePresentation.download }),
+      ] })] : []),
       defineCommand({
         name: "init",
         description: "Initialize a wire workspace in the current directory.",

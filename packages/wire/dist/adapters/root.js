@@ -396,7 +396,7 @@ function authGroup(service, description, loginDescription, auth, readInput, opti
             defineCommand({ name: "logout", description: `Delete saved ${title} cookies.`, params: S.Object({}), handler: () => auth.logout(service), render: wirePresentation.authLogout }),
         ] });
 }
-export function createRoot(wire, currentDirectory, auth, readInput, options = { allowPaste: true }, sendSlack, lookupSlack, editSlack, lookupNotion, asana) {
+export function createRoot(wire, currentDirectory, auth, readInput, options = { allowPaste: true }, sendSlack, lookupSlack, editSlack, lookupNotion, asana, latticeRoot) {
     const attachFromCliUrl = (url) => {
         const removedCommand = removedCliCommandNames[url];
         if (removedCommand !== undefined)
@@ -558,6 +558,10 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
         scope: ["cli", "mcp", "sdk"],
         children: [
             defaultAttach,
+            ...(latticeRoot ? [defineGroup({ name: "lattice", scope: ["cli"], description: "Read Lattice feedback and performance reviews.", children: [
+                        defineCommand({ name: "scrape", hidden: true, scope: ["cli"], description: "Download Lattice history.", params: S.Object({}),
+                            handler: () => userFacing(async () => wire.downloadSource(await latticeRoot(), currentDirectory)), render: wirePresentation.download }),
+                    ] })] : []),
             defineCommand({
                 name: "init",
                 description: "Initialize a wire workspace in the current directory.",

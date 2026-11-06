@@ -1,3 +1,4 @@
+import { latticeProvider } from "provider-lattice";
 import { createServiceRegistry, type RuntimeCapabilities } from "wire-core";
 import { asanaProvider } from "provider-asana";
 import { chatgptProvider } from "provider-chatgpt";
@@ -8,6 +9,7 @@ import { slackProvider } from "provider-slack";
 import { zoomProvider } from "provider-zoom";
 
 export const serviceCatalog = createServiceRegistry<RuntimeCapabilities>()
+  .use(latticeProvider)
   .use(zoomProvider)
   .use(notionProvider)
   .use(slackProvider)

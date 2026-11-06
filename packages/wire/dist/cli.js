@@ -383,7 +383,7 @@ function renderUnknownRootInput(argv) {
     if (words === null || words.length === 0)
         return false;
     const command = words[0];
-    if ((!hasRootSeparator(argv) && (command in fixedCommandPositionals || authServices.has(command) || command in removedCommandNames)) || isSourceUrl(command))
+    if ((!hasRootSeparator(argv) && (command in fixedCommandPositionals || command === "lattice" || authServices.has(command) || command in removedCommandNames)) || isSourceUrl(command))
         return false;
     if (isSourceLikeWithoutScheme(command)) {
         renderCliError(argv, expectedSourceMessage("Expected source URL or command", command), "wire --help", expectedSourceMessage("Expected source URL or command", cliValue(command)));

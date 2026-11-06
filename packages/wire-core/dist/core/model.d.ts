@@ -47,6 +47,7 @@ export type UploadedDocument = FetchedDocument & Readonly<{
     url: string;
 }>;
 export type DownloadWriter = (path: string, contents: string | Uint8Array) => Promise<void>;
+export type AddMarkdown = (path: string, contents: string) => Promise<string>;
 export type DownloadedDocument = FetchedDocument & Readonly<{
     path: string;
     error?: string;
@@ -56,7 +57,7 @@ export type Service<FetchInput = never> = Readonly<{
     matches(url: URL): boolean;
     parse(url: URL): Source;
     fetch(input: FetchInput, url: string, source: Source): Promise<FetchedDocument>;
-    download?(input: FetchInput, url: string, source: Source, write: DownloadWriter): Promise<DownloadedDocument | null>;
+    download?(input: FetchInput, url: string, source: Source, write: DownloadWriter, addMarkdown?: AddMarkdown): Promise<DownloadedDocument | null>;
     synchronize?(input: FetchInput, url: string, source: Source, base: JsonValue, markdown: string, markdownPath: string): Promise<FetchedDocument>;
     upload?(input: FetchInput, markdown: string, markdownPath: string): Promise<UploadedDocument>;
 }>;

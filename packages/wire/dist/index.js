@@ -12,4 +12,5 @@ export * from "./executable.js";
 export * from "./cli.js";
 export * from "./mcp.js";
 export { serviceCatalog } from "./adapters/services/catalog.js";
+export * from "provider-lattice";
 //# sourceMappingURL=index.js.map

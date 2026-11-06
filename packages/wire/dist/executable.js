@@ -93,6 +93,18 @@ export function createExecutableRoot(environment, currentDirectory, options = { 
             isFile: async (path) => existsSync(path) && statSync(path).isFile(),
             readText: runtime.filesystem.readText,
             writeText: async (path, contents) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, contents, "utf8"); },
+            createText: async (path, contents) => {
+                await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+                try {
+                    await writeFile(path, contents, { flag: "wx", mode: 0o600 });
+                }
+                catch (error) {
+                    if (error.code === "EEXIST")
+                        return false;
+                    throw error;
+                }
+                return true;
+            },
             writeBytes: async (path, contents) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, contents); },
         },
         workspace: {
@@ -130,6 +142,11 @@ export function createExecutableRoot(environment, currentDirectory, options = { 
     return createRoot(wire, currentDirectory, auth, readStandardInput, { ...options, scrapeZoom: () => zoomProvider.scrape(runtime, currentDirectory) }, (destination, markdown) => sendSlackMessage(runtime, destination, markdown), (query) => lookupSlackUsers(runtime, query), (url, markdown) => editSlackMessage(runtime, url, markdown), (query) => lookupNotionUsers(runtime, query), {
         lookup: (query) => lookupAsanaUsers(runtime, query), projects: () => listAsanaProjects(runtime), project: (project) => showAsanaProject(runtime, project), tasks: (project) => listAsanaTasks(runtime, project), show: (task) => showAsanaTask(runtime, task),
         writes: { move: (task, project, section) => moveAsanaTask(runtime, task, project, section), create: (project, title, section, body, assignee) => createAsanaTask(runtime, project, title, section, body, assignee), edit: (task, fields) => editAsanaTask(runtime, task, fields), comment: (task, body) => addAsanaComment(runtime, task, body), editComment: (comment, body) => editAsanaComment(runtime, comment, body) },
+    }, async () => {
+        const domains = new Set((await runtime.cookies.load("latticehq")).map(c => c.domain.replace(/^\./, "")).filter(d => /^[a-z0-9-]+\.latticehq\.com$/.test(d)));
+        if (domains.size !== 1)
+            throw new Error("Use wire download with your Lattice workspace URL.");
+        return "https://" + [...domains][0] + "/";
     });
 }
 //# sourceMappingURL=executable.js.map

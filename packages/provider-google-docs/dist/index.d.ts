@@ -20,7 +20,7 @@ export declare const googleDocsProvider: Readonly<{
             service: string;
             identifier: string;
             type: import("wire-core").ResourceType;
-        }>, write: import("wire-core").DownloadWriter): Promise<import("wire-core").DownloadedDocument | null>;
+        }>, write: import("wire-core").DownloadWriter, addMarkdown?: import("wire-core").AddMarkdown): Promise<import("wire-core").DownloadedDocument | null>;
         synchronize?(input: import("wire-core").RuntimeCapabilities, url: string, source: Readonly<{
             [key: string]: import("wire-core").JsonValue;
             service: string;
@@ -51,7 +51,7 @@ export declare const googleDocsProvider: Readonly<{
             service: string;
             identifier: string;
             type: import("wire-core").ResourceType;
-        }>, write: import("wire-core").DownloadWriter): Promise<import("wire-core").DownloadedDocument | null>;
+        }>, write: import("wire-core").DownloadWriter, addMarkdown?: import("wire-core").AddMarkdown): Promise<import("wire-core").DownloadedDocument | null>;
         synchronize?(input: import("wire-core").RuntimeCapabilities, url: string, source: Readonly<{
             [key: string]: import("wire-core").JsonValue;
             service: string;

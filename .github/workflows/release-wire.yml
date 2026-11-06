@@ -13,6 +13,7 @@ on:
       - packages/provider-chatgpt/**
       - packages/provider-gmail/**
       - packages/provider-google-docs/**
+      - packages/provider-lattice/**
       - packages/provider-notion/**
       - packages/provider-slack/**
       - packages/provider-zoom/**

@@ -13845,8 +13845,8 @@ __export(extension_exports, {
 module.exports = __toCommonJS(extension_exports);
 var import_node_child_process3 = require("node:child_process");
 var import_node_fs4 = require("node:fs");
-var import_promises7 = require("node:fs/promises");
-var import_node_path6 = require("node:path");
+var import_promises8 = require("node:fs/promises");
+var import_node_path7 = require("node:path");
 var import_node_util3 = require("node:util");
 var vscode = __toESM(require("vscode"));
 
@@ -15069,6 +15069,19 @@ function composeWire(dependencies) {
       return target;
     };
     const service = dependencies.catalog.find((item) => item.matches(new URL(url)));
+    const additions = /* @__PURE__ */ new Map();
+    const addMarkdown = async (path2, contents) => {
+      if (!path2.endsWith(".md") || !dependencies.filesystem.createText) throw new Error("This filesystem does not support additive Markdown archives");
+      for (let version = 1; ; version++) {
+        const candidate = version === 1 ? path2 : path2.slice(0, -3) + "." + version + ".md";
+        const target = downloadPath(candidate);
+        const created = await dependencies.filesystem.createText(target, contents);
+        if (created || await dependencies.filesystem.readText(target) === contents) {
+          additions.set(target, created);
+          return candidate;
+        }
+      }
+    };
     const downloaded = await service.download?.(dependencies.fetchInput, url, source, async (relative3, contents) => {
       const target = downloadPath(relative3);
       if (typeof contents === "string") await dependencies.filesystem.writeText(target, contents);
@@ -15076,11 +15089,11 @@ function composeWire(dependencies) {
         if (dependencies.filesystem.writeBytes === void 0) throw new Error("This filesystem does not support binary downloads");
         await dependencies.filesystem.writeBytes(target, contents);
       }
-    });
+    }, addMarkdown);
     const fetched = downloaded ?? await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
     const outputPath = downloaded == null ? await availableMarkdownPath(directory, fetched.title, source.service, source.identifier, async (candidate) => await dependencies.filesystem.exists(candidate) && (!await dependencies.filesystem.isFile(candidate) || await dependencies.filesystem.readText(candidate) !== fetched.markdown)) : downloadPath(downloaded.path);
-    const previous = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
-    await dependencies.filesystem.writeText(outputPath, fetched.markdown);
+    const previous = !additions.get(outputPath) && await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
+    if (!additions.has(outputPath)) await dependencies.filesystem.writeText(outputPath, fetched.markdown);
     const id = resourceId(source);
     const resource = {
       id,
@@ -21021,6 +21034,9 @@ var slackProvider = Object.freeze({
 });
 
 // ../provider-zoom/src/zoom-hub.ts
+var import_node_crypto5 = require("node:crypto");
+var import_node_path6 = require("node:path");
+var import_promises7 = require("node:timers/promises");
 var userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 function zoomAuthError() {
   return new Error("Zoom authentication is missing or expired. Run `wire zoom login` once; other commands reuse saved cookies.");
@@ -21046,9 +21062,12 @@ async function zoomText(response, label) {
   if (!response.ok) throw new Error(`Zoom Hub ${label} failed: HTTP ${response.status} ${text3}`);
   return text3;
 }
+var UnavailableDocument = class extends Error {
+};
 async function zoomJson(response, label) {
-  const body2 = await response.json();
   if (response.status === 401) throw zoomAuthError();
+  if (response.status === 403 || response.status === 404) throw new UnavailableDocument(`Zoom Hub ${label} failed: HTTP ${response.status} ${await response.text()}`);
+  const body2 = await response.json();
   if (!response.ok) throw new Error(`Zoom Hub ${label} failed: HTTP ${response.status} ${JSON.stringify(body2)}`);
   return body2;
 }
@@ -21147,77 +21166,207 @@ function pruneExpiredCookies(jar, now) {
   }
   return changed;
 }
+async function connectZoom(runtime2, pace) {
+  const cookies = await runtime2.cookies.loadSaved("zoom");
+  if (cookies === null) throw zoomAuthError();
+  const jar = cookieJar(cookies);
+  const state = { metadata: await runtime2.cookies.metadata("zoom") };
+  const save = () => runtime2.cookies.save("zoom", Object.freeze([...jar.values()]), state.metadata);
+  if (pruneExpiredCookies(jar, runtime2.clock.now())) await save();
+  const accountCookie = [...jar.values()].find((value) => value.name === "zm_aid");
+  if (accountCookie === void 0) throw zoomAuthError();
+  const accountId = accountCookie.value;
+  let nextRequest = 0;
+  const zoomRequest = async (url, init) => {
+    const parsed = new URL(url);
+    for (let attempt = 0; ; attempt++) {
+      if (pace) {
+        const wait2 = Math.max(nextRequest, Number(state.metadata["hub_retry_at"] ?? 0)) - runtime2.clock.now().getTime();
+        if (wait2 > 6e4) throw new Error(`Zoom Hub rate limited; retry after ${new Date(Number(state.metadata["hub_retry_at"])).toISOString()}`);
+        if (wait2 > 0) await (0, import_promises7.setTimeout)(wait2);
+      }
+      const response = await runtime2.http.request(url, { ...init, headers: { ...init.headers, cookie: requestCookies(jar, parsed, runtime2.clock.now()) } });
+      const now = runtime2.clock.now();
+      nextRequest = now.getTime() + 1e3;
+      if (applyResponseCookies(jar, parsed, response, now)) await save();
+      if (!pace || response.status !== 429) return response;
+      await response.body?.cancel();
+      const retry = response.headers.get("retry-after");
+      const serverDate = Date.parse(response.headers.get("date") ?? "");
+      const wait = retry !== null && /^\d+$/.test(retry) ? Number(retry) * 1e3 : retry !== null && Number.isFinite(Date.parse(retry)) ? Date.parse(retry) - (Number.isFinite(serverDate) ? serverDate : now.getTime()) : 1e3 * 2 ** attempt;
+      const deadline = now.getTime() + Math.max(1e3, wait);
+      state.metadata = { ...state.metadata, hub_retry_at: String(deadline) };
+      await save();
+      if (attempt === 4 || wait > 6e4) throw new Error(`Zoom Hub rate limited; retry after ${new Date(deadline).toISOString()}`);
+    }
+  };
+  const refreshJwt = async () => {
+    const jwtResponse = await zoomRequest("https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { "user-agent": userAgent, "x-requested-with": "XMLHttpRequest", accept: "application/json, text/plain, */*", referer: "https://hub.zoom.us/" } });
+    const jwt2 = zoomJwt(await zoomText(jwtResponse, "JWT"));
+    state.metadata = Object.freeze({ ...state.metadata, hub_jwt: jwt2, hub_jwt_expires: String(runtime2.clock.now().getTime() + 18e5) });
+    await save();
+    return jwt2;
+  };
+  const cachedJwt = state.metadata["hub_jwt"];
+  const cachedExpires = state.metadata["hub_jwt_expires"];
+  let cached = cachedJwt !== void 0 && cachedExpires !== void 0 && runtime2.clock.now().getTime() < Number(cachedExpires);
+  let jwt = cached ? cachedJwt : await refreshJwt();
+  const docsRequest = async (url, init) => {
+    const response = await zoomRequest(url, init(jwt));
+    if (response.status !== 401 || !cached && !pace) return response;
+    await response.body?.cancel();
+    cached = false;
+    jwt = await refreshJwt();
+    return zoomRequest(url, init(jwt));
+  };
+  return { accountId, docsRequest };
+}
+async function transcript(runtime2, { docsRequest }, identifier2, document) {
+  const notes = document["meetingNotes"];
+  const meetingId = notes["meetingId"];
+  const mainMeetingId = notes["mainMeetingId"];
+  const base = { recording_id: identifier2, title: document["title"], source_url: document["fileLink"], meeting_id: meetingId, main_meeting_id: mainMeetingId, owner: document["owner"]["ownerName"], created_at: document["createdInfo"]["time"], updated_at: document["updatedInfo"]["time"] };
+  if (meetingId !== "") {
+    const statusResponse = await docsRequest(`https://us01docs.zoom.us/api/meeting/transcript_status?meetingId=${encodeURIComponent(meetingId)}`, (token) => ({ headers: hubHeaders(token) }));
+    const status = (await zoomJson(statusResponse, "transcript status"))["aicTranscript"];
+    if (!status["exist"] || !status["canAccess"]) {
+      const result2 = { ...base, transcript: "", state: status["exist"] ? "denied" : "missing" };
+      const markdown = [`# ${result2.title}`, "", `- Transcript state: ${result2.state}`, `- Recording ID: ${result2.recording_id}`, `- Meeting ID: ${result2.meeting_id}`, `- Main meeting ID: ${result2.main_meeting_id}`, `- Owner: ${result2.owner}`, `- Zoom document: ${result2.source_url}`].join("\n");
+      return { document: Object.freeze({ title: result2.title, markdown, data: result2 }), archive: null };
+    }
+  }
+  const transcriptResponse = await docsRequest(`https://us01docs.zoom.us/api/bridge/meeting/transcripts/v2?meetingId=${encodeURIComponent(meetingId)}&fileId=${encodeURIComponent(identifier2)}`, (token) => ({ headers: hubHeaders(token) }));
+  const raw = await zoomJson(transcriptResponse, "transcript");
+  const speakers = raw["speakers"];
+  const speakerMap = new Map(speakers.map((speaker) => [speaker["userId"], speaker["username"]]));
+  const segments = raw["items"].map((item) => {
+    const speaker_id = item["userId"];
+    return { start: item["startTime"], end: item["endTime"], speaker_id, speaker: speakerMap.get(speaker_id) ?? speaker_id, text: item["text"] };
+  });
+  const turns = [];
+  let previous;
+  let length = 0;
+  for (const segment2 of segments) {
+    const text3 = segment2.text.trim();
+    if (!text3) continue;
+    if (segment2.speaker_id === previous && length + text3.length < 600) {
+      turns[turns.length - 1] += " " + text3;
+      length += 1 + text3.length;
+    } else {
+      turns.push(`- [${segment2.start.replace(/\.000$/, "")}] **${segment2.speaker}:** ${text3}`);
+      previous = segment2.speaker_id;
+      length = text3.length;
+    }
+  }
+  const transcript2 = turns.join("\n\n");
+  const result = { ...base, meeting_start_time: new Date(Number(raw["meetingStartTime"])).toISOString().replace("Z", "+00:00"), participants: speakers.map((speaker) => speaker["username"]), transcript: transcript2, raw, state: "ready" };
+  const lines = [`# ${result.title}`, "", `- Meeting start: ${formatMeetingStartTime(result.meeting_start_time, runtime2.clock.localTimezone())}`, `- Owner: ${result.owner}`, `- Zoom document: ${result.source_url}`, "", "## Transcript", "", result.transcript];
+  return { document: Object.freeze({ title: transcriptTitle(result.title, result.meeting_start_time, runtime2.clock.localTimezone()), markdown: lines.join("\n"), data: result }), archive: { ...base, meeting_start_time: result.meeting_start_time, participants: result.participants, segments } };
+}
 var zoomHubService = defineService({
   name: "zoom-hub",
   matches: (url) => url.hostname === "hub.zoom.us" && /^\/doc\/[^/]+\/?$/.test(url.pathname),
   parse: (url) => Object.freeze({ service: "zoom-hub", identifier: /^\/doc\/([^/]+)\/?$/.exec(url.pathname)[1], type: "transcript" }),
   fetch: async (runtime2, _url, source) => {
-    const cookies = await runtime2.cookies.loadSaved("zoom");
-    if (cookies === null) throw zoomAuthError();
-    const jar = cookieJar(cookies);
-    const state = { metadata: await runtime2.cookies.metadata("zoom") };
-    const save = () => runtime2.cookies.save("zoom", Object.freeze([...jar.values()]), state.metadata);
-    if (pruneExpiredCookies(jar, runtime2.clock.now())) await save();
-    const accountCookie = [...jar.values()].find((value) => value.name === "zm_aid");
-    if (accountCookie === void 0) throw zoomAuthError();
-    const accountId = accountCookie.value;
-    const zoomRequest = async (url, init) => {
-      const parsed = new URL(url);
-      const response = await runtime2.http.request(url, { ...init, headers: { ...init.headers, cookie: requestCookies(jar, parsed, runtime2.clock.now()) } });
-      if (applyResponseCookies(jar, parsed, response, runtime2.clock.now())) await save();
-      return response;
-    };
-    const refreshJwt = async () => {
-      const jwtResponse = await zoomRequest("https://hub.zoom.us/nws/common/2.0/nak?pms=Hub%2CUser%3ABase%2CAICW&src=aicw", { headers: { "user-agent": userAgent, "x-requested-with": "XMLHttpRequest", accept: "application/json, text/plain, */*", referer: "https://hub.zoom.us/" } });
-      const jwt2 = zoomJwt(await zoomText(jwtResponse, "JWT"));
-      state.metadata = Object.freeze({ ...state.metadata, hub_jwt: jwt2, hub_jwt_expires: String(runtime2.clock.now().getTime() + 18e5) });
-      await save();
-      return jwt2;
-    };
-    const cachedJwt = state.metadata["hub_jwt"];
-    const cachedExpires = state.metadata["hub_jwt_expires"];
-    let cached = cachedJwt !== void 0 && cachedExpires !== void 0 && runtime2.clock.now().getTime() < Number(cachedExpires);
-    let jwt = cached ? cachedJwt : await refreshJwt();
-    const docsRequest = async (url, init) => {
-      const response = await zoomRequest(url, init(jwt));
-      if (response.status !== 401 || !cached) return response;
-      cached = false;
-      jwt = await refreshJwt();
-      return zoomRequest(url, init(jwt));
-    };
+    const client = await connectZoom(runtime2, false);
+    const { accountId, docsRequest } = client;
     const fileResponse = await docsRequest("https://us01docs.zoom.us/api/file/files/action/batch_get", (token) => ({ method: "POST", headers: hubHeaders(token, "application/json"), body: JSON.stringify({ ids: [source.identifier], accountId }) }));
     const files = (await zoomJson(fileResponse, "file batch_get"))["successItems"];
     if (files.length === 0) throw new Error(`Zoom Hub file ${source.identifier} was not returned by batch_get`);
     const document = files[0];
-    const notes = document["meetingNotes"];
-    const meetingId = notes["meetingId"];
-    const mainMeetingId = notes["mainMeetingId"];
-    const base = { recording_id: source.identifier, title: document["title"], source_url: document["fileLink"], meeting_id: meetingId, main_meeting_id: mainMeetingId, owner: document["owner"]["ownerName"], created_at: document["createdInfo"]["time"], updated_at: document["updatedInfo"]["time"] };
-    if (meetingId !== "") {
-      const statusResponse = await docsRequest(`https://us01docs.zoom.us/api/meeting/transcript_status?meetingId=${encodeURIComponent(meetingId)}`, (token) => ({ headers: hubHeaders(token) }));
-      const status = (await zoomJson(statusResponse, "transcript status"))["aicTranscript"];
-      if (!status["exist"] || !status["canAccess"]) {
-        const result2 = { ...base, transcript: "", state: status["exist"] ? "denied" : "missing" };
-        const markdown = [`# ${result2.title}`, "", `- Transcript state: ${result2.state}`, `- Recording ID: ${result2.recording_id}`, `- Meeting ID: ${result2.meeting_id}`, `- Main meeting ID: ${result2.main_meeting_id}`, `- Owner: ${result2.owner}`, `- Zoom document: ${result2.source_url}`].join("\n");
-        return Object.freeze({ title: result2.title, markdown, data: result2 });
-      }
-    }
-    const transcriptResponse = await docsRequest(`https://us01docs.zoom.us/api/bridge/meeting/transcripts/v2?meetingId=${encodeURIComponent(meetingId)}&fileId=${encodeURIComponent(source.identifier)}`, (token) => ({ headers: hubHeaders(token) }));
-    const raw = await zoomJson(transcriptResponse, "transcript");
-    const speakers = raw["speakers"];
-    const speakerMap = new Map(speakers.map((speaker) => [speaker["userId"], speaker["username"]]));
-    const transcript = raw["items"].map((item) => {
-      const userId = item["userId"];
-      return `- [${item["startTime"]}] **${speakerMap.get(userId) ?? userId}:** ${item["text"]}`;
-    }).join("\n");
-    const result = { ...base, meeting_start_time: new Date(Number(raw["meetingStartTime"])).toISOString().replace("Z", "+00:00"), participants: speakers.map((speaker) => speaker["username"]), transcript, raw, state: "ready" };
-    const lines = [`# ${result.title}`, "", `- Meeting start: ${formatMeetingStartTime(result.meeting_start_time, runtime2.clock.localTimezone())}`, `- Owner: ${result.owner}`, `- Zoom document: ${result.source_url}`, "", "## Transcript", "", result.transcript];
-    return Object.freeze({ title: transcriptTitle(result.title, result.meeting_start_time, runtime2.clock.localTimezone()), markdown: lines.join("\n"), data: result });
+    return (await transcript(runtime2, client, source.identifier, document)).document;
   }
 });
+async function scrapeZoom(runtime2, directory) {
+  const client = await connectZoom(runtime2, true);
+  const request2 = async (path, body2) => zoomJson(await client.docsRequest(
+    "https://us01docs.zoom.us/api/" + path,
+    (token2) => body2 === void 0 ? { headers: hubHeaders(token2) } : { method: "POST", headers: hubHeaders(token2, "application/json"), body: JSON.stringify(body2) }
+  ), path);
+  const seen = /* @__PURE__ */ new Set();
+  const counts = { downloaded: 0, unchanged: 0, unavailable: 0, locallyModified: 0 };
+  const digest = (text3) => (0, import_node_crypto5.createHash)("sha256").update(text3).digest("hex");
+  const sync = async (file) => {
+    const id = file["id"];
+    const notes = file["meetingNotes"];
+    if (file["isDeleted"] || !notes || !(notes["meetingId"] || notes["mainMeetingId"] || notes["source"] === "1pMeeting") || seen.has(id)) return;
+    seen.add(id);
+    const path = (0, import_node_path6.join)(directory, "zoom", encodeURIComponent(id) + ".md");
+    const version = file["updatedInfo"]["time"];
+    const jsonPath = (0, import_node_path6.join)(directory, "zoom", encodeURIComponent(id) + ".json");
+    const hasJson = await runtime2.filesystem.exists(jsonPath);
+    if (await runtime2.filesystem.exists(path)) {
+      const contents = await runtime2.filesystem.readText(path);
+      const marker = /\n\n<!-- wire:zoom (\S+) ([a-f0-9]{64})(?: ([a-f0-9]{64}))? -->\n$/.exec(contents);
+      if (!marker || digest(contents.slice(0, marker.index)) !== marker[2]) {
+        counts.locallyModified++;
+        return;
+      }
+      if (hasJson && digest(await runtime2.filesystem.readText(jsonPath)) !== marker[3]) {
+        counts.locallyModified++;
+        return;
+      }
+      if (hasJson && version === marker[1]) {
+        counts.unchanged++;
+        return;
+      }
+    } else if (hasJson) {
+      counts.locallyModified++;
+      return;
+    }
+    let doc;
+    try {
+      doc = await transcript(runtime2, client, id, file);
+    } catch (error) {
+      if (!(error instanceof UnavailableDocument)) throw error;
+      counts.unavailable++;
+      return;
+    }
+    if (!doc.archive || !doc.document.data.transcript) {
+      counts.unavailable++;
+      return;
+    }
+    const json = JSON.stringify(doc.archive, null, 2) + "\n";
+    await runtime2.filesystem.writeText(path, doc.document.markdown + `
+
+<!-- wire:zoom ${version} ${digest(doc.document.markdown)} ${digest(json)} -->
+`);
+    await runtime2.filesystem.writeText(jsonPath, json);
+    counts.downloaded++;
+  };
+  let token = "";
+  const tokens = /* @__PURE__ */ new Set();
+  do {
+    const page = await request2("file/recent?limit=50" + (token ? "&pagingToken=" + encodeURIComponent(token) : ""));
+    for (const entry of page["recentFiles"]) await sync(entry["file"]);
+    token = page["nextPagingToken"];
+    if (token && tokens.has(token)) throw new Error("Zoom Hub repeated a recent files page token");
+    tokens.add(token);
+  } while (token);
+  const first = Date.UTC(2011, 0, 1);
+  for (let end = runtime2.clock.now().getTime(); end >= first; ) {
+    const start = Math.max(first, end - 30 * 864e5 + 1);
+    for (let pageNum = 0; ; pageNum++) {
+      const page = await request2("meeting/list_my_meetings", { startTime: start, endTime: end, pageNum, pageSize: 50, meetingFilter: 0, filters: {}, query: "" });
+      const ids = [...new Set(page["meetings"].map((m2) => m2["meetingId"]))];
+      for (let i = 0; i < ids.length; i += 5) {
+        const assets2 = await request2("hub/files/batch_get_meeting_assets", { meetingIds: ids.slice(i, i + 5), meetingAccountId: client.accountId });
+        for (const entry of Object.values(assets2["meetingAssetsMap"])) {
+          for (const item of entry["createFromMeeting"]) {
+            if (item["doc"]) await sync(item["doc"]);
+          }
+        }
+      }
+      if (!page["hasNext"]) break;
+    }
+    end = start - 1;
+  }
+  return counts;
+}
 
 // ../provider-zoom/src/index.ts
 var zoomProvider = Object.freeze({
+  scrape: scrapeZoom,
   services: [zoomHubService]
 });
 
@@ -21230,7 +21379,7 @@ var authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack
 var wireStatus;
 function operationPath(value, path) {
   if (value.startsWith("http://") || value.startsWith("https://")) return path;
-  return (0, import_node_path6.isAbsolute)(value) ? value : (0, import_node_path6.resolve)(path, value);
+  return (0, import_node_path7.isAbsolute)(value) ? value : (0, import_node_path7.resolve)(path, value);
 }
 async function commandEnvironment(path) {
   const home = process.env["HOME"];
@@ -21251,12 +21400,12 @@ function repositoryRoot() {
 function runtime(values2) {
   const filesystem = {
     exists: async (path) => (0, import_node_fs4.existsSync)(path),
-    readText: (path) => (0, import_promises7.readFile)(path, "utf8"),
+    readText: (path) => (0, import_promises8.readFile)(path, "utf8"),
     writeText: async (path, contents) => {
-      await (0, import_promises7.mkdir)((0, import_node_path6.dirname)(path), { recursive: true });
-      await (0, import_promises7.writeFile)(path, contents, "utf8");
+      await (0, import_promises8.mkdir)((0, import_node_path7.dirname)(path), { recursive: true });
+      await (0, import_promises8.writeFile)(path, contents, "utf8");
     },
-    delete: (path) => (0, import_promises7.rm)(path)
+    delete: (path) => (0, import_promises8.rm)(path)
   };
   const clock = {
     now: () => /* @__PURE__ */ new Date(),
@@ -21302,8 +21451,8 @@ async function wire(path) {
       readText: capabilities.filesystem.readText,
       writeText: capabilities.filesystem.writeText,
       writeBytes: async (path2, contents) => {
-        await (0, import_promises7.mkdir)((0, import_node_path6.dirname)(path2), { recursive: true });
-        await (0, import_promises7.writeFile)(path2, contents);
+        await (0, import_promises8.mkdir)((0, import_node_path7.dirname)(path2), { recursive: true });
+        await (0, import_promises8.writeFile)(path2, contents);
       }
     },
     workspace: {
@@ -21379,7 +21528,7 @@ function selectedPath(uri) {
 }
 function selectedDirectory(uri) {
   const path = selectedPath(uri);
-  return (0, import_node_fs4.existsSync)(path) && (0, import_node_fs4.statSync)(path).isDirectory() ? path : (0, import_node_path6.dirname)(path);
+  return (0, import_node_fs4.existsSync)(path) && (0, import_node_fs4.statSync)(path).isDirectory() ? path : (0, import_node_path7.dirname)(path);
 }
 function projectDirectory() {
   const root = repositoryRoot();
@@ -21392,8 +21541,8 @@ function resourceFile(uri) {
   return path;
 }
 function pathInsideDirectory(directory, path) {
-  const normalizedDirectory = (0, import_node_path6.resolve)(directory);
-  const normalizedPath = (0, import_node_path6.resolve)(path);
+  const normalizedDirectory = (0, import_node_path7.resolve)(directory);
+  const normalizedPath = (0, import_node_path7.resolve)(path);
   return normalizedPath === normalizedDirectory || normalizedPath.startsWith(`${normalizedDirectory}/`);
 }
 async function saveDocument(path) {
@@ -21459,17 +21608,17 @@ async function previewUrl() {
 async function syncFile(uri) {
   const path = resourceFile(uri);
   await saveDocument(path);
-  const result = await wireProgress("Syncing", async () => (await wire(operationPath(path, (0, import_node_path6.dirname)(path)))).sync(path, (0, import_node_path6.dirname)(path)));
+  const result = await wireProgress("Syncing", async () => (await wire(operationPath(path, (0, import_node_path7.dirname)(path)))).sync(path, (0, import_node_path7.dirname)(path)));
   await showWireResultStatus(result);
 }
 async function detachFile(uri) {
   const path = resourceFile(uri);
-  const result = await wireProgress("Detaching", async () => (await wire(operationPath(path, (0, import_node_path6.dirname)(path)))).detach(path, (0, import_node_path6.dirname)(path)));
+  const result = await wireProgress("Detaching", async () => (await wire(operationPath(path, (0, import_node_path7.dirname)(path)))).detach(path, (0, import_node_path7.dirname)(path)));
   await showWireResultStatus(result);
 }
 async function openResource(uri) {
   const path = resourceFile(uri);
-  const resource = await wireProgress("Opening", async () => (await wire(operationPath(path, (0, import_node_path6.dirname)(path)))).openResource(path, (0, import_node_path6.dirname)(path)));
+  const resource = await wireProgress("Opening", async () => (await wire(operationPath(path, (0, import_node_path7.dirname)(path)))).openResource(path, (0, import_node_path7.dirname)(path)));
   showWireStatus(`Wire - Opened: ${title(resource)}`);
 }
 async function syncDirectory(uri) {
@@ -21519,7 +21668,7 @@ async function authLogout() {
   showWireStatus(`Wire - Logged out: ${service}`);
 }
 async function compileAndReload() {
-  const root = (0, import_node_path6.resolve)(__dirname, "..");
+  const root = (0, import_node_path7.resolve)(__dirname, "..");
   await execFileAsync2("node", ["bump-version.mjs", "patch"], { cwd: root });
   await execFileAsync2("npm", ["run", "compile"], { cwd: root });
   await vscode.commands.executeCommand("workbench.action.reloadWindow");

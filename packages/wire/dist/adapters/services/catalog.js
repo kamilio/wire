@@ -1,3 +1,4 @@
+import { latticeProvider } from "provider-lattice";
 import { createServiceRegistry } from "wire-core";
 import { asanaProvider } from "provider-asana";
 import { chatgptProvider } from "provider-chatgpt";
@@ -7,6 +8,7 @@ import { notionProvider } from "provider-notion";
 import { slackProvider } from "provider-slack";
 import { zoomProvider } from "provider-zoom";
 export const serviceCatalog = createServiceRegistry()
+    .use(latticeProvider)
     .use(zoomProvider)
     .use(notionProvider)
     .use(slackProvider)

@@ -14,6 +14,7 @@ export type WireFilesystem = Readonly<{
   isFile(path: string): Promise<boolean>;
   readText(path: string): Promise<string>;
   writeText(path: string, contents: string): Promise<void>;
+  createText?(path: string, contents: string): Promise<boolean>;
   writeBytes?(path: string, contents: Uint8Array): Promise<void>;
 }>;
 
@@ -255,6 +256,19 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
       return target;
     };
     const service = dependencies.catalog.find((item) => item.matches(new URL(url)))!;
+    const additions = new Map<string, boolean>();
+    const addMarkdown = async (path: string, contents: string) => {
+      if (!path.endsWith(".md") || !dependencies.filesystem.createText) throw new Error("This filesystem does not support additive Markdown archives");
+      for (let version = 1; ; version++) {
+        const candidate = version === 1 ? path : path.slice(0, -3) + "." + version + ".md";
+        const target = downloadPath(candidate);
+        const created = await dependencies.filesystem.createText(target, contents);
+        if (created || await dependencies.filesystem.readText(target) === contents) {
+          additions.set(target, created);
+          return candidate;
+        }
+      }
+    };
     const downloaded = await service.download?.(dependencies.fetchInput, url, source, async (relative, contents) => {
       const target = downloadPath(relative);
       if (typeof contents === "string") await dependencies.filesystem.writeText(target, contents);
@@ -262,14 +276,14 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
         if (dependencies.filesystem.writeBytes === undefined) throw new Error("This filesystem does not support binary downloads");
         await dependencies.filesystem.writeBytes(target, contents);
       }
-    });
+    }, addMarkdown);
     const fetched = downloaded ?? await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
     const outputPath = downloaded == null
       ? await availableMarkdownPath(directory, fetched.title, source.service, source.identifier, async (candidate) =>
         await dependencies.filesystem.exists(candidate) && (!await dependencies.filesystem.isFile(candidate) || await dependencies.filesystem.readText(candidate) !== fetched.markdown))
       : downloadPath(downloaded.path);
-    const previous = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
-    await dependencies.filesystem.writeText(outputPath, fetched.markdown);
+    const previous = !additions.get(outputPath) && await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
+    if (!additions.has(outputPath)) await dependencies.filesystem.writeText(outputPath, fetched.markdown);
     const id = resourceId(source);
     const resource: Resource = {
       id,
