@@ -93,6 +93,12 @@ describe("native Slack to Markdown", () => {
     expect(markdownToSlackBlocks(markdown)).toEqual(blocks);
   });
 
+  it("renders Slack message mentions as links to the original message", () => {
+    const url = "https://example.slack.com/archives/C111/p1234567890000001";
+    const mention = { type: "message_mention", channel_id: "C111", message_ts: "1234567890.000001", author_id: "U1", thread_ts: "1234567889.000001", text: url, url };
+    expect(slackBlocksToMarkdown(section([mention]), users)).toBe(`[${url}](<${url}>)`);
+  });
+
   it("renders bot blocks, images, and buttons", () => {
     expect(slackBlocksToMarkdown([
       { type: "header", text: { type: "plain_text", text: "Report" } },

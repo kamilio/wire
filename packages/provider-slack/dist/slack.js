@@ -188,6 +188,7 @@ function richInline(elements, users) {
             case "text":
                 text = style?.["code"] === true ? codeSpan(element["text"]) : markdownText(element["text"]);
                 break;
+            case "message_mention":
             case "link":
                 text = `[${markdownText(element["text"] === undefined ? element["url"] : element["text"])}](<${element["url"].replace(/>/g, "%3E")}>)`;
                 break;

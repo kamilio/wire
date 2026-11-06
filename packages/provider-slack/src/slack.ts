@@ -154,6 +154,7 @@ function richInline(elements: readonly JsonObject[], users: ReadonlyMap<string, 
     let text: string;
     switch (element["type"]) {
       case "text": text = style?.["code"] === true ? codeSpan(element["text"] as string) : markdownText(element["text"] as string); break;
+      case "message_mention":
       case "link": text = `[${markdownText(element["text"] === undefined ? element["url"] as string : element["text"] as string)}](<${(element["url"] as string).replace(/>/g, "%3E")}>)`; break;
       case "user": {
         const id = element["user_id"] as string;
