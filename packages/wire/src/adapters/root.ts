@@ -417,6 +417,7 @@ function authGroup(service: AuthService, description: string, loginDescription: 
 }
 
 type AsanaExplorer = {
+  lookup?(query: string): Promise<readonly JsonObject[]>;
   projects(): ReturnType<typeof listAsanaProjects>;
   tasks(project: string): ReturnType<typeof listAsanaTasks>;
   show(task: string): Promise<FetchedDocument>;
@@ -461,8 +462,21 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
   const authCommand = (service: (typeof authServices)[number]) => {
     const title = serviceTitle(service);
     const group = authGroup(service, `Manage ${title} login.`, "Capture cookies once; normal commands reuse saved cookies.", auth!, readInput, options);
+    const lookup = service === "slack" ? lookupSlack : service === "notion" ? lookupNotion : service === "asana" ? asana?.lookup : undefined;
+    const users = lookup === undefined ? [] : [defineGroup({ name: "users", description: "Find people by email or name.", children: [defineCommand({
+      name: "lookup",
+      description: service === "asana" ? "Find users by partial name or exact email. Returns names, emails, and assignee IDs." : "Look up active users by exact email or name. Email lookup avoids ambiguous names.",
+      positional: ["query"],
+      params: S.Object({ query: S.String({ description: "Email address or name to look up." }) }),
+      handler: ({ params }) => userFacing(() => lookup(params.query)),
+      render: render<readonly JsonObject[]>((results) => results.length === 0 ? "No matching users" : results.map((user) => {
+        if (service === "asana") return `${user["gid"]}  ${user["name"]}  ${user["email"] ?? ""}`;
+        const profile = user["profile"] as JsonObject | undefined;
+        return service === "slack" ? `${user["id"]}  ${user["real_name"] ?? user["name"]}  ${profile?.["email"] ?? ""}` : `${user["userId"]}  ${user["name"] ?? ""}  ${(user["aliases"] as readonly string[] | undefined ?? []).join(", ")}`;
+      }).join("\n")),
+    })] })];
     const writes = asana?.writes;
-    if (service === "asana" && asana !== undefined) return defineGroup({ ...group, description: "Browse Asana projects, edit tasks and comments, and manage login.", children: [...group.children,
+    if (service === "asana" && asana !== undefined) return defineGroup({ ...group, description: "Browse Asana projects, edit tasks and comments, and manage login.", children: [...group.children, ...users,
       defineGroup({ name: "projects", description: "Browse projects.", children: [defineCommand({
         name: "list", description: "List active projects by workspace and team.", params: S.Object({}),
         handler: () => userFacing(() => asana.projects()),
@@ -518,18 +532,6 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
         render: render<JsonObject>((comment) => `Updated comment ${comment["gid"]}`),
       })] })] : []),
     ] });
-    const lookup = service === "slack" ? lookupSlack : service === "notion" ? lookupNotion : undefined;
-    const users = lookup === undefined ? [] : [defineGroup({ name: "users", description: "Find people by email or name.", children: [defineCommand({
-      name: "lookup",
-      description: "Look up active users by exact email or name. Email lookup avoids ambiguous names.",
-      positional: ["query"],
-      params: S.Object({ query: S.String({ description: "Email address or name to look up." }) }),
-      handler: ({ params }) => userFacing(() => lookup(params.query)),
-      render: render<readonly JsonObject[]>((results) => results.length === 0 ? "No matching users" : results.map((user) => {
-        const profile = user["profile"] as JsonObject | undefined;
-        return service === "slack" ? `${user["id"]}  ${user["real_name"] ?? user["name"]}  ${profile?.["email"] ?? ""}` : `${user["userId"]}  ${user["name"] ?? ""}  ${(user["aliases"] as readonly string[] | undefined ?? []).join(", ")}`;
-      }).join("\n")),
-    })] })];
     if (service !== "slack") return users.length === 0 ? group : defineGroup({ ...group, children: [...group.children, ...users] });
     return defineGroup({ name: "slack", description: "Read Slack channels, DMs, and threads, send Markdown, and manage login.", children: [preview, defaultAttach, sync, ...group.children, ...users, ...(sendSlack === undefined ? [] : [defineCommand({
       name: "send",

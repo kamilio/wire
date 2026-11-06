@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createCookiesCapability, fetchSource, listAsanaProjects, listAsanaTasks, markdownFilename, parseSourceUrl, synchronizeSource } from "../dist/index.js";
+import { createCookiesCapability, fetchSource, listAsanaProjects, listAsanaTasks, lookupAsanaUsers, markdownFilename, parseSourceUrl, synchronizeSource } from "../dist/index.js";
 import { serviceCatalog } from "../dist/index.js";
 
 function response(value, text, init = {}) {
@@ -120,6 +120,20 @@ test("asana task adapter renders task and paginated activity", async () => {
   assert.equal(requests.length, 3);
   assert.equal(headers[0].Cookie, "ticket=session");
   assert.equal("Authorization" in headers[0], false);
+});
+
+test("Asana user lookup preserves ambiguous names, deduplicates workspaces, and matches emails exactly", async () => {
+  const a = { gid: "1", name: "Alex A", email: "a@example.org" };
+  const b = { gid: "2", name: "Alex B", email: "ba@example.org" };
+  const api = runtime(async (input) => {
+    const url = new URL(input);
+    if (url.pathname.endsWith("/workspaces")) return response({ data: [{ gid: "10" }, { gid: "20" }], next_page: null });
+    assert.equal(url.searchParams.get("resource_type"), "user");
+    return response({ data: url.pathname.endsWith("/10/typeahead") ? [a] : [a, b] });
+  });
+  assert.deepEqual(await lookupAsanaUsers(api, "Alex"), [a, b]);
+  assert.deepEqual(await lookupAsanaUsers(api, " A@example.org "), [a]);
+  assert.deepEqual(await lookupAsanaUsers(api, "unknown@example.org"), []);
 });
 
 test("Asana exploration groups project pages by team ID and lists tasks without fetching details", async () => {

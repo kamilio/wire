@@ -32,6 +32,7 @@ type WirePresentation = Readonly<{
 }>;
 export declare const wirePresentation: WirePresentation;
 type AsanaExplorer = {
+    lookup?(query: string): Promise<readonly JsonObject[]>;
     projects(): ReturnType<typeof listAsanaProjects>;
     tasks(project: string): ReturnType<typeof listAsanaTasks>;
     show(task: string): Promise<FetchedDocument>;

@@ -1,4 +1,4 @@
-import type { RuntimeCapabilities } from "wire-core";
+import type { JsonObject, RuntimeCapabilities } from "wire-core";
 type Named = Readonly<{
     gid: string;
     name: string;
@@ -19,5 +19,6 @@ export declare function listAsanaTasks(runtime: RuntimeCapabilities, project: st
 }> & {
     completed: boolean;
 })[]>;
+export declare function lookupAsanaUsers(runtime: RuntimeCapabilities, query: string): Promise<readonly JsonObject[]>;
 export {};
 //# sourceMappingURL=asana-explore.d.ts.map

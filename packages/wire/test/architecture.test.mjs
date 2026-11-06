@@ -145,6 +145,7 @@ test("public entry point imports without runtime capabilities", async () => {
     "listAsanaProjects",
     "listAsanaTasks",
     "loadWireConfig",
+    "lookupAsanaUsers",
     "lookupNotionUsers",
     "lookupSlackUsers",
     "markdownFilename",
@@ -404,5 +405,5 @@ test("packed package installs and runs outside the repository", async (context) 
   assert.doesNotMatch(cli.stdout, /^\s+show <resource>\s+Show registered resource details without opening the source URL\./m);
   assert.doesNotMatch(cli.stdout, /--path/);
   assert.doesNotMatch(cli.stdout, /switch-db/);
-  assert.deepEqual(await mcpTools(join(consumerRoot, "node_modules", ".bin", "wire-mcp"), consumerRoot, environment), ["attach", "init", "preview", "sync", "download", "detach", "open", "sync_all", "asana__status", "asana__login", "asana__logout", "asana__projects__list", "asana__tasks__list", "asana__tasks__show", "asana__tasks__edit", "asana__tasks__comment", "asana__comments__edit", "chatgpt__status", "chatgpt__login", "chatgpt__logout", "gmail__status", "gmail__login", "gmail__logout", "google_docs__status", "google_docs__login", "google_docs__logout", "notion__status", "notion__login", "notion__logout", "notion__users__lookup", "slack__preview", "slack__attach", "slack__sync", "slack__status", "slack__login", "slack__logout", "slack__users__lookup", "slack__send", "slack__edit", "zoom__status", "zoom__login", "zoom__logout"]);
+  assert.deepEqual(await mcpTools(join(consumerRoot, "node_modules", ".bin", "wire-mcp"), consumerRoot, environment), ["attach", "init", "preview", "sync", "download", "detach", "open", "sync_all", "asana__status", "asana__login", "asana__logout", "asana__users__lookup", "asana__projects__list", "asana__tasks__list", "asana__tasks__show", "asana__tasks__edit", "asana__tasks__comment", "asana__comments__edit", "chatgpt__status", "chatgpt__login", "chatgpt__logout", "gmail__status", "gmail__login", "gmail__logout", "google_docs__status", "google_docs__login", "google_docs__logout", "notion__status", "notion__login", "notion__logout", "notion__users__lookup", "slack__preview", "slack__attach", "slack__sync", "slack__status", "slack__login", "slack__logout", "slack__users__lookup", "slack__send", "slack__edit", "zoom__status", "zoom__login", "zoom__logout"]);
 });

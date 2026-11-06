@@ -1,6 +1,6 @@
-import type { RuntimeCapabilities } from "wire-core";
+import type { JsonObject, RuntimeCapabilities } from "wire-core";
 
-import { paginate } from "./asana-http.js";
+import { paginate, request } from "./asana-http.js";
 
 type Named = Readonly<{ gid: string; name: string }>;
 type Team = { gid: string | null; name: string; projects: Named[] };
@@ -26,4 +26,19 @@ export async function listAsanaProjects(runtime: RuntimeCapabilities) {
 export async function listAsanaTasks(runtime: RuntimeCapabilities, project: string) {
   if (!/^\d+$/.test(project)) throw new Error("Expected a numeric Asana project ID.");
   return await paginate(runtime, `/projects/${project}/tasks`, { limit: "100", opt_fields: "name,completed" }) as readonly (Named & { completed: boolean })[];
+}
+
+export async function lookupAsanaUsers(runtime: RuntimeCapabilities, query: string): Promise<readonly JsonObject[]> {
+  const term = query.trim();
+  if (!term) throw new Error("Enter an Asana name or email to look up.");
+  const users = new Map<string, JsonObject>();
+  const workspaces = await paginate(runtime, "/workspaces", { limit: "100", opt_fields: "gid" });
+  for (const workspace of workspaces) {
+    const matches = await request(runtime, "GET", `/workspaces/${workspace["gid"]}/typeahead`, { resource_type: "user", query: term, count: "100", opt_fields: "gid,name,email" });
+    for (const user of matches["data"] as readonly JsonObject[]) {
+      if (term.includes("@") && (user["email"] as string | undefined)?.toLowerCase() !== term.toLowerCase()) continue;
+      users.set(user["gid"] as string, user);
+    }
+  }
+  return [...users.values()];
 }
