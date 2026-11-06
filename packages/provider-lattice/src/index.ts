@@ -1,3 +1,5 @@
+import { browser } from "./browser.js";
+export { latticeReviewDraft, listLatticeReviewRequests, syncLatticeDrafts } from "./draft.js";
 import { defineService, type AddMarkdown, type FetchedDocument, type RuntimeCapabilities } from "wire-core";
 import { richText } from "./markdown.js";
 
@@ -141,29 +143,7 @@ const doc = (title: string, url: string, parts: string[]): FetchedDocument => ({
 });
 
 async function read(runtime: RuntimeCapabilities, url: URL, add?: AddMarkdown) {
-  const session = "-s=lattice-" + crypto.randomUUID();
-  const args = [session, "--raw"];
-  await runtime.process.execute("hey-browser", [
-    "run",
-    "--",
-    "playwright-cli",
-    ...args,
-    "attach",
-    "--extension=chrome",
-  ]);
-  const query = async <T>(fields: string, vars: Record<string, string | null> = {}): Promise<T> => {
-    const data = { id: "WireLatticeRead", query: "query WireLatticeRead " + fields, variables: vars };
-    const code = `async page=>{const r=await page.request.post(${JSON.stringify(url.origin + "/graphql")},{maxRedirects:0,data:${JSON.stringify(data)}});return r.headers()["content-type"]?.includes("json") ? await r.json() : {errors:[{message:"Lattice HTTP "+r.status()+": sign in to this workspace in Chrome."}]}}`;
-    const result = JSON.parse(
-      (await runtime.process.execute("playwright-cli", [...args, "run-code", code])).stdout,
-      (key, value) =>
-        key === "name" && typeof value === "string" ? value.replace(/\s*\(deactivated\)\s*$/i, "") : value,
-    );
-    if (result.errors?.length)
-      throw new Error(result.errors.map((e: { message: string }) => e.message).join("; "));
-    return result.data as T;
-  };
-  try {
+  return browser(runtime, url, async (query) => {
     const viewer = (
       await query<{ viewer: { user: Person & { entityId: string } } }>("{ viewer { user { name entityId } } }")
     ).viewer.user;
@@ -484,9 +464,7 @@ async function read(runtime: RuntimeCapabilities, url: URL, add?: AddMarkdown) {
     const document = doc("Lattice — " + viewer.name, origin + path, parts);
     const file = index + ".md";
     return finish(file, document);
-  } finally {
-    await runtime.process.execute("playwright-cli", [...args, "detach"]);
-  }
+  });
 }
 
 export const latticeService = defineService<RuntimeCapabilities>({

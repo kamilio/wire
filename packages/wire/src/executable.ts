@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { addAsanaComment, createAsanaTask, editAsanaComment, editAsanaTask, listAsanaProjects, listAsanaTasks, lookupAsanaUsers, moveAsanaTask, showAsanaProject, showAsanaTask } from "provider-asana";
 import { sendSlackMessage, editSlackMessage, lookupSlackUsers } from "provider-slack";
 
+import { listLatticeReviewRequests, latticeReviewDraft, syncLatticeDrafts } from "provider-lattice";
 import { zoomProvider } from "provider-zoom";
 import { lookupNotionUsers } from "provider-notion";
 
@@ -137,7 +138,7 @@ export function createExecutableRoot(environment: NodeEnvironment, currentDirect
     switchBackend: baseWire.switchBackend,
   });
   const wire = withWireHooks(configuredWire, { currentDirectory, home, environment: configuredEnvironment() });
-  return createRoot(wire, currentDirectory, auth, readStandardInput, { ...options, scrapeZoom: () => zoomProvider.scrape(runtime, currentDirectory) }, (destination, markdown) => sendSlackMessage(runtime, destination, markdown), (query) => lookupSlackUsers(runtime, query), (url, markdown) => editSlackMessage(runtime, url, markdown), (query) => lookupNotionUsers(runtime, query), {
+  return createRoot(wire, currentDirectory, auth, readStandardInput, { ...options, latticeSync: url => syncLatticeDrafts(runtime,url,currentDirectory), latticeRequests: url => listLatticeReviewRequests(runtime,url), latticeTemplate: url => latticeReviewDraft(runtime,url), latticeFill: async (url,file) => latticeReviewDraft(runtime,url,await runtime.filesystem.readText(resolve(currentDirectory,file))), scrapeZoom: () => zoomProvider.scrape(runtime, currentDirectory) }, (destination, markdown) => sendSlackMessage(runtime, destination, markdown), (query) => lookupSlackUsers(runtime, query), (url, markdown) => editSlackMessage(runtime, url, markdown), (query) => lookupNotionUsers(runtime, query), {
     lookup: (query) => lookupAsanaUsers(runtime, query), projects: () => listAsanaProjects(runtime), project: (project) => showAsanaProject(runtime, project), tasks: (project) => listAsanaTasks(runtime, project), show: (task) => showAsanaTask(runtime, task),
     writes: { move: (task, project, section) => moveAsanaTask(runtime, task, project, section), create: (project, title, section, body, assignee) => createAsanaTask(runtime, project, title, section, body, assignee), edit: (task, fields) => editAsanaTask(runtime, task, fields), comment: (task, body) => addAsanaComment(runtime, task, body), editComment: (comment, body) => editAsanaComment(runtime, comment, body) },
   }, async () => {

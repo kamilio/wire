@@ -514,6 +514,8 @@ export async function runWireCli(root: WireRoot | WireRootFactory, argv: readonl
   if (!version && renderExcessPositionals(normalized)) {
     return;
   }
+  const words = positionalWords(normalized);
+  const plain = words?.[0] === "lattice" && (words[1] === "template" || words[1] === "requests") && outputFormats(normalized).length === 0;
   const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
-  await runCLI(typeof root === "function" ? root(currentDirectory) : root, { version: packageJson.version, rootUsageName: "wire", presets: false, approvals: false, controls: { output: true, debug: true }, argv: normalized });
+  await runCLI(typeof root === "function" ? root(currentDirectory) : root, { version: packageJson.version, rootUsageName: "wire", presets: false, approvals: false, controls: { output: true, debug: true }, argv: plain ? [...normalized.slice(0, 2), "--output", "markdown", ...normalized.slice(2)] : normalized });
 }

@@ -1,3 +1,4 @@
+export { latticeReviewDraft, listLatticeReviewRequests, syncLatticeDrafts } from "./draft.js";
 import { type AddMarkdown, type RuntimeCapabilities } from "wire-core";
 export declare const latticeService: Readonly<{
     name: string;

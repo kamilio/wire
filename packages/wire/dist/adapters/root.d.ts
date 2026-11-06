@@ -8,6 +8,10 @@ export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
 export type WireRootOptions = Readonly<{
     allowPaste: boolean;
+    latticeSync?: (url: string | undefined) => Promise<string>;
+    latticeRequests?: (url: string) => Promise<string>;
+    latticeTemplate?: (url: string) => Promise<string>;
+    latticeFill?: (url: string, file: string) => Promise<string>;
     scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape>;
 }>;
 type WireRenderer<T> = Readonly<{
