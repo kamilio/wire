@@ -75,6 +75,8 @@ wire asana tasks comment <task-id> --body 'See the [spec](https://example.com/sp
 wire asana comments edit <comment-id> --body 'Updated **comment**.'
 ```
 
+Asana reads use your saved Wire login. For writes, set `ASANA_ACCESS_TOKEN` to a personal access token for the same account. Alternatively, set `ASANA_TOKEN_FILE` to the path of a dotenv file containing `ASANA_ACCESS_TOKEN`. If neither is set, Wire uses saved cookies, which Asana may reject for writes.
+
 Use `tasks show --json` for enum option IDs under `data.task.custom_fields`. For `--fields`, supply only the writable Asana properties to change. Keep IDs as strings; numbers, arrays, booleans, and null keep their JSON types. Task descriptions, text custom fields, and comment bodies take Markdown. To revise existing text, `tasks show --json` returns the description in `data.task.body_markdown` and each comment in `data.stories[].body_markdown`. Asana enforces field and comment edit permissions.
 
 ### People and Slack threads

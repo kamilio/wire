@@ -57,7 +57,7 @@ export function createNodeWatch() {
     });
 }
 export function createNodeConfiguration(environment) {
-    return Object.freeze({ get: (name) => environmentValue(environment, name) });
+    return Object.freeze({ get: (name) => environmentValue(environment, name), getOptional: (name) => environment[name] });
 }
 export function createNodeSecrets(filesystem, environment) {
     return Object.freeze({

@@ -13847,7 +13847,7 @@ var import_node_child_process3 = require("node:child_process");
 var import_node_fs4 = require("node:fs");
 var import_promises7 = require("node:fs/promises");
 var import_node_path6 = require("node:path");
-var import_node_util2 = require("node:util");
+var import_node_util3 = require("node:util");
 var vscode = __toESM(require("vscode"));
 
 // ../wire-core/src/core/json.ts
@@ -15711,6 +15711,7 @@ function withWireHooks(wire2, options) {
 }
 
 // ../provider-asana/src/asana-http.ts
+var import_node_util2 = require("node:util");
 async function asanaHttp(runtime2, url, init) {
   for (let attempt = 0; ; attempt++) {
     const response = await runtime2.http.request(url, init);
@@ -15727,19 +15728,39 @@ function asanaAuthError() {
 async function request(runtime2, method, path, parameters, data) {
   const url = new URL(`https://app.asana.com/api/1.0${path}`);
   if (parameters !== void 0) for (const [name, value] of Object.entries(parameters)) url.searchParams.set(name, value);
-  const cookies = await runtime2.cookies.loadSaved("asana");
-  if (cookies === null) throw asanaAuthError();
+  let token;
+  if (method !== "GET") {
+    token = runtime2.configuration?.getOptional?.("ASANA_ACCESS_TOKEN");
+    if (!token) {
+      const tokenFile = runtime2.configuration?.getOptional?.("ASANA_TOKEN_FILE");
+      if (tokenFile) {
+        token = (0, import_node_util2.parseEnv)(await runtime2.filesystem.readText(tokenFile))["ASANA_ACCESS_TOKEN"];
+        if (!token) throw new Error(`${method} ${path} failed: 401 ASANA_TOKEN_FILE must contain ASANA_ACCESS_TOKEN.`);
+      }
+    }
+  }
+  const auth2 = {};
+  if (token) auth2["Authorization"] = `Bearer ${token}`;
+  else {
+    const cookies = await runtime2.cookies.loadSaved("asana");
+    if (cookies === null && method === "GET") throw asanaAuthError();
+    if (cookies === null) throw new Error(`${method} ${path} failed: 401 Set ASANA_ACCESS_TOKEN to an Asana personal access token for writes.`);
+    auth2["Cookie"] = cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
+  }
   const response = await asanaHttp(runtime2, url, {
     method,
     headers: {
-      Cookie: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; "),
+      ...auth2,
       Accept: "application/json",
       "Content-Type": "application/json",
       "User-Agent": "Mozilla/5.0"
     },
     ...data === void 0 ? {} : { body: JSON.stringify({ data }) }
   });
-  if (response.status === 401) throw asanaAuthError();
+  if (response.status === 401) {
+    if (method === "GET") throw asanaAuthError();
+    throw new Error(`${method} ${path} failed: 401 ${token ? "Asana rejected ASANA_ACCESS_TOKEN." : "Set ASANA_ACCESS_TOKEN to an Asana personal access token for writes."}`);
+  }
   if (!response.ok) throw new Error(`${method} ${path} failed: ${response.status} ${await response.text()}`);
   return await response.json();
 }
@@ -21195,7 +21216,7 @@ var zoomProvider = Object.freeze({
 var serviceCatalog = createServiceRegistry().use(zoomProvider).use(notionProvider).use(slackProvider).use(chatgptProvider).use(googleDocsProvider).use(gmailProvider).use(asanaProvider).catalog();
 
 // src/extension.ts
-var execFileAsync2 = (0, import_node_util2.promisify)(import_node_child_process3.execFile);
+var execFileAsync2 = (0, import_node_util3.promisify)(import_node_child_process3.execFile);
 var authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"];
 var wireStatus;
 function operationPath(value, path) {
@@ -21244,7 +21265,7 @@ function runtime(values2) {
     openFiles: { open: async (path) => {
       await vscode.env.openExternal(vscode.Uri.parse(path));
     } },
-    configuration: { get: (name) => environment(values2, name) },
+    configuration: { get: (name) => environment(values2, name), getOptional: (name) => values2[name] },
     secrets: { get: async (reference) => {
       throw new Error(`Missing secret provider for ${reference}`);
     } },

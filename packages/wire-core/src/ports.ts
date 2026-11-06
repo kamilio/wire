@@ -82,6 +82,7 @@ export interface OpenFilesCapability {
 }
 
 export interface ConfigurationCapability {
+  getOptional?(name: string): string | undefined;
   get(name: string): string;
 }
 

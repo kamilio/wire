@@ -59,7 +59,7 @@ function runtime(values: NodeJS.ProcessEnv): RuntimeCapabilities {
     } },
     clock,
     openFiles: { open: async (path: string) => { await vscode.env.openExternal(vscode.Uri.parse(path)); } },
-    configuration: { get: (name: string) => environment(values, name) },
+    configuration: { get: (name: string) => environment(values, name), getOptional: (name: string) => values[name] },
     secrets: { get: async (reference: string) => { throw new Error(`Missing secret provider for ${reference}`); } },
     cookies: createCookiesCapability(filesystem, () => environment(values, "HOME"), repositoryRoot),
     gmailTokens: {

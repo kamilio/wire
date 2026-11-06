@@ -66,6 +66,7 @@ export interface OpenFilesCapability {
     open(path: string): Promise<void>;
 }
 export interface ConfigurationCapability {
+    getOptional?(name: string): string | undefined;
     get(name: string): string;
 }
 export interface SecretsCapability {

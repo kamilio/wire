@@ -68,7 +68,7 @@ export function createNodeWatch(): WatchCapability {
 }
 
 export function createNodeConfiguration(environment: NodeEnvironment): ConfigurationCapability {
-  return Object.freeze({ get: (name: string) => environmentValue(environment, name) });
+  return Object.freeze({ get: (name: string) => environmentValue(environment, name), getOptional: (name: string) => environment[name] });
 }
 
 export function createNodeSecrets(filesystem: FilesystemCapability, environment: NodeEnvironment): SecretsCapability {

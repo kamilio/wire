@@ -67,7 +67,7 @@ export function createExecutableRoot(environment, currentDirectory, options = { 
     const filesystem = createNodeFilesystem();
     const processCapability = createNodeProcess();
     const clock = createNodeClock();
-    const configuration = Object.freeze({ get: (name) => createNodeConfiguration(configuredEnvironment()).get(name) });
+    const configuration = Object.freeze({ get: (name) => createNodeConfiguration(configuredEnvironment()).get(name), getOptional: (name) => configuredEnvironment()[name] });
     const home = configuration.get("HOME");
     const runtimeBase = {
         http,
