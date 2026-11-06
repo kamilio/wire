@@ -1,6 +1,7 @@
 import { UserError, defineCommand, defineGroup, S, type Group } from "toolcraft";
 
 import { defaultWireBackend, registryPathForBackend, type JsonObject, type FetchedDocument, type InitializedWire, type Resource, type SwitchedWireBackend, type Wire, type WireBackend, type WireResult, type WireWatchSession } from "wire-core";
+import type { listAsanaProjects, listAsanaTasks } from "provider-asana";
 import type { SlackSentMessage } from "provider-slack";
 import type { Auth, AuthResult, AuthService } from "../auth.js";
 
@@ -415,7 +416,13 @@ function authGroup(service: AuthService, description: string, loginDescription: 
   ] });
 }
 
-export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, readInput?: TextInputReader, options: WireRootOptions = { allowPaste: true }, sendSlack?: (destination: string, markdown: string) => Promise<SlackSentMessage>, lookupSlack?: (query: string) => Promise<readonly JsonObject[]>, editSlack?: (url: string, markdown: string) => Promise<SlackSentMessage>, lookupNotion?: (query: string) => Promise<readonly JsonObject[]>): WireRoot {
+type AsanaExplorer = {
+  projects(): ReturnType<typeof listAsanaProjects>;
+  tasks(project: string): ReturnType<typeof listAsanaTasks>;
+  show(task: string): Promise<FetchedDocument>;
+};
+
+export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, readInput?: TextInputReader, options: WireRootOptions = { allowPaste: true }, sendSlack?: (destination: string, markdown: string) => Promise<SlackSentMessage>, lookupSlack?: (query: string) => Promise<readonly JsonObject[]>, editSlack?: (url: string, markdown: string) => Promise<SlackSentMessage>, lookupNotion?: (query: string) => Promise<readonly JsonObject[]>, asana?: AsanaExplorer): WireRoot {
   const attachFromCliUrl = (url: string) => {
     const removedCommand = removedCliCommandNames[url as keyof typeof removedCliCommandNames];
     if (removedCommand !== undefined) throw new UserError(`Unknown command: ${url}. ${removedCommand}`);
@@ -449,6 +456,30 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
   const authCommand = (service: (typeof authServices)[number]) => {
     const title = serviceTitle(service);
     const group = authGroup(service, `Manage ${title} login.`, "Capture cookies once; normal commands reuse saved cookies.", auth!, readInput, options);
+    if (service === "asana" && asana !== undefined) return defineGroup({ ...group, description: "Explore Asana projects and tasks, and manage login.", children: [...group.children,
+      defineGroup({ name: "projects", description: "Browse projects.", children: [defineCommand({
+        name: "list", description: "List active projects by workspace and team.", params: S.Object({}),
+        handler: () => userFacing(() => asana.projects()),
+        render: render<Awaited<ReturnType<typeof listAsanaProjects>>>((workspaces) => workspaces.map((workspace) => [
+          lineText(workspace.name),
+          ...(workspace.teams.length === 0 ? ["  (no active projects)"] : workspace.teams.flatMap((team, i) => {
+            const last = i === workspace.teams.length - 1;
+            return [`${last ? "└──" : "├──"} ${lineText(team.name)}`, ...team.projects.map((project, j) =>
+              `${last ? "    " : "│   "}${j === team.projects.length - 1 ? "└──" : "├──"} ${lineText(project.name)}  ${project.gid}`)];
+          })),
+        ].join("\n")).join("\n\n") || "No workspaces"),
+      })] }),
+      defineGroup({ name: "tasks", description: "Browse tasks.", children: [defineCommand({
+        name: "list", description: "List tasks in a project, with completion status and task IDs.", positional: ["project"],
+        params: S.Object({ project: S.String({ description: "Asana project ID." }) }),
+        handler: ({ params }) => userFacing(() => asana.tasks(params.project)),
+        render: render<Awaited<ReturnType<typeof listAsanaTasks>>>((tasks) => tasks.map((task) => `- [${task.completed ? "x" : " "}] ${lineText(task.name)}  ${task.gid}`).join("\n") || "No tasks"),
+      }), defineCommand({
+        name: "show", description: "Show a task's description, assignee, completion status, and activity.", positional: ["task"],
+        params: S.Object({ task: S.String({ description: "Asana task ID." }) }),
+        handler: ({ params }) => userFacing(() => asana.show(params.task)), render: wirePresentation.view,
+      })] }),
+    ] });
     const lookup = service === "slack" ? lookupSlack : service === "notion" ? lookupNotion : undefined;
     const users = lookup === undefined ? [] : [defineGroup({ name: "users", description: "Find people by email or name.", children: [defineCommand({
       name: "lookup",

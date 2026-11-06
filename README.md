@@ -61,6 +61,16 @@ For a Notion page with subpages, `wire download <url>` saves a directory with an
 
 Run `wire --help` for the full CLI.
 
+### Browse Asana
+
+```sh
+wire asana projects list           # workspace → team → active project, with project IDs
+wire asana tasks list <project-id> # task names, completion status, and IDs
+wire asana tasks show <task-id>    # description, assignee, and activity
+```
+
+Each command also accepts `--json` for structured output.
+
 ### People and Slack threads
 
 Use `[@Name](mailto:person@example.com)` to mention someone in Markdown. Wire resolves the email to a native user mention when syncing to Notion or sending/editing Slack messages. Ordinary email links and code stay literal. Missing or ambiguous users fail before writing.

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createCookiesCapability, fetchSource, markdownFilename, parseSourceUrl, synchronizeSource } from "../dist/index.js";
+import { createCookiesCapability, fetchSource, listAsanaProjects, listAsanaTasks, markdownFilename, parseSourceUrl, synchronizeSource } from "../dist/index.js";
 import { serviceCatalog } from "../dist/index.js";
 
 function response(value, text, init = {}) {
@@ -120,6 +120,26 @@ test("asana task adapter renders task and paginated activity", async () => {
   assert.equal(requests.length, 3);
   assert.equal(headers[0].Cookie, "ticket=session");
   assert.equal("Authorization" in headers[0], false);
+});
+
+test("Asana exploration groups project pages by team ID and lists tasks without fetching details", async () => {
+  const api = runtime(async (input) => {
+    const url = new URL(input);
+    const next = url.searchParams.get("offset");
+    if (url.pathname.endsWith("/workspaces")) return response({ data: [{ gid: "1", name: "Workspace" }], next_page: null });
+    if (url.pathname.endsWith("/projects")) {
+      assert.equal(url.searchParams.get("archived"), "false");
+      return response(next === null ? { data: [{ gid: "10", name: "B", team: { gid: "2", name: "Team" } }], next_page: { offset: "page2" } }
+        : { data: [{ gid: "11", name: "A", team: { gid: "2", name: "Team" } }, { gid: "12", name: "Other", team: null }], next_page: null });
+    }
+    assert.equal(url.pathname, "/api/1.0/projects/11/tasks");
+    return response({ data: [{ gid: "13", name: "Task", completed: true }], next_page: null });
+  });
+  assert.deepEqual((await listAsanaProjects(api))[0].teams, [
+    { gid: null, name: "No team", projects: [{ gid: "12", name: "Other" }] },
+    { gid: "2", name: "Team", projects: [{ gid: "11", name: "A" }, { gid: "10", name: "B" }] },
+  ]);
+  assert.deepEqual(await listAsanaTasks(api, "11"), [{ gid: "13", name: "Task", completed: true }]);
 });
 
 test("Asana retries the throttled activity page without duplicating earlier comments", async () => {

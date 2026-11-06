@@ -73,21 +73,24 @@ export const asanaTaskService = defineService<RuntimeCapabilities>({
   parse: (url) => {
     return Object.freeze({ service: "asana-task", identifier: taskIdentifier(url)!, type: "task" });
   },
-  fetch: async (runtime, _url, source) => {
-    const task = await fetchTask(runtime, source.identifier);
-    const stories = await fetchStories(runtime, source.identifier);
-    const assignee = task["assignee"] as JsonObject | null;
-    const lines = [`# ${task["name"] as string}`, "", `- Source: ${task["permalink_url"] as string}`, `- Completed: ${task["completed"] as boolean ? "True" : "False"}`];
-    if (assignee !== null) lines.push(`- Assignee: ${assignee["name"] as string}`);
-    lines.push("", task["notes"] as string);
-    if (stories.length > 0) {
-      lines.push("", "## Activity", "");
-      for (const value of stories) {
-        const story = object(value);
-        const createdBy = story["created_by"] as JsonObject | null;
-        lines.push(`- ${story["created_at"] as string} — ${createdBy === null ? "System" : createdBy["name"] as string}: ${story["text"] as string}`);
-      }
-    }
-    return Object.freeze({ title: task["name"] as string, markdown: `${lines.join("\n").trimEnd()}\n`, data: { task, stories } });
-  },
+  fetch: (runtime, _url, source) => showAsanaTask(runtime, source.identifier),
 });
+
+export async function showAsanaTask(runtime: RuntimeCapabilities, identifier: string) {
+  if (!/^\d+$/.test(identifier)) throw new Error("Expected a numeric Asana task ID.");
+  const task = await fetchTask(runtime, identifier);
+  const stories = await fetchStories(runtime, identifier);
+  const assignee = task["assignee"] as JsonObject | null;
+  const lines = [`# ${task["name"] as string}`, "", `- Source: ${task["permalink_url"] as string}`, `- Completed: ${task["completed"] as boolean ? "True" : "False"}`];
+  if (assignee !== null) lines.push(`- Assignee: ${assignee["name"] as string}`);
+  lines.push("", task["notes"] as string);
+  if (stories.length > 0) {
+    lines.push("", "## Activity", "");
+    for (const value of stories) {
+      const story = object(value);
+      const createdBy = story["created_by"] as JsonObject | null;
+      lines.push(`- ${story["created_at"] as string} — ${createdBy === null ? "System" : createdBy["name"] as string}: ${story["text"] as string}`);
+    }
+  }
+  return Object.freeze({ title: task["name"] as string, markdown: `${lines.join("\n").trimEnd()}\n`, data: { task, stories } });
+}

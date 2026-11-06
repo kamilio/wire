@@ -32,4 +32,15 @@ export declare const asanaTaskService: Readonly<{
     }>>;
     upload?(input: RuntimeCapabilities, markdown: string, markdownPath: string): Promise<import("wire-core").UploadedDocument>;
 }>;
+export declare function showAsanaTask(runtime: RuntimeCapabilities, identifier: string): Promise<Readonly<{
+    title: string;
+    markdown: `${string}
+`;
+    data: {
+        task: Readonly<{
+            [key: string]: JsonValue;
+        }>;
+        stories: readonly JsonValue[];
+    };
+}>>;
 //# sourceMappingURL=asana-task.d.ts.map

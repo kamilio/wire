@@ -75,23 +75,26 @@ export const asanaTaskService = defineService({
     parse: (url) => {
         return Object.freeze({ service: "asana-task", identifier: taskIdentifier(url), type: "task" });
     },
-    fetch: async (runtime, _url, source) => {
-        const task = await fetchTask(runtime, source.identifier);
-        const stories = await fetchStories(runtime, source.identifier);
-        const assignee = task["assignee"];
-        const lines = [`# ${task["name"]}`, "", `- Source: ${task["permalink_url"]}`, `- Completed: ${task["completed"] ? "True" : "False"}`];
-        if (assignee !== null)
-            lines.push(`- Assignee: ${assignee["name"]}`);
-        lines.push("", task["notes"]);
-        if (stories.length > 0) {
-            lines.push("", "## Activity", "");
-            for (const value of stories) {
-                const story = object(value);
-                const createdBy = story["created_by"];
-                lines.push(`- ${story["created_at"]} — ${createdBy === null ? "System" : createdBy["name"]}: ${story["text"]}`);
-            }
-        }
-        return Object.freeze({ title: task["name"], markdown: `${lines.join("\n").trimEnd()}\n`, data: { task, stories } });
-    },
+    fetch: (runtime, _url, source) => showAsanaTask(runtime, source.identifier),
 });
+export async function showAsanaTask(runtime, identifier) {
+    if (!/^\d+$/.test(identifier))
+        throw new Error("Expected a numeric Asana task ID.");
+    const task = await fetchTask(runtime, identifier);
+    const stories = await fetchStories(runtime, identifier);
+    const assignee = task["assignee"];
+    const lines = [`# ${task["name"]}`, "", `- Source: ${task["permalink_url"]}`, `- Completed: ${task["completed"] ? "True" : "False"}`];
+    if (assignee !== null)
+        lines.push(`- Assignee: ${assignee["name"]}`);
+    lines.push("", task["notes"]);
+    if (stories.length > 0) {
+        lines.push("", "## Activity", "");
+        for (const value of stories) {
+            const story = object(value);
+            const createdBy = story["created_by"];
+            lines.push(`- ${story["created_at"]} — ${createdBy === null ? "System" : createdBy["name"]}: ${story["text"]}`);
+        }
+    }
+    return Object.freeze({ title: task["name"], markdown: `${lines.join("\n").trimEnd()}\n`, data: { task, stories } });
+}
 //# sourceMappingURL=asana-task.js.map

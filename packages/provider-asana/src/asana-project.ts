@@ -1,4 +1,4 @@
-import { asanaHttp } from "./asana-http.js";
+import { paginate, request } from "./asana-http.js";
 import { asanaChanges, asanaConflicts, asanaDocument, asanaSnapshot, parseAsanaMarkdown, renderAsanaMarkdown, type AsanaChange, type AsanaDocument, type AsanaEntity } from "./asana-sync.js";
 import { defineService } from "wire-core";
 import type { FetchedDocument, JsonObject, JsonValue, Source } from "wire-core";
@@ -16,42 +16,6 @@ function projectIdentifier(url: URL): string | undefined {
   if (parts[0] === "0" && (parts.length === 3 || parts.length === 4) && projectViews.has(parts[2]!)) return parts[1]!;
   if (parts[0] === "1" && (parts.length === 5 || parts.length === 6) && parts[2] === "project" && projectViews.has(parts[4]!)) return parts[3]!;
   return undefined;
-}
-
-function asanaAuthError(): Error {
-  return new Error("Asana authentication is missing or expired. Run `wire asana login` once; other commands reuse saved cookies.");
-}
-
-async function request(runtime: RuntimeCapabilities, method: string, path: string, parameters?: Readonly<Record<string, string>>, data?: JsonObject): Promise<JsonObject> {
-  const url = new URL(`https://app.asana.com/api/1.0${path}`);
-  if (parameters !== undefined) for (const [name, value] of Object.entries(parameters)) url.searchParams.set(name, value);
-  const cookies = await runtime.cookies.loadSaved("asana");
-  if (cookies === null) throw asanaAuthError();
-  const response = await asanaHttp(runtime, url, {
-    method,
-    headers: {
-      Cookie: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; "),
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "User-Agent": "Mozilla/5.0",
-    },
-    ...(data === undefined ? {} : { body: JSON.stringify({ data }) }),
-  });
-  if (response.status === 401) throw asanaAuthError();
-  if (!response.ok) throw new Error(`${method} ${path} failed: ${response.status} ${await response.text()}`);
-  return object(await response.json() as JsonValue);
-}
-
-async function paginate(runtime: RuntimeCapabilities, path: string, parameters: Readonly<Record<string, string>>): Promise<readonly JsonObject[]> {
-  const values: JsonObject[] = [];
-  let offset: string | undefined;
-  do {
-    const page = await request(runtime, "GET", path, offset === undefined ? parameters : { ...parameters, offset });
-    values.push(...(page["data"] as readonly JsonValue[]).map(object));
-    const nextPage = page["next_page"] as JsonObject | null;
-    offset = nextPage === null ? undefined : nextPage["offset"] as string;
-  } while (offset !== undefined);
-  return values;
 }
 
 async function fetchDocument(runtime: RuntimeCapabilities, url: string, source: Source): Promise<FetchedDocument> {

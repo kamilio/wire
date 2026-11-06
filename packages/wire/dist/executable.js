@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { listAsanaProjects, listAsanaTasks, showAsanaTask } from "provider-asana";
 import { sendSlackMessage, editSlackMessage, lookupSlackUsers } from "provider-slack";
 import { lookupNotionUsers } from "provider-notion";
 import { createRoot } from "./adapters/root.js";
@@ -125,6 +126,8 @@ export function createExecutableRoot(environment, currentDirectory, options = { 
         switchBackend: baseWire.switchBackend,
     });
     const wire = withWireHooks(configuredWire, { currentDirectory, home, environment: configuredEnvironment() });
-    return createRoot(wire, currentDirectory, auth, readStandardInput, options, (destination, markdown) => sendSlackMessage(runtime, destination, markdown), (query) => lookupSlackUsers(runtime, query), (url, markdown) => editSlackMessage(runtime, url, markdown), (query) => lookupNotionUsers(runtime, query));
+    return createRoot(wire, currentDirectory, auth, readStandardInput, options, (destination, markdown) => sendSlackMessage(runtime, destination, markdown), (query) => lookupSlackUsers(runtime, query), (url, markdown) => editSlackMessage(runtime, url, markdown), (query) => lookupNotionUsers(runtime, query), {
+        projects: () => listAsanaProjects(runtime), tasks: (project) => listAsanaTasks(runtime, project), show: (task) => showAsanaTask(runtime, task),
+    });
 }
 //# sourceMappingURL=executable.js.map

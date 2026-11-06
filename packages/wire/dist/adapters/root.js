@@ -395,7 +395,7 @@ function authGroup(service, description, loginDescription, auth, readInput, opti
             defineCommand({ name: "logout", description: `Delete saved ${title} cookies.`, params: S.Object({}), handler: () => auth.logout(service), render: wirePresentation.authLogout }),
         ] });
 }
-export function createRoot(wire, currentDirectory, auth, readInput, options = { allowPaste: true }, sendSlack, lookupSlack, editSlack, lookupNotion) {
+export function createRoot(wire, currentDirectory, auth, readInput, options = { allowPaste: true }, sendSlack, lookupSlack, editSlack, lookupNotion, asana) {
     const attachFromCliUrl = (url) => {
         const removedCommand = removedCliCommandNames[url];
         if (removedCommand !== undefined)
@@ -431,6 +431,30 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
     const authCommand = (service) => {
         const title = serviceTitle(service);
         const group = authGroup(service, `Manage ${title} login.`, "Capture cookies once; normal commands reuse saved cookies.", auth, readInput, options);
+        if (service === "asana" && asana !== undefined)
+            return defineGroup({ ...group, description: "Explore Asana projects and tasks, and manage login.", children: [...group.children,
+                    defineGroup({ name: "projects", description: "Browse projects.", children: [defineCommand({
+                                name: "list", description: "List active projects by workspace and team.", params: S.Object({}),
+                                handler: () => userFacing(() => asana.projects()),
+                                render: render((workspaces) => workspaces.map((workspace) => [
+                                    lineText(workspace.name),
+                                    ...(workspace.teams.length === 0 ? ["  (no active projects)"] : workspace.teams.flatMap((team, i) => {
+                                        const last = i === workspace.teams.length - 1;
+                                        return [`${last ? "└──" : "├──"} ${lineText(team.name)}`, ...team.projects.map((project, j) => `${last ? "    " : "│   "}${j === team.projects.length - 1 ? "└──" : "├──"} ${lineText(project.name)}  ${project.gid}`)];
+                                    })),
+                                ].join("\n")).join("\n\n") || "No workspaces"),
+                            })] }),
+                    defineGroup({ name: "tasks", description: "Browse tasks.", children: [defineCommand({
+                                name: "list", description: "List tasks in a project, with completion status and task IDs.", positional: ["project"],
+                                params: S.Object({ project: S.String({ description: "Asana project ID." }) }),
+                                handler: ({ params }) => userFacing(() => asana.tasks(params.project)),
+                                render: render((tasks) => tasks.map((task) => `- [${task.completed ? "x" : " "}] ${lineText(task.name)}  ${task.gid}`).join("\n") || "No tasks"),
+                            }), defineCommand({
+                                name: "show", description: "Show a task's description, assignee, completion status, and activity.", positional: ["task"],
+                                params: S.Object({ task: S.String({ description: "Asana task ID." }) }),
+                                handler: ({ params }) => userFacing(() => asana.show(params.task)), render: wirePresentation.view,
+                            })] }),
+                ] });
         const lookup = service === "slack" ? lookupSlack : service === "notion" ? lookupNotion : undefined;
         const users = lookup === undefined ? [] : [defineGroup({ name: "users", description: "Find people by email or name.", children: [defineCommand({
                         name: "lookup",
