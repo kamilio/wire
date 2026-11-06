@@ -569,7 +569,8 @@ test("draft sync keeps local files, posts only edited answers and detects remote
   const { syncLatticeDrafts } = await import("provider-lattice");
   const { tmpdir } = await import("node:os");
   const { mkdtemp, readFile, writeFile, readdir, rm } = await import("node:fs/promises");
-  const dir = await mkdtemp(tmpdir() + "/lattice-draft-test-");
+  const parent = await mkdtemp(tmpdir() + "/lattice-draft-test-");
+  const dir=parent+"/lattice-drafts-2026";
   const reqs = origin + "/reviews/" + id(1) + "/participant/requests";
   const r = {
     entityId: id(2),
@@ -593,7 +594,7 @@ test("draft sync keeps local files, posts only edited answers and detects remote
   let open = true,
     writes = 0;
   const input = runtime((q) =>
-    q.includes("viewerReviewGroupsToRespond")
+    q.includes("name createdAt") ? {viewer:{cycle:{name:"Winter 2026",createdAt:"2025-12-01"}}} : q.includes("viewerReviewGroupsToRespond")
       ? {
           viewer: {
             cycle: { canReviewsBeWritten: true, groups: [{ id: "group", requests: page(open ? [r] : []) }] },
@@ -636,12 +637,26 @@ test("draft sync keeps local files, posts only edited answers and detects remote
     return { stdout: JSON.stringify(result), stderr: "" };
   };
   try {
-    assert.match(await syncLatticeDrafts(input, reqs, dir), /1 placeholder\(s\) created/);
+    assert.match(await syncLatticeDrafts(input, reqs, parent), /1 placeholder\(s\) created/);
     const path = dir + "/" + (await readdir(dir)).find((f) => f.endsWith(".md"));
+    assert.equal(JSON.parse(await readFile(dir+"/.wire-lattice-drafts.json","utf8")).source,reqs);
     const first = await readFile(path, "utf8");
     assert.match(first, /Existing \*\*draft\*\*/);
     assert.equal(writes, 0);
-    const edited = first.replace("Existing **draft**", "Updated **draft**");
+    r.questions.push({
+      ...r.questions[0],
+      id: id(7),
+      revision: { ...r.questions[0].revision, body: "Anything else?" },
+      reviewResponse: null,
+    });
+    const full = await (
+      await import("provider-lattice")
+    ).latticeReviewDraft(input, origin + "/reviews/" + id(1) + "/participant/response/" + id(2));
+    await writeFile(path, full.replace("\n\n<answer: write here>", ""));
+    assert.match(await syncLatticeDrafts(input, undefined, dir), /1 template\(s\) refreshed/);
+    assert.equal(await readFile(path, "utf8"), full);
+    assert.equal(writes, 0);
+    const edited = full.replace("Existing **draft**", "Updated **draft**");
     await writeFile(path, edited);
     await syncLatticeDrafts(input, undefined, dir);
     assert.equal(writes, 1);
@@ -658,7 +673,7 @@ test("draft sync keeps local files, posts only edited answers and detects remote
     await syncLatticeDrafts(input, undefined, dir);
     assert.match(await readFile(path, "utf8"), /Another local edit/);
   } finally {
-    await rm(dir, { recursive: true });
+    await rm(parent, { recursive: true });
   }
 });
 
@@ -752,4 +767,93 @@ test("choice inputs use live labels, validate booleans and preserve an explicit 
   await fill("strong\n\nUseful examples.");
   assert.deepEqual(content, { rating: "2", body: "Useful examples." });
   await assert.rejects(fill("Average"), /Invalid choice/);
+});
+
+test("every editable field has a visible placeholder that never becomes draft content", async () => {
+  const { latticeReviewDraft } = await import("provider-lattice");
+  const { readFile } = await import("node:fs/promises");
+  const url = origin + "/reviews/" + id(1) + "/participant/response/" + id(2);
+  const q = (n, t, values) => ({
+    id: id(n),
+    revision: { __typename: t + "QuestionRevision", body: "Item " + n, question: { isOptional: true }, ...values },
+    reviewResponse: null,
+  });
+  const questions = [
+    q(3, "Body"),
+    q(4, "MultipleChoiceAndBody", { choices: ["Yes", "No"] }),
+    q(5, "MultipleSelect", { choices: ["A", "B"] }),
+    q(6, "Rating", { scale: ["High"] }),
+  ];
+  const r = {
+    entityId: id(2),
+    viewerIsResponder: true,
+    reviewGroup: { reviewTemplate: { name: "Feedback" } },
+    reviewee: { user: { name: "Lee" }, reviewCycle: { entityId: id(1), canReviewsBeWritten: true } },
+    questions,
+  };
+  const input = runtime(() => ({ viewer: { r } })),
+    execute = input.process.execute.bind(input.process);
+  let saved = [];
+  input.process.execute = async (cmd, args) => {
+    const file = args.find((arg) => arg.startsWith("--filename="));
+    if (!file) return execute(cmd, args);
+    const program = await readFile(file.slice(11), "utf8");
+    assert.doesNotMatch(program, /(?:<|&lt;)(?:answer|choice|choices|rating|comment):/);
+    const result = await Function("return (" + program + ")")()({
+      request: {
+        post: async (_url, { data }) => {
+          saved = data.variables.input.reviewRequestQuestions;
+          return {
+            json: async () => ({
+              data: {
+                saveDraftReviewResponses: {
+                  results: saved.map((u) => ({
+                    reviewRequest: { entityId: id(2), submittedAt: null },
+                    reviewRequestQuestion: {
+                      id: u.reviewRequestQuestionId,
+                      reviewResponse: { content: u.content },
+                    },
+                  })),
+                },
+              },
+            }),
+          };
+        },
+      },
+    });
+    return { stdout: JSON.stringify(result), stderr: "" };
+  };
+  const template = await latticeReviewDraft(input, url);
+  for (const mark of [
+    "<answer: write here>",
+    "<choice: pick one>",
+    "<comment: write here>",
+    "<choices: pick one or more>",
+    "<rating: pick one>",
+  ])
+    assert.ok(template.includes(mark));
+  assert.equal(await latticeReviewDraft(input, url, template), "No draft changes.");
+  assert.equal(saved.length, 0);
+  await latticeReviewDraft(input, url, template.replace("<comment: write here>", "TBD"));
+  assert.deepEqual(
+    saved.map((u) => u.content),
+    [{ body: "TBD" }],
+  );
+  await latticeReviewDraft(input, url, template.replace("<choice: pick one>", "false"));
+  assert.deepEqual(
+    saved.map((u) => u.content),
+    [{ multipleSelect: ["1"] }],
+  );
+  await assert.rejects(
+    latticeReviewDraft(input, url, template.replace("<choice: pick one>", "maybe")),
+    /Invalid choice/,
+  );
+  await assert.rejects(
+    latticeReviewDraft(input, url, template.replace("<answer: write here>", "text <answer: write here>")),
+    /whole placeholder/,
+  );
+  await assert.rejects(
+    latticeReviewDraft(input, url, template.replace("<answer: write here>", "text &lt;answer: write here&gt;")),
+    /placeholder/,
+  );
 });

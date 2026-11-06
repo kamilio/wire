@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
+import { decodeHTML } from "entities";
 import type { RuntimeCapabilities } from "wire-core";
 import { browser, type Query } from "./browser.js";
 import { richText } from "./markdown.js";
@@ -130,6 +131,41 @@ function nativeBody(md: string) {
     })
     .join("\n");
 }
+function slots(q: Q) {
+  const t = q.revision.__typename;
+  const pick = q.revision.scale
+    ? "<rating: pick one>"
+    : q.revision.choices
+      ? t.startsWith("MultipleSelect")
+        ? "<choices: pick one or more>"
+        : "<choice: pick one>"
+      : "";
+  const text = t.includes("Body") ? (pick ? "<comment: write here>" : "<answer: write here>") : "";
+  return { pick, text };
+}
+function withoutPlaceholders(answer: string, q: Q) {
+  const { pick, text } = slots(q);
+  let skippedPick = false,
+    skippedText = false;
+  const lines = answer.split("\n").filter((line) => {
+    const value = line.trim();
+    if (pick && value === pick) {
+      skippedPick = true;
+      return false;
+    }
+    if (text && value === text) {
+      skippedText = true;
+      return false;
+    }
+    if (/<(?:answer|choice|choices|rating|comment):/i.test(decodeHTML(line)))
+      throw Error("Replace the whole placeholder in: " + heading(q));
+    return true;
+  });
+  let cleaned = lines.join("\n").trim();
+  if (skippedPick && text && !skippedText && cleaned && !/^(?:Selected|Rating|Comment):/i.test(cleaned))
+    cleaned = "Comment: " + cleaned;
+  return cleaned;
+}
 function draftDocument(r: Review, url: URL, markdown?: string) {
   const titles = r.questions.map(heading);
   if (new Set(titles).size !== titles.length)
@@ -137,7 +173,7 @@ function draftDocument(r: Review, url: URL, markdown?: string) {
   const preamble = intro(r, url),
     limit = r.reviewGroup.reviewTemplate.wordCountLimit;
   const guides = r.questions.map((q) => help(q, limit));
-  const currentAnswers = titles.map((_, i) => {
+  const replies = titles.map((_, i) => {
     const q = r.questions[i]!,
       c = q.reviewResponse?.content;
     const selected = (c?.multipleSelect ?? [])
@@ -148,12 +184,18 @@ function draftDocument(r: Review, url: URL, markdown?: string) {
         ? "Rating: " + choice(q.revision.scale, Number(c.rating) - 1)
         : "";
     const body = c?.body && richText(c.body);
-    return [selected || rating, body && !selected && !rating && (q.revision.choices || q.revision.scale) ? "Comment: " + body : body].filter(Boolean).join("\n\n");
+    const { pick, text } = slots(q);
+    const field = selected || rating,
+      prose = body && !field && pick ? "Comment: " + body : body;
+    return {
+      current: [field, prose].filter(Boolean).join("\n\n"),
+      display: [field || pick, prose || text].filter(Boolean).join("\n\n"),
+    };
   });
   const template =
     [
       preamble,
-      ...titles.map((h, i) => ["## " + h, guides[i], currentAnswers[i]].filter(Boolean).join("\n\n")),
+      ...titles.map((h, i) => ["## " + h, guides[i], replies[i]!.display].filter(Boolean).join("\n\n")),
     ].join("\n\n") + "\n";
   const local: Record<string, string> = {};
   const updates: { reviewRequestQuestionId: string; content: Content }[] = [];
@@ -195,8 +237,9 @@ function draftDocument(r: Review, url: URL, markdown?: string) {
       answer = answer.slice(guides[i]!.length).trim();
     else if (answer.startsWith("> Required for submission.") || answer.startsWith("> Optional."))
       throw Error("Template guidance changed for: " + h);
+    answer = withoutPlaceholders(answer, q);
     local[q.id] = hash(answer);
-    if (!answer || answer === currentAnswers[i]) continue;
+    if (!answer || answer === replies[i]!.current) continue;
     const t = q.revision.__typename,
       hasBody = /^(?:Body|(?:Rating|MultipleChoice|MultipleSelect)AndBody)QuestionRevision$/.test(t);
     const old = q.reviewResponse?.content;
@@ -318,6 +361,12 @@ async function save(
   request: string,
   updates: ReturnType<typeof draftDocument>["updates"],
 ) {
+  if (
+    updates.some(
+      (u) => u.content.body && /<(?:answer|choice|choices|rating|comment):/i.test(decodeHTML(u.content.body)),
+    )
+  )
+    throw Error("Unresolved placeholder in outgoing draft. Nothing was sent.");
   const mutation =
     "mutation SaveDraftReviewResponsesMutation($input:SaveDraftReviewResponsesInput!){saveDraftReviewResponses(input:$input){errors results{reviewRequestQuestion{id reviewResponse{content}} reviewRequest{entityId submittedAt}}}}";
   const data = {
@@ -444,17 +493,57 @@ export async function syncLatticeDrafts(
   input: string | undefined,
   directory: string,
 ) {
-  const stateFile = join(directory, ".wire-lattice-drafts.json");
+  const stateName = ".wire-lattice-drafts.json",
+    folderPattern = /^lattice-drafts(?:-\d{4}(?:-.+)?)?$/;
+  const cwdEntries = await readdir(directory, { withFileTypes: true });
+  if (!folderPattern.test(basename(directory)) && !cwdEntries.some((e) => e.name === stateName)) {
+    if (input) {
+      const { url, cycle } = target(input, false);
+      const info = await browser(
+        runtime,
+        url,
+        async (query) =>
+          (
+            await query<{ viewer: { cycle: { name: string; createdAt: string } } }>(
+              "($cycle:String!){viewer{cycle:findReviewCycle(reviewCycleId:$cycle){name createdAt}}}",
+              { cycle },
+            )
+          ).viewer.cycle,
+      );
+      const years = info.name.match(/\b(?:19|20)\d{2}\b/g);
+      const year = years?.length === 1 ? years[0] : info.createdAt.slice(0, 4);
+      if (!/^\d{4}$/.test(year!)) throw Error("Missing year for this Lattice cycle.");
+      directory = join(directory, "lattice-drafts-" + year);
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+    } else {
+      const folders = cwdEntries.filter((e) => e.isDirectory() && folderPattern.test(e.name));
+      if (folders.length !== 1)
+        throw Error("Run wire lattice sync in a saved drafts folder, or provide the cycle requests URL.");
+      directory = join(directory, folders[0]!.name);
+    }
+  }
+  const stateFile = join(directory, stateName);
   const lock = join(directory, ".wire-lattice-sync.lock");
   await mkdir(lock, { mode: 0o700 });
   try {
     const entries = await readdir(directory, { withFileTypes: true });
-    const state: Baseline = entries.some((e) => e.name === ".wire-lattice-drafts.json")
+    const stored = entries.some((e) => e.name === stateName)
       ? JSON.parse(await readFile(stateFile, "utf8"))
-      : {};
+      : null;
+    const state: Baseline = stored?.reviews ?? stored ?? {};
     const known = [...new Set(Object.keys(state).map((s) => s.replace(/\/response\/[^/]+$/, "/requests")))];
-    if (!input && known.length !== 1) throw Error("Provide the Lattice cycle requests URL.");
-    const { url, cycle } = target(input ?? known[0]!, false);
+    const source = stored?.source ?? (known.length === 1 ? known[0] : undefined);
+    if (!input && !source) throw Error("Provide the Lattice cycle requests URL for this folder's first sync.");
+    const { url, cycle } = target(input ?? source, false);
+    if (source && source !== url.href)
+      throw Error("This drafts folder is already linked to another Lattice cycle: " + source);
+    let persisted = stored?.source === url.href;
+    const saveState = async () => {
+      const tmp = join(lock, "state.json");
+      await writeFile(tmp, JSON.stringify({ source: url.href, reviews: state }) + "\n", { mode: 0o600 });
+      await rename(tmp, stateFile);
+      persisted = true;
+    };
     const docs = new Map<string, { name: string; md: string }>();
     const names = new Set(entries.map((e) => e.name.toLowerCase()));
     for (const e of entries) {
@@ -467,7 +556,8 @@ export async function syncLatticeDrafts(
     }
     return await browser(runtime, url, async (query, args) => {
       const jobs = [];
-      let created = 0,
+      let refreshed = 0,
+        created = 0,
         answers = 0;
       for (const row of await openRequests(query, cycle)) {
         const address = new URL("response/" + row.entityId, url);
@@ -522,9 +612,40 @@ export async function syncLatticeDrafts(
             ];
           }),
         );
-        jobs.push({ key, name, template, create: !doc, updates, questions, address, request: row.entityId });
+        const markers = r.questions.flatMap((q) => Object.values(slots(q))).filter(Boolean);
+        const unmarked = (md: string) =>
+          md
+            .split("\n\n")
+            .filter((block) => !markers.includes(block.trim()))
+            .join("\n\n")
+            .trimEnd();
+        const refresh = doc && doc.md.trimEnd() !== template.trimEnd() && unmarked(doc.md) === unmarked(template);
+        jobs.push({
+          key,
+          name,
+          template,
+          create: !doc,
+          before: doc?.md,
+          refresh,
+          updates,
+          questions,
+          address,
+          request: row.entityId,
+        });
       }
       for (const job of jobs) {
+        if (
+          (job.refresh || job.updates.length) &&
+          job.before !== undefined &&
+          (await readFile(join(directory, job.name), "utf8")) !== job.before
+        )
+          throw Error("Draft file changed during sync: " + job.name);
+        if (job.refresh) {
+          const tmp = join(lock, "template.md");
+          await writeFile(tmp, job.template, { mode: 0o600 });
+          await rename(tmp, join(directory, job.name));
+          refreshed++;
+        }
         if (job.create) {
           await writeFile(join(directory, job.name), job.template, { flag: "wx", mode: 0o600 });
           created++;
@@ -536,11 +657,10 @@ export async function syncLatticeDrafts(
         const next = { file: job.name, questions: job.questions };
         if (JSON.stringify(state[job.key]) === JSON.stringify(next)) continue;
         state[job.key] = next;
-        const tmp = join(lock, "state.json");
-        await writeFile(tmp, JSON.stringify(state) + "\n", { mode: 0o600 });
-        await rename(tmp, stateFile);
+        await saveState();
       }
-      return `${jobs.length} open reviews; ${created} placeholder(s) created; ${answers} draft answer(s) saved. Nothing was submitted.`;
+      if (!persisted) await saveState();
+      return `${basename(directory)}: ${jobs.length} open reviews; ${created} placeholder(s) created; ${refreshed} template(s) refreshed; ${answers} draft answer(s) saved. Nothing was submitted.`;
     });
   } finally {
     await rm(lock, { recursive: true });
