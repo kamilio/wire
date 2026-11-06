@@ -66,10 +66,15 @@ Run `wire --help` for the full CLI.
 ```sh
 wire asana projects list           # workspace → team → active project, with project IDs
 wire asana tasks list <project-id> # task names, completion status, and IDs
-wire asana tasks show <task-id>    # description, assignee, and activity
+wire asana tasks show <task-id>    # Markdown description, custom fields, comments with IDs, and activity
+wire asana tasks edit <task-id> --assignee person@example.com
+wire asana tasks edit <task-id> --title 'New title' --body 'A **Markdown** description'
+wire asana tasks edit <task-id> --fields '{"completed":false,"custom_fields":{"<field-id>":"<option-id>"}}'
+wire asana tasks comment <task-id> --body 'See the [spec](https://example.com/spec).'
+wire asana comments edit <comment-id> --body 'Updated **comment**.'
 ```
 
-Each command also accepts `--json` for structured output.
+Use `tasks show --json` for enum option IDs under `data.task.custom_fields`. For `--fields`, supply only the writable Asana properties to change. Keep IDs as strings; numbers, arrays, booleans, and null keep their JSON types. Task descriptions, text custom fields, and comment bodies take Markdown. To revise existing text, `tasks show --json` returns the description in `data.task.body_markdown` and each comment in `data.stories[].body_markdown`. Asana enforces field and comment edit permissions.
 
 ### People and Slack threads
 

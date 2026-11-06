@@ -35,6 +35,11 @@ type AsanaExplorer = {
     projects(): ReturnType<typeof listAsanaProjects>;
     tasks(project: string): ReturnType<typeof listAsanaTasks>;
     show(task: string): Promise<FetchedDocument>;
+    writes?: {
+        edit(task: string, fields: JsonObject): Promise<JsonObject>;
+        comment(task: string, body: string): Promise<JsonObject>;
+        editComment(comment: string, body: string): Promise<JsonObject>;
+    };
 };
 export declare function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, readInput?: TextInputReader, options?: WireRootOptions, sendSlack?: (destination: string, markdown: string) => Promise<SlackSentMessage>, lookupSlack?: (query: string) => Promise<readonly JsonObject[]>, editSlack?: (url: string, markdown: string) => Promise<SlackSentMessage>, lookupNotion?: (query: string) => Promise<readonly JsonObject[]>, asana?: AsanaExplorer): WireRoot;
 export {};

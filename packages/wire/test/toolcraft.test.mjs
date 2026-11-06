@@ -103,6 +103,17 @@ test("CLI help renders the URL attach command without a blank command name", asy
   assert.doesNotMatch(execution.stdout, /return every updated resource|workspace watch config|resolved resource metadata/);
 });
 
+test("Asana CLI parses partial edits, assignment by email, and multiline comment bodies", async () => {
+  const run = async (...args) => JSON.parse((await execFileAsync(process.execPath, [fixture, "asana", ...args, "--json"])).stdout);
+  const body = "**Progress**\n\n- First\n- Second";
+  assert.deepEqual(await run("tasks", "edit", "12", "--assignee", "ada@example.com", "--body", body, "--fields", '{"custom_fields":{"3":0},"due_on":null}'),
+    { gid: "12", fields: { assignee: "ada@example.com", notes: body, custom_fields: { "3": 0 }, due_on: null } });
+  assert.deepEqual(await run("tasks", "comment", "12", "--body", body), { task: "12", body, gid: "99" });
+  assert.deepEqual(await run("comments", "edit", "99", "--body", body), { gid: "99", body });
+  await assert.rejects(run("tasks", "edit", "12", "--title", "X", "--fields", '{"name":"Y"}'), e => /specified twice: name/.test(e.stdout));
+  await assert.rejects(run("tasks", "edit", "12", "--fields", "[]"), e => /JSON object/.test(e.stdout));
+});
+
 test("CLI with no arguments renders root help", async () => {
   const execution = await execFileAsync(process.execPath, [fixture], { env: { ...process.env, NO_COLOR: "1" } });
   assert.match(execution.stdout, /^wire (?:-|—) Sync web resources with local Markdown\./m);

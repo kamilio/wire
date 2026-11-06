@@ -1,4 +1,4 @@
-import type { JsonValue } from "wire-core";
+import type { JsonObject, JsonValue } from "wire-core";
 import type { RuntimeCapabilities } from "wire-core";
 export declare const asanaTaskService: Readonly<{
     name: string;
@@ -37,10 +37,15 @@ export declare function showAsanaTask(runtime: RuntimeCapabilities, identifier: 
     markdown: `${string}
 `;
     data: {
-        task: Readonly<{
+        task: {
+            body_markdown: string;
+        };
+        stories: Readonly<{
             [key: string]: JsonValue;
-        }>;
-        stories: readonly JsonValue[];
+        }>[];
     };
 }>>;
+export declare function editAsanaTask(runtime: RuntimeCapabilities, task: string, fields: JsonObject): Promise<JsonObject>;
+export declare function addAsanaComment(runtime: RuntimeCapabilities, task: string, body: string): Promise<JsonObject>;
+export declare function editAsanaComment(runtime: RuntimeCapabilities, comment: string, body: string): Promise<JsonObject>;
 //# sourceMappingURL=asana-task.d.ts.map

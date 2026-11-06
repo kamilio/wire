@@ -296,7 +296,7 @@ function renderRemovedCommand(argv: readonly string[]): boolean {
 function renderUnknownAuthCommand(argv: readonly string[]): boolean {
   if (hasRootSeparator(argv)) return false;
   const words = positionalWords(argv);
-  if (words === null || words.length < 2 || !authServices.has(words[0]!) || authCommands.has(words[1]!) || words[0] === "asana" && (words[1] === "projects" || words[1] === "tasks") || (words[0] === "slack" || words[0] === "notion") && words[1] === "users" || words[0] === "slack" && (words[1] === "send" || words[1] === "edit" || slackResourceCommands.has(words[1]!))) return false;
+  if (words === null || words.length < 2 || !authServices.has(words[0]!) || authCommands.has(words[1]!) || words[0] === "asana" && (words[1] === "projects" || words[1] === "tasks" || words[1] === "comments") || (words[0] === "slack" || words[0] === "notion") && words[1] === "users" || words[0] === "slack" && (words[1] === "send" || words[1] === "edit" || slackResourceCommands.has(words[1]!))) return false;
   renderCliError(argv, `Unknown command: ${words[1]}`, `wire ${words[0]} --help`, `Unknown command: ${cliValue(words[1]!)}`);
   return true;
 }

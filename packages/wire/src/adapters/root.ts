@@ -420,6 +420,11 @@ type AsanaExplorer = {
   projects(): ReturnType<typeof listAsanaProjects>;
   tasks(project: string): ReturnType<typeof listAsanaTasks>;
   show(task: string): Promise<FetchedDocument>;
+  writes?: {
+    edit(task: string, fields: JsonObject): Promise<JsonObject>;
+    comment(task: string, body: string): Promise<JsonObject>;
+    editComment(comment: string, body: string): Promise<JsonObject>;
+  };
 };
 
 export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, readInput?: TextInputReader, options: WireRootOptions = { allowPaste: true }, sendSlack?: (destination: string, markdown: string) => Promise<SlackSentMessage>, lookupSlack?: (query: string) => Promise<readonly JsonObject[]>, editSlack?: (url: string, markdown: string) => Promise<SlackSentMessage>, lookupNotion?: (query: string) => Promise<readonly JsonObject[]>, asana?: AsanaExplorer): WireRoot {
@@ -456,7 +461,8 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
   const authCommand = (service: (typeof authServices)[number]) => {
     const title = serviceTitle(service);
     const group = authGroup(service, `Manage ${title} login.`, "Capture cookies once; normal commands reuse saved cookies.", auth!, readInput, options);
-    if (service === "asana" && asana !== undefined) return defineGroup({ ...group, description: "Explore Asana projects and tasks, and manage login.", children: [...group.children,
+    const writes = asana?.writes;
+    if (service === "asana" && asana !== undefined) return defineGroup({ ...group, description: "Browse Asana projects, edit tasks and comments, and manage login.", children: [...group.children,
       defineGroup({ name: "projects", description: "Browse projects.", children: [defineCommand({
         name: "list", description: "List active projects by workspace and team.", params: S.Object({}),
         handler: () => userFacing(() => asana.projects()),
@@ -469,16 +475,48 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
           })),
         ].join("\n")).join("\n\n") || "No workspaces"),
       })] }),
-      defineGroup({ name: "tasks", description: "Browse tasks.", children: [defineCommand({
+      defineGroup({ name: "tasks", description: "Browse and edit tasks.", children: [defineCommand({
         name: "list", description: "List tasks in a project, with completion status and task IDs.", positional: ["project"],
         params: S.Object({ project: S.String({ description: "Asana project ID." }) }),
         handler: ({ params }) => userFacing(() => asana.tasks(params.project)),
         render: render<Awaited<ReturnType<typeof listAsanaTasks>>>((tasks) => tasks.map((task) => `- [${task.completed ? "x" : " "}] ${lineText(task.name)}  ${task.gid}`).join("\n") || "No tasks"),
       }), defineCommand({
-        name: "show", description: "Show a task's description, assignee, completion status, and activity.", positional: ["task"],
+        name: "show", description: "Show a task's properties, custom field IDs, Markdown description, comments, and activity.", positional: ["task"],
         params: S.Object({ task: S.String({ description: "Asana task ID." }) }),
         handler: ({ params }) => userFacing(() => asana.show(params.task)), render: wirePresentation.view,
-      })] }),
+      }), ...(writes ? [defineCommand({
+        name: "edit", description: "Update task properties. Use --fields with a JSON object for other writable Asana properties, including custom_fields keyed by ID.", positional: ["task"],
+        params: S.Object({
+          task: S.String({ description: "Asana task ID." }),
+          title: S.Optional(S.String({ description: "New task name." })),
+          body: S.Optional(S.String({ description: "New description in Markdown." })),
+          assignee: S.Optional(S.String({ description: "Email, user ID, or me." })),
+          due: S.Optional(S.String({ description: "Due date (YYYY-MM-DD)." })),
+          fields: S.Optional(S.Json()),
+        }),
+        handler: ({ params: { task, fields, title, body, assignee, due } }) => userFacing(async () => {
+          if (fields !== undefined && (!fields || typeof fields !== "object" || Array.isArray(fields))) throw new UserError("--fields requires a JSON object.");
+          const changes = { ...fields };
+          for (const [key, value] of Object.entries({ name: title, notes: body, assignee, due_on: due })) {
+            if (value === undefined) continue;
+            if (Object.hasOwn(changes, key)) throw new UserError(`Task field specified twice: ${key}.`);
+            changes[key] = value;
+          }
+          return writes.edit(task, changes);
+        }),
+        render: render<JsonObject>((task) => `Updated task ${task["gid"]}: ${task["permalink_url"]}`),
+      }), defineCommand({
+        name: "comment", description: "Add a Markdown comment to a task.", positional: ["task"],
+        params: S.Object({ task: S.String({ description: "Asana task ID." }), body: S.String({ description: "Comment in Markdown." }) }),
+        handler: ({ params }) => userFacing(() => writes.comment(params.task, params.body)),
+        render: render<JsonObject>((comment) => `Added comment ${comment["gid"]}`),
+      })] : [])] }),
+      ...(writes ? [defineGroup({ name: "comments", description: "Edit Asana comments.", children: [defineCommand({
+        name: "edit", description: "Replace an editable comment using its story ID from tasks show.", positional: ["comment"],
+        params: S.Object({ comment: S.String({ description: "Comment ID from tasks show." }), body: S.String({ description: "Replacement comment in Markdown." }) }),
+        handler: ({ params }) => userFacing(() => writes.editComment(params.comment, params.body)),
+        render: render<JsonObject>((comment) => `Updated comment ${comment["gid"]}`),
+      })] })] : []),
     ] });
     const lookup = service === "slack" ? lookupSlack : service === "notion" ? lookupNotion : undefined;
     const users = lookup === undefined ? [] : [defineGroup({ name: "users", description: "Find people by email or name.", children: [defineCommand({
