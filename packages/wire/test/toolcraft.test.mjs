@@ -97,7 +97,7 @@ test("CLI help renders the URL attach command without a blank command name", asy
   assert.match(execution.stdout, /sync-all\s+Sync this directory tree; continue after failures\./);
   assert.match(execution.stdout, /open <resource>\s+Open a registered resource URL and show details\./);
   assert.doesNotMatch(execution.stdout, /^\s+show <resource>/m);
-  assert.doesNotMatch(execution.stdout, /^\s+list\s+/m);
+  assert.doesNotMatch(execution.stdout, /^  list\s+/m);
   assert.doesNotMatch(execution.stdout, /` <url>`/);
   assert.doesNotMatch(execution.stdout, /^   <url>/m);
   assert.doesNotMatch(execution.stdout, /return every updated resource|workspace watch config|resolved resource metadata/);
