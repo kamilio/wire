@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { addAsanaComment, editAsanaComment, editAsanaTask, showAsanaTask } from "provider-asana";
+import { addAsanaComment, createAsanaTask, editAsanaComment, editAsanaTask, showAsanaTask } from "provider-asana";
 import { asanaMarkdown, asanaRichText } from "../../provider-asana/dist/asana-markdown.js";
 
 function api(handler) {
@@ -47,6 +47,26 @@ test("task-only Markdown formats use task tags; comments never post task-only ta
   assert.equal(asanaRichText("# Result", "comment"), "<body><strong>Result</strong></body>");
   assert.throws(() => asanaRichText(md, "comment"), /tables in task descriptions only/);
   assert.throws(() => asanaRichText("[x](javascript:alert)", "comment"), /absolute HTTP/);
+});
+
+test("create writes a project task with or without assignment and a Markdown description", async () => {
+  const calls = [];
+  const created = { gid: "2", permalink_url: "https://app.asana.com/0/1/2" };
+  const runtime = api((path, method, data, params) => {
+    assert.equal(path, "/tasks");
+    assert.equal(method, "POST");
+    assert.match(params.get("opt_fields"), /permalink_url/);
+    calls.push(data);
+    return { data: created };
+  });
+  await assert.rejects(createAsanaTask(runtime, "bad", "Ship"), /numeric Asana project/);
+  await assert.rejects(createAsanaTask(runtime, "1", " "), /title cannot be empty/);
+  assert.deepEqual(await createAsanaTask(runtime, "1", "Ship", "**Ready**", "ada@example.com"), created);
+  await createAsanaTask(runtime, "1", "Next");
+  assert.deepEqual(calls, [
+    { projects: ["1"], name: "Ship", html_notes: "<body><strong>Ready</strong></body>", assignee: "ada@example.com" },
+    { projects: ["1"], name: "Next" },
+  ]);
 });
 
 test("edit assigns by email and writes Markdown and native field values in a single partial update", async () => {

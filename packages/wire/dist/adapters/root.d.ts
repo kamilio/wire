@@ -37,6 +37,7 @@ type AsanaExplorer = {
     tasks(project: string): ReturnType<typeof listAsanaTasks>;
     show(task: string): Promise<FetchedDocument>;
     writes?: {
+        create?(project: string, title: string, body?: string, assignee?: string): Promise<JsonObject>;
         edit(task: string, fields: JsonObject): Promise<JsonObject>;
         comment(task: string, body: string): Promise<JsonObject>;
         editComment(comment: string, body: string): Promise<JsonObject>;

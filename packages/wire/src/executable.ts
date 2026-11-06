@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
-import { addAsanaComment, editAsanaComment, editAsanaTask, listAsanaProjects, listAsanaTasks, lookupAsanaUsers, showAsanaTask } from "provider-asana";
+import { addAsanaComment, createAsanaTask, editAsanaComment, editAsanaTask, listAsanaProjects, listAsanaTasks, lookupAsanaUsers, showAsanaTask } from "provider-asana";
 import { sendSlackMessage, editSlackMessage, lookupSlackUsers } from "provider-slack";
 
 import { lookupNotionUsers } from "provider-notion";
@@ -132,6 +132,6 @@ export function createExecutableRoot(environment: NodeEnvironment, currentDirect
   const wire = withWireHooks(configuredWire, { currentDirectory, home, environment: configuredEnvironment() });
   return createRoot(wire, currentDirectory, auth, readStandardInput, options, (destination, markdown) => sendSlackMessage(runtime, destination, markdown), (query) => lookupSlackUsers(runtime, query), (url, markdown) => editSlackMessage(runtime, url, markdown), (query) => lookupNotionUsers(runtime, query), {
     lookup: (query) => lookupAsanaUsers(runtime, query), projects: () => listAsanaProjects(runtime), tasks: (project) => listAsanaTasks(runtime, project), show: (task) => showAsanaTask(runtime, task),
-    writes: { edit: (task, fields) => editAsanaTask(runtime, task, fields), comment: (task, body) => addAsanaComment(runtime, task, body), editComment: (comment, body) => editAsanaComment(runtime, comment, body) },
+    writes: { create: (project, title, body, assignee) => createAsanaTask(runtime, project, title, body, assignee), edit: (task, fields) => editAsanaTask(runtime, task, fields), comment: (task, body) => addAsanaComment(runtime, task, body), editComment: (comment, body) => editAsanaComment(runtime, comment, body) },
   });
 }

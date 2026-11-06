@@ -106,6 +106,8 @@ test("CLI help renders the URL attach command without a blank command name", asy
 test("Asana CLI parses partial edits, assignment by email, and multiline comment bodies", async () => {
   const run = async (...args) => JSON.parse((await execFileAsync(process.execPath, [fixture, "asana", ...args, "--json"])).stdout);
   const body = "**Progress**\n\n- First\n- Second";
+  assert.deepEqual(await run("tasks", "create", "12", "--title", "Ship", "--body", body, "--assignee", "ada@example.com"),
+    { gid: "34", project: "12", title: "Ship", body, assignee: "ada@example.com" });
   assert.deepEqual(await run("tasks", "edit", "12", "--assignee", "ada@example.com", "--body", body, "--fields", '{"custom_fields":{"3":0},"due_on":null}'),
     { gid: "12", fields: { assignee: "ada@example.com", notes: body, custom_fields: { "3": 0 }, due_on: null } });
   assert.deepEqual(await run("tasks", "comment", "12", "--body", body), { task: "12", body, gid: "99" });
@@ -1767,7 +1769,7 @@ test("native toolcraft help exposes Wire's enabled global controls", async () =>
   assert.doesNotMatch(execution.stdout, /approvals/);
   assert.match(execution.stdout, /<url>/);
   assert.doesNotMatch(execution.stdout, /^\s+view(?:\s|$)/m);
-  assert.doesNotMatch(execution.stdout, /^\s+create(?:\s|$)/m);
+  assert.doesNotMatch(execution.stdout, /^  create(?:\s|$)/m);
   assert.doesNotMatch(execution.stdout, /^\s+list\s+List registered resources without syncing them\./m);
   assert.doesNotMatch(execution.stdout, /^\s+show <resource>\s+Show registered resource details without opening the source URL\./m);
   assert.doesNotMatch(execution.stdout, /switch-db/);

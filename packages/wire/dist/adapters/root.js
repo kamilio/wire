@@ -446,6 +446,7 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
                         }).join("\n")),
                     })] })];
         const writes = asana?.writes;
+        const createTask = writes?.create;
         if (service === "asana" && asana !== undefined)
             return defineGroup({ ...group, description: "Browse Asana projects, edit tasks and comments, and manage login.", children: [...group.children, ...users,
                     defineGroup({ name: "projects", description: "Browse projects.", children: [defineCommand({
@@ -459,7 +460,7 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
                                     })),
                                 ].join("\n")).join("\n\n") || "No workspaces"),
                             })] }),
-                    defineGroup({ name: "tasks", description: "Browse and edit tasks.", children: [defineCommand({
+                    defineGroup({ name: "tasks", description: "Browse, create, and edit tasks.", children: [defineCommand({
                                 name: "list", description: "List tasks in a project, with completion status and task IDs.", positional: ["project"],
                                 params: S.Object({ project: S.String({ description: "Asana project ID." }) }),
                                 handler: ({ params }) => userFacing(() => asana.tasks(params.project)),
@@ -468,7 +469,17 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
                                 name: "show", description: "Show a task's properties, custom field IDs, Markdown description, comments, and activity.", positional: ["task"],
                                 params: S.Object({ task: S.String({ description: "Asana task ID." }) }),
                                 handler: ({ params }) => userFacing(() => asana.show(params.task)), render: wirePresentation.view,
-                            }), ...(writes ? [defineCommand({
+                            }), ...(createTask ? [defineCommand({
+                                    name: "create", description: "Create a task in a project.", positional: ["project"],
+                                    params: S.Object({
+                                        project: S.String({ description: "Asana project ID." }),
+                                        title: S.String({ description: "Task name." }),
+                                        body: S.Optional(S.String({ description: "Description in Markdown." })),
+                                        assignee: S.Optional(S.String({ description: "Email, user ID, or me." })),
+                                    }),
+                                    handler: ({ params }) => userFacing(() => createTask(params.project, params.title, params.body, params.assignee)),
+                                    render: render((task) => `Created task ${task["gid"]}: ${task["permalink_url"]}`),
+                                })] : []), ...(writes ? [defineCommand({
                                     name: "edit", description: "Update task properties. Use --fields with a JSON object for other writable Asana properties, including custom_fields keyed by ID.", positional: ["task"],
                                     params: S.Object({
                                         task: S.String({ description: "Asana task ID." }),

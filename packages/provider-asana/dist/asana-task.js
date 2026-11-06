@@ -126,6 +126,14 @@ export async function showAsanaTask(runtime, identifier) {
         lines.push("", "## Activity", "", ...activity);
     return Object.freeze({ title: task["name"], markdown: `${lines.join("\n").trimEnd()}\n`, data: { task: { ...task, body_markdown: bodyMarkdown }, stories: storyData } });
 }
+export async function createAsanaTask(runtime, project, title, body, assignee) {
+    if (!/^\d+$/.test(project))
+        throw new Error("Expected a numeric Asana project ID.");
+    if (!title.trim())
+        throw new Error("Task title cannot be empty.");
+    const data = { name: title, projects: [project], ...(body === undefined ? {} : { html_notes: asanaRichText(body, "task") }), ...(assignee === undefined ? {} : { assignee }) };
+    return object((await request(runtime, "POST", "/tasks", { opt_fields: "name,permalink_url" }, data))["data"]);
+}
 export async function editAsanaTask(runtime, task, fields) {
     if (!/^\d+$/.test(task))
         throw new Error("Expected a numeric Asana task ID.");
