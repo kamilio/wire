@@ -65,10 +65,12 @@ Run `wire --help` for the full CLI.
 
 ```sh
 wire asana projects list           # workspace → team → active project, with project IDs
+wire asana projects show <project-id> # project sections in order, with section IDs
+wire asana tasks move <task-id> --project <project-id> --section <name-or-id>
 wire asana tasks list <project-id> # task names, completion status, and IDs
 wire asana tasks show <task-id>    # Markdown description, custom fields, comments with IDs, and activity
 wire asana users lookup <name-or-email>  # find an assignee by partial name or exact email
-wire asana tasks create <project-id> --title 'New task' --body 'A **Markdown** description' --assignee person@example.com
+wire asana tasks create <project-id> --section <name-or-id> --title 'New task' --body 'A **Markdown** description' --assignee person@example.com
 wire asana tasks edit <task-id> --assignee person@example.com
 wire asana tasks edit <task-id> --title 'New title' --body 'A **Markdown** description'
 wire asana tasks edit <task-id> --fields '{"completed":false,"custom_fields":{"<field-id>":"<option-id>"}}'

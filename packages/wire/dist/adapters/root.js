@@ -459,6 +459,11 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
                                         return [`${last ? "└──" : "├──"} ${lineText(team.name)}`, ...team.projects.map((project, j) => `${last ? "    " : "│   "}${j === team.projects.length - 1 ? "└──" : "├──"} ${lineText(project.name)}  ${project.gid}`)];
                                     })),
                                 ].join("\n")).join("\n\n") || "No workspaces"),
+                            }), defineCommand({
+                                name: "show", description: "Show a project and its sections in project order.", positional: ["project"],
+                                params: S.Object({ project: S.String({ description: "Asana project ID." }) }),
+                                handler: ({ params }) => userFacing(() => asana.project(params.project)),
+                                render: render((project) => [lineText(project.name), project.permalink_url, "", "Sections:", ...project.sections.map((section) => `- ${lineText(section.name)}  ${section.gid}`)].join("\n")),
                             })] }),
                     defineGroup({ name: "tasks", description: "Browse, create, and edit tasks.", children: [defineCommand({
                                 name: "list", description: "List tasks in a project, with completion status and task IDs.", positional: ["project"],
@@ -470,15 +475,16 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
                                 params: S.Object({ task: S.String({ description: "Asana task ID." }) }),
                                 handler: ({ params }) => userFacing(() => asana.show(params.task)), render: wirePresentation.view,
                             }), ...(createTask ? [defineCommand({
-                                    name: "create", description: "Create a task in a project.", positional: ["project"],
+                                    name: "create", description: "Create a task in a project section. List sections with wire asana projects show <project>.", positional: ["project"],
                                     params: S.Object({
                                         project: S.String({ description: "Asana project ID." }),
                                         title: S.String({ description: "Task name." }),
+                                        section: S.String({ description: "Section ID or exact section name." }),
                                         body: S.Optional(S.String({ description: "Description in Markdown." })),
                                         assignee: S.Optional(S.String({ description: "Email, user ID, or me." })),
                                     }),
-                                    handler: ({ params }) => userFacing(() => createTask(params.project, params.title, params.body, params.assignee)),
-                                    render: render((task) => `Created task ${task["gid"]}: ${task["permalink_url"]}`),
+                                    handler: ({ params }) => userFacing(() => createTask(params.project, params.title, params.section, params.body, params.assignee)),
+                                    render: render((task) => `Created task ${task["gid"]}: ${task["permalink_url"]}\n${task["warning"] ? `Warning: ${task["warning"]}` : `Section: ${task["section"]["name"]}`}`),
                                 })] : []), ...(writes ? [defineCommand({
                                     name: "edit", description: "Update task properties. Use --fields with a JSON object for other writable Asana properties, including custom_fields keyed by ID.", positional: ["task"],
                                     params: S.Object({
@@ -503,6 +509,11 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
                                         return writes.edit(task, changes);
                                     }),
                                     render: render((task) => `Updated task ${task["gid"]}: ${task["permalink_url"]}`),
+                                }), defineCommand({
+                                    name: "move", description: "Move a task to a section within one of its projects.", positional: ["task"],
+                                    params: S.Object({ task: S.String({ description: "Asana task ID." }), project: S.String({ description: "Project containing the task." }), section: S.String({ description: "Section name or ID from projects show." }) }),
+                                    handler: ({ params }) => userFacing(() => writes.move(params.task, params.project, params.section)),
+                                    render: render((result) => `Task ${result.task} is in ${lineText(result.section.name)} (${result.section.gid}).`),
                                 }), defineCommand({
                                     name: "comment", description: "Add a Markdown comment to a task.", positional: ["task"],
                                     params: S.Object({ task: S.String({ description: "Asana task ID." }), body: S.String({ description: "Comment in Markdown." }) }),

@@ -1,3 +1,4 @@
+import { listAsanaSections } from "./asana-sections.js";
 import { paginate, request } from "./asana-http.js";
 import { asanaChanges, asanaConflicts, asanaDocument, asanaSnapshot, parseAsanaMarkdown, renderAsanaMarkdown } from "./asana-sync.js";
 import { defineService } from "wire-core";
@@ -17,7 +18,7 @@ function projectIdentifier(url) {
 }
 async function fetchDocument(runtime, url, source) {
     const project = object((await request(runtime, "GET", `/projects/${source.identifier}`, { opt_fields: "gid,name,permalink_url" }))["data"]);
-    const sections = await paginate(runtime, `/projects/${source.identifier}/sections`, { limit: "100", opt_fields: "gid,name" });
+    const sections = await listAsanaSections(runtime, source.identifier);
     const tasks = await paginate(runtime, `/projects/${source.identifier}/tasks`, { limit: "100", opt_fields: "gid,name,completed,parent,resource_subtype,permalink_url,memberships.project.gid,memberships.section.gid" });
     const entities = [{ key: `project:${source.identifier}`, gid: source.identifier, kind: "project", name: project["name"], completed: false, parent: null, section: null, milestone: null, order: 0 }];
     const memberships = tasks.map((task) => task["memberships"].map(object).find((value) => object(value["project"])["gid"] === source.identifier));

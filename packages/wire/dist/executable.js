@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { addAsanaComment, createAsanaTask, editAsanaComment, editAsanaTask, listAsanaProjects, listAsanaTasks, lookupAsanaUsers, showAsanaTask } from "provider-asana";
+import { addAsanaComment, createAsanaTask, editAsanaComment, editAsanaTask, listAsanaProjects, listAsanaTasks, lookupAsanaUsers, moveAsanaTask, showAsanaProject, showAsanaTask } from "provider-asana";
 import { sendSlackMessage, editSlackMessage, lookupSlackUsers } from "provider-slack";
 import { lookupNotionUsers } from "provider-notion";
 import { createRoot } from "./adapters/root.js";
@@ -127,8 +127,8 @@ export function createExecutableRoot(environment, currentDirectory, options = { 
     });
     const wire = withWireHooks(configuredWire, { currentDirectory, home, environment: configuredEnvironment() });
     return createRoot(wire, currentDirectory, auth, readStandardInput, options, (destination, markdown) => sendSlackMessage(runtime, destination, markdown), (query) => lookupSlackUsers(runtime, query), (url, markdown) => editSlackMessage(runtime, url, markdown), (query) => lookupNotionUsers(runtime, query), {
-        lookup: (query) => lookupAsanaUsers(runtime, query), projects: () => listAsanaProjects(runtime), tasks: (project) => listAsanaTasks(runtime, project), show: (task) => showAsanaTask(runtime, task),
-        writes: { create: (project, title, body, assignee) => createAsanaTask(runtime, project, title, body, assignee), edit: (task, fields) => editAsanaTask(runtime, task, fields), comment: (task, body) => addAsanaComment(runtime, task, body), editComment: (comment, body) => editAsanaComment(runtime, comment, body) },
+        lookup: (query) => lookupAsanaUsers(runtime, query), projects: () => listAsanaProjects(runtime), project: (project) => showAsanaProject(runtime, project), tasks: (project) => listAsanaTasks(runtime, project), show: (task) => showAsanaTask(runtime, task),
+        writes: { move: (task, project, section) => moveAsanaTask(runtime, task, project, section), create: (project, title, section, body, assignee) => createAsanaTask(runtime, project, title, section, body, assignee), edit: (task, fields) => editAsanaTask(runtime, task, fields), comment: (task, body) => addAsanaComment(runtime, task, body), editComment: (comment, body) => editAsanaComment(runtime, comment, body) },
     });
 }
 //# sourceMappingURL=executable.js.map

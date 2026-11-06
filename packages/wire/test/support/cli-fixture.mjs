@@ -77,8 +77,10 @@ function wireFixture() {
   });
 }
 await runWireCli((currentDirectory) => createRoot(wireFixture(), currentDirectory, auth, readStandardInput, { allowPaste: true }, async (destination, markdown) => ({ channel: destination, ts: "1234567890.000001", url: "https://example.slack.com/archives/C1/p1234567890000001", markdown }), async (query) => [{ id: "U1", real_name: "Alice", profile: { email: query } }], async (url, markdown) => ({ channel: "C1", ts: "1234567890.000001", url, markdown }), async (query) => [{ userId: "notion-alice", aliases: [query] }], {
+  project: async (gid) => ({ gid, name: "Project", permalink_url: "", sections: [{ gid: "200", name: "Focus" }] }),
   writes: {
-    create: async (project, title, body, assignee) => ({ gid: "34", project, title, body, assignee }),
+    move: async (task, project, section) => ({ task, project, section: { name: section, gid: "200" } }),
+    create: async (project, title, section, body, assignee) => ({ gid: "34", project, title, section: { name: section, gid: "200" }, body, assignee }),
     edit: async (gid, fields) => ({ gid, fields }),
     comment: async (task, body) => ({ task, body, gid: "99" }),
     editComment: async (gid, body) => ({ gid, body }),

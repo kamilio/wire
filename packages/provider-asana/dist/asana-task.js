@@ -1,4 +1,5 @@
 import { asanaMarkdown, asanaRichText } from "./asana-markdown.js";
+import { resolveAsanaSection } from "./asana-sections.js";
 import { asanaHttp, request } from "./asana-http.js";
 import { defineService } from "wire-core";
 function object(value) {
@@ -87,6 +88,9 @@ export async function showAsanaTask(runtime, identifier) {
     const lines = [`# ${task["name"]}`, "", `- Source: ${task["permalink_url"]}`, `- Completed: ${task["completed"] ? "True" : "False"}`];
     if (assignee !== null)
         lines.push(`- Assignee: ${assignee["name"]}${assignee["email"] ? ` <${assignee["email"]}>` : ""}`);
+    for (const { project, section } of task["memberships"] ?? []) {
+        lines.push(`- Project: ${project["name"]} → ${section?.["name"] ?? "No section"}`);
+    }
     for (const [label, value] of [
         ["Starts", task["start_at"] ?? task["start_on"]], ["Due", task["due_at"] ?? task["due_on"]],
         ["Approval", task["resource_subtype"] === "approval" ? task["approval_status"] : null],
@@ -126,13 +130,21 @@ export async function showAsanaTask(runtime, identifier) {
         lines.push("", "## Activity", "", ...activity);
     return Object.freeze({ title: task["name"], markdown: `${lines.join("\n").trimEnd()}\n`, data: { task: { ...task, body_markdown: bodyMarkdown }, stories: storyData } });
 }
-export async function createAsanaTask(runtime, project, title, body, assignee) {
+export async function createAsanaTask(runtime, project, title, section, body, assignee) {
     if (!/^\d+$/.test(project))
         throw new Error("Expected a numeric Asana project ID.");
     if (!title.trim())
         throw new Error("Task title cannot be empty.");
-    const data = { name: title, projects: [project], ...(body === undefined ? {} : { html_notes: asanaRichText(body, "task") }), ...(assignee === undefined ? {} : { assignee }) };
-    return object((await request(runtime, "POST", "/tasks", { opt_fields: "name,permalink_url" }, data))["data"]);
+    const destination = await resolveAsanaSection(runtime, project, section);
+    const data = { name: title, projects: [project], memberships: [{ project, section: destination.gid }], ...(body === undefined ? {} : { html_notes: asanaRichText(body, "task") }), ...(assignee === undefined ? {} : { assignee }) };
+    const task = object((await request(runtime, "POST", "/tasks", { opt_fields: "name,permalink_url,memberships.project.gid,memberships.section.gid,memberships.section.name" }, data))["data"]);
+    const memberships = task["memberships"];
+    const placement = memberships?.find((membership) => membership.project["gid"] === project);
+    const actual = placement?.section ?? null;
+    if (actual?.["gid"] === destination.gid)
+        return { ...task, section: actual };
+    const location = placement ? actual ? `"${actual["name"]}" (${actual["gid"]})` : "no section" : "an unconfirmed section";
+    return { ...task, section: actual, warning: `Asana returned ${location} instead of "${destination.name}" (${destination.gid}). To correct this task: wire asana tasks move ${task["gid"]} --project ${project} --section ${destination.gid}` };
 }
 export async function editAsanaTask(runtime, task, fields) {
     if (!/^\d+$/.test(task))

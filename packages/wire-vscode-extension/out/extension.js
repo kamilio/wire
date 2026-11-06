@@ -15776,6 +15776,12 @@ async function paginate(runtime2, path, parameters) {
   return values2;
 }
 
+// ../provider-asana/src/asana-sections.ts
+async function listAsanaSections(runtime2, project) {
+  if (!/^\d+$/.test(project)) throw new Error("Expected a numeric Asana project ID.");
+  return await paginate(runtime2, `/projects/${project}/sections`, { limit: "100", opt_fields: "gid,name" });
+}
+
 // ../provider-asana/src/asana-sync.ts
 function gidFromUrl(value) {
   const parts = new URL(value).pathname.split("/").filter(Boolean);
@@ -15967,7 +15973,7 @@ function projectIdentifier(url) {
 }
 async function fetchDocument(runtime2, url, source) {
   const project = object((await request(runtime2, "GET", `/projects/${source.identifier}`, { opt_fields: "gid,name,permalink_url" }))["data"]);
-  const sections = await paginate(runtime2, `/projects/${source.identifier}/sections`, { limit: "100", opt_fields: "gid,name" });
+  const sections = await listAsanaSections(runtime2, source.identifier);
   const tasks = await paginate(runtime2, `/projects/${source.identifier}/tasks`, { limit: "100", opt_fields: "gid,name,completed,parent,resource_subtype,permalink_url,memberships.project.gid,memberships.section.gid" });
   const entities2 = [{ key: `project:${source.identifier}`, gid: source.identifier, kind: "project", name: project["name"], completed: false, parent: null, section: null, milestone: null, order: 0 }];
   const memberships = tasks.map((task) => task["memberships"].map(object).find((value) => object(value["project"])["gid"] === source.identifier));
@@ -17465,6 +17471,9 @@ async function showAsanaTask(runtime2, identifier2) {
   const assignee = task["assignee"];
   const lines = [`# ${task["name"]}`, "", `- Source: ${task["permalink_url"]}`, `- Completed: ${task["completed"] ? "True" : "False"}`];
   if (assignee !== null) lines.push(`- Assignee: ${assignee["name"]}${assignee["email"] ? ` <${assignee["email"]}>` : ""}`);
+  for (const { project, section } of task["memberships"] ?? []) {
+    lines.push(`- Project: ${project["name"]} \u2192 ${section?.["name"] ?? "No section"}`);
+  }
   for (const [label, value] of [
     ["Starts", task["start_at"] ?? task["start_on"]],
     ["Due", task["due_at"] ?? task["due_on"]],

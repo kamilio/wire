@@ -1,6 +1,6 @@
 import { type Group } from "toolcraft";
 import { type JsonObject, type FetchedDocument, type InitializedWire, type Resource, type SwitchedWireBackend, type Wire, type WireResult, type WireWatchSession } from "wire-core";
-import type { listAsanaProjects, listAsanaTasks } from "provider-asana";
+import type { listAsanaProjects, listAsanaTasks, moveAsanaTask, showAsanaProject } from "provider-asana";
 import type { SlackSentMessage } from "provider-slack";
 import type { Auth, AuthResult, AuthService } from "../auth.js";
 export type WireRoot = Group;
@@ -34,10 +34,12 @@ export declare const wirePresentation: WirePresentation;
 type AsanaExplorer = {
     lookup?(query: string): Promise<readonly JsonObject[]>;
     projects(): ReturnType<typeof listAsanaProjects>;
+    project(project: string): ReturnType<typeof showAsanaProject>;
     tasks(project: string): ReturnType<typeof listAsanaTasks>;
     show(task: string): Promise<FetchedDocument>;
     writes?: {
-        create?(project: string, title: string, body?: string, assignee?: string): Promise<JsonObject>;
+        create?(project: string, title: string, section: string, body?: string, assignee?: string): Promise<JsonObject>;
+        move(task: string, project: string, section: string): ReturnType<typeof moveAsanaTask>;
         edit(task: string, fields: JsonObject): Promise<JsonObject>;
         comment(task: string, body: string): Promise<JsonObject>;
         editComment(comment: string, body: string): Promise<JsonObject>;

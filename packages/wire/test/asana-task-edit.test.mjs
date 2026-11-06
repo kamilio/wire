@@ -49,24 +49,47 @@ test("task-only Markdown formats use task tags; comments never post task-only ta
   assert.throws(() => asanaRichText("[x](javascript:alert)", "comment"), /absolute HTTP/);
 });
 
-test("create writes a project task with or without assignment and a Markdown description", async () => {
+test("create writes directly to the selected section with or without assignment and Markdown", async () => {
   const calls = [];
-  const created = { gid: "2", permalink_url: "https://app.asana.com/0/1/2" };
+  const created = { gid: "2", permalink_url: "https://app.asana.com/0/1/2", memberships: [{ project: { gid: "1" }, section: { gid: "3", name: "Review" } }] };
   const runtime = api((path, method, data, params) => {
+    if (method === "GET" && path === "/projects/1/sections") return { data: [{ gid: "3", name: "Review" }], next_page: null };
     assert.equal(path, "/tasks");
     assert.equal(method, "POST");
-    assert.match(params.get("opt_fields"), /permalink_url/);
+    assert.match(params.get("opt_fields"), /memberships.section.name/);
     calls.push(data);
     return { data: created };
   });
-  await assert.rejects(createAsanaTask(runtime, "bad", "Ship"), /numeric Asana project/);
-  await assert.rejects(createAsanaTask(runtime, "1", " "), /title cannot be empty/);
-  assert.deepEqual(await createAsanaTask(runtime, "1", "Ship", "**Ready**", "ada@example.com"), created);
-  await createAsanaTask(runtime, "1", "Next");
+  await assert.rejects(createAsanaTask(runtime, "bad", "Ship", "Review"), /numeric Asana project/);
+  await assert.rejects(createAsanaTask(runtime, "1", " ", "Review"), /title cannot be empty/);
+  await assert.rejects(createAsanaTask(runtime, "1", "Ship", "Elsewhere"), /section/i);
+  assert.deepEqual(await createAsanaTask(runtime, "1", "Ship", "Review", "**Ready**", "ada@example.com"), { ...created, section: created.memberships[0].section });
+  await createAsanaTask(runtime, "1", "Next", "3");
   assert.deepEqual(calls, [
-    { projects: ["1"], name: "Ship", html_notes: "<body><strong>Ready</strong></body>", assignee: "ada@example.com" },
-    { projects: ["1"], name: "Next" },
+    { projects: ["1"], memberships: [{ project: "1", section: "3" }], name: "Ship", html_notes: "<body><strong>Ready</strong></body>", assignee: "ada@example.com" },
+    { projects: ["1"], memberships: [{ project: "1", section: "3" }], name: "Next" },
   ]);
+});
+
+test("unexpected or unconfirmed placement preserves the created ID and link without retrying", async () => {
+  for (const [memberships, location] of [
+    [[{ project: { gid: "1" }, section: { gid: "4", name: "Box" } }], '"Box" (4)'],
+    [[{ project: { gid: "1" }, section: null }], "no section"],
+    [[], "an unconfirmed section"],
+  ]) {
+    let posts = 0;
+    const runtime = api((_path, method) => {
+      if (method === "GET") return { data: [{ gid: "3", name: "Focus" }], next_page: null };
+      posts++;
+      return { data: { gid: "2", permalink_url: "https://app.asana.com/0/1/2", memberships } };
+    });
+    const task = await createAsanaTask(runtime, "1", "Ship", "Focus");
+    assert.equal(posts, 1);
+    assert.equal(task.gid, "2");
+    assert.equal(task.permalink_url, "https://app.asana.com/0/1/2");
+    assert.ok(task.warning.includes(location));
+    assert.match(task.warning, /wire asana tasks move 2 --project 1 --section 3/);
+  }
 });
 
 test("edit assigns by email and writes Markdown and native field values in a single partial update", async () => {
