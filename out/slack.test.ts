@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { markdownToSlackBlocks, slackBlocksToMarkdown, sendSlackMessage, editSlackMessage, lookupSlackUsers, slackService } from "../packages/provider-slack/src/slack.js";
 import type { JsonObject, RuntimeCapabilities } from "wire-core";
 
@@ -7,12 +7,12 @@ const section = (elements: JsonObject[]) => [{ type: "rich_text", elements: [{ t
 const text = (value: string, style: JsonObject) => ({ type: "text", text: value, style });
 const roundtrip = (markdown: string) => markdownToSlackBlocks(slackBlocksToMarkdown(markdownToSlackBlocks(markdown), users));
 
-function runtime(handler: (method: string, params: URLSearchParams) => JsonObject) {
+function runtime(handler: (method: string, params: URLSearchParams) => JsonObject | Response) {
   const calls: { method: string; params: URLSearchParams }[] = [];
   const value = {
     cookies: { loadSaved: async () => [{ name: "d", value: "secret" }], metadata: async () => ({ origin: "https://example.slack.com", token: "token" }) },
     clock: { localTimezone: () => "UTC" },
-    http: { request: async (url: string, init: RequestInit) => { const method = url.split("/api/")[1]!; const params = new URLSearchParams(init.body as string); calls.push({ method, params }); return new Response(JSON.stringify(handler(method, params))); } },
+    http: { request: async (url: string, init: RequestInit) => { const method = url.split("/api/")[1]!; const params = new URLSearchParams(init.body as string); calls.push({ method, params }); const result = handler(method, params); return result instanceof Response ? result : new Response(JSON.stringify(result)); } },
   } as unknown as RuntimeCapabilities;
   return { value, calls };
 }
@@ -165,6 +165,37 @@ describe("Slack sending and reading", () => {
   it.each(["https://example.slack.com/archives/C1", "https://app.slack.com/client/T1/C1"]) ("recognizes channel URLs %s", (url) => {
     expect(slackService.matches(new URL(url))).toBe(true);
     expect(slackService.parse(new URL(url))).toMatchObject({ channel_id: "C1", identifier: "C1" });
+  });
+
+  it("resumes the same history page and thread after throttling", async () => {
+    vi.useFakeTimers();
+    try {
+      const parent = { ts: "1234567890.000001", username: "Bot", text: "parent", reply_count: 1 };
+      const replies = [
+        { messages: [parent], response_metadata: { next_cursor: "page2" } },
+        new Response("Too many requests", { status: 429, headers: { "Retry-After": "5" } }),
+        { messages: [] },
+        { ok: false, error: "ratelimited" },
+        { messages: [parent, { ts: "1234567891.000001", username: "Bot", text: "reply" }] },
+      ];
+      const mocked = runtime(() => replies.shift()!);
+      const url = "https://example.slack.com/archives/C1";
+      const pending = slackService.fetch(mocked.value, url, slackService.parse(new URL(url)));
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(mocked.calls).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(1001);
+      expect((await pending).markdown).toContain("reply");
+      expect(mocked.calls.map(({ method, params }) => [method, params.get("cursor"), params.get("ts")])).toEqual([
+        ["conversations.history", null, null], ["conversations.history", "page2", null], ["conversations.history", "page2", null],
+        ["conversations.replies", null, parent.ts], ["conversations.replies", null, parent.ts],
+      ]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("does not retry rate-limited writes", async () => {
+    const mocked = runtime(() => new Response("Too many requests", { status: 429, headers: { "Retry-After": "0" } }));
+    await expect(sendSlackMessage(mocked.value, "C1", "Hello")).rejects.toThrow("HTTP 429");
+    expect(mocked.calls.map(({ method }) => method)).toEqual(["chat.postMessage"]);
   });
 
   it("reads paginated channel history in chronological order with native formatting", async () => {

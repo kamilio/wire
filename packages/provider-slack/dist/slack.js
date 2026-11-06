@@ -268,13 +268,26 @@ export function slackBlocksToMarkdown(blocks, users) {
 }
 async function api(runtime, origin, token, cookie, method, parameters) {
     const body = new URLSearchParams({ token, ...parameters });
-    const response = await runtime.http.request(`${origin}/api/${method}`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded", "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36" }, body });
-    const json = await response.json();
-    if (!response.ok)
-        throw new Error(`Slack API ${method} failed: HTTP ${response.status} ${JSON.stringify(json)}`);
-    if (json["ok"] === false)
-        throw new Error(`Slack API ${method} failed: ${json["error"]}`);
-    return json;
+    const read = ["conversations.history", "conversations.replies", "users.info", "users.list", "bots.info", "search.modules.channels"].includes(method);
+    for (let attempt = 0;; attempt++) {
+        const response = await runtime.http.request(`${origin}/api/${method}`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded", "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36" }, body });
+        const json = response.status === 429 ? {} : await response.json();
+        if (response.status === 429)
+            await response.body?.cancel();
+        if (read && attempt < 3 && (response.status === 429 || json["error"] === "ratelimited")) {
+            const header = response.headers.get("retry-after");
+            const seconds = header === null ? 2 ** attempt : /^\d+$/.test(header) ? Number(header) : NaN;
+            if (seconds <= 120) {
+                await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+                continue;
+            }
+        }
+        if (!response.ok)
+            throw new Error(`Slack API ${method} failed: HTTP ${response.status}${response.status === 429 ? "" : " " + JSON.stringify(json)}`);
+        if (json["ok"] === false)
+            throw new Error(`Slack API ${method} failed: ${json["error"]}`);
+        return json;
+    }
 }
 function formatTimestamp(timestamp, timezone) {
     const parts = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(Number(timestamp) * 1000));
