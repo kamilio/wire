@@ -275,18 +275,20 @@ async function api(runtime, origin, token, cookie, method, parameters) {
         const json = response.status === 429 ? {} : await response.json();
         if (response.status === 429)
             await response.body?.cancel();
-        if (read && attempt < 3 && (response.status === 429 || json["error"] === "ratelimited")) {
-            const header = response.headers.get("retry-after");
+        const limitedRead = read && (response.status === 429 || json["error"] === "ratelimited");
+        const header = limitedRead ? response.headers.get("retry-after") : null;
+        if (limitedRead && attempt < 3) {
             const seconds = header === null ? 2 ** attempt : /^\d+$/.test(header) ? Number(header) : NaN;
             if (seconds <= 120) {
                 await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
                 continue;
             }
         }
+        const hint = header === null ? "" : ` (Retry-After: ${header})`;
         if (!response.ok)
-            throw new Error(`Slack API ${method} failed: HTTP ${response.status}${response.status === 429 ? "" : " " + JSON.stringify(json)}`);
+            throw new Error(`Slack API ${method} failed: HTTP ${response.status}${response.status === 429 ? "" : " " + JSON.stringify(json)}${hint}`);
         if (json["ok"] === false)
-            throw new Error(`Slack API ${method} failed: ${json["error"]}`);
+            throw new Error(`Slack API ${method} failed: ${json["error"]}${hint}`);
         return json;
     }
 }

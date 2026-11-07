@@ -20873,16 +20873,18 @@ async function api(runtime2, origin, token, cookie, method, parameters) {
     const response = await runtime2.http.request(`${origin}/api/${method}`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded", "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36" }, body: body2 });
     const json = response.status === 429 ? {} : await response.json();
     if (response.status === 429) await response.body?.cancel();
-    if (read && attempt < 3 && (response.status === 429 || json["error"] === "ratelimited")) {
-      const header = response.headers.get("retry-after");
+    const limitedRead = read && (response.status === 429 || json["error"] === "ratelimited");
+    const header = limitedRead ? response.headers.get("retry-after") : null;
+    if (limitedRead && attempt < 3) {
       const seconds = header === null ? 2 ** attempt : /^\d+$/.test(header) ? Number(header) : NaN;
       if (seconds <= 120) {
         await new Promise((resolve5) => setTimeout(resolve5, seconds * 1e3));
         continue;
       }
     }
-    if (!response.ok) throw new Error(`Slack API ${method} failed: HTTP ${response.status}${response.status === 429 ? "" : " " + JSON.stringify(json)}`);
-    if (json["ok"] === false) throw new Error(`Slack API ${method} failed: ${json["error"]}`);
+    const hint = header === null ? "" : ` (Retry-After: ${header})`;
+    if (!response.ok) throw new Error(`Slack API ${method} failed: HTTP ${response.status}${response.status === 429 ? "" : " " + JSON.stringify(json)}${hint}`);
+    if (json["ok"] === false) throw new Error(`Slack API ${method} failed: ${json["error"]}${hint}`);
     return json;
   }
 }

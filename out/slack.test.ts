@@ -198,6 +198,25 @@ describe("Slack sending and reading", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it.each([
+    [429, null, "HTTP 429"],
+    [200, { ok: false, error: "ratelimited" }, "ratelimited"],
+  ] as const)("reports the server delay when a Slack read stops (%s)", async (status, body, reason) => {
+    const mocked = runtime(() => new Response(JSON.stringify(body), { status, headers: { "Retry-After": "180" } }));
+    const url = "https://example.slack.com/archives/C1";
+    await expect(slackService.fetch(mocked.value, url, slackService.parse(new URL(url))))
+      .rejects.toThrow(`Slack API conversations.history failed: ${reason} (Retry-After: 180)`);
+    expect(mocked.calls).toHaveLength(1);
+  });
+
+  it("reports the final Retry-After after exhausting read retries", async () => {
+    const mocked = runtime(() => new Response(null, { status: 429, headers: { "Retry-After": "0" } }));
+    const url = "https://example.slack.com/archives/C1";
+    await expect(slackService.fetch(mocked.value, url, slackService.parse(new URL(url))))
+      .rejects.toThrow("HTTP 429 (Retry-After: 0)");
+    expect(mocked.calls).toHaveLength(4);
+  });
+
   it("does not retry rate-limited writes", async () => {
     const mocked = runtime(() => new Response("Too many requests", { status: 429, headers: { "Retry-After": "0" } }));
     await expect(sendSlackMessage(mocked.value, "C1", "Hello")).rejects.toThrow("HTTP 429");
