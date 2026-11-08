@@ -298,6 +298,16 @@ test("notion images preserve bracketed alt text", () => {
   assert.equal(notionBlockContentHash(block), notionBlockContentHash(parsed));
 });
 
+test("an image without Notion alt text previews and syncs unchanged", () => {
+  const remote = remoteTree("![](https://example.com/image.png)");
+  delete remote.children[0].block.properties.alt_text;
+  const markdown = body(renderNotionTreeToMarkdown(remote));
+  assert.equal(markdown.trim(), "![](https://example.com/image.png)");
+  const sidecar = sidecarBlocksFromNotionTree(remote);
+  const diff = diffNotionBlockTrees(remote, parseNotionMarkdown(markdown), sidecar, { spaceId: "space", userId: "user", currentTime: 1700000000000 });
+  assert.deepEqual(diff.operations, []);
+});
+
 test("notion linked text preserves nested marks", () => {
   const block = { type: "text", properties: { title: [["Important", [["a", "https://example.com"], ["b"]]]] } };
   const markdown = renderNotionTreeToMarkdown({ id: "page", block: { type: "page", properties: { title: [["Root"]] } }, children: [

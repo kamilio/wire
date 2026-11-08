@@ -582,7 +582,7 @@ function canonicalBlock(value: JsonObject, columnOrder?: readonly string[]): Jso
   if (type === "to_do") return { type, title: normalizeRichText(object(value["properties"]!)["title"]!), checked: object(value["properties"]!)["checked"] ?? [["No"]] };
   if (type === "table") return { type, column_count: (object(value["format"]!)["table_block_column_order"] as JsonValue[]).length };
   if (type === "table_row") return { type, cells: columnOrder!.map((column) => normalizeRichText(object(value["properties"]!)[column] ?? [])) };
-  if (type === "image") return { type, source: object(value["properties"]!)["source"]!, alt_text: object(value["properties"]!)["alt_text"]!, caption: object(value["properties"]!)["caption"] ?? null };
+  if (type === "image") return { type, source: object(value["properties"]!)["source"]!, alt_text: object(value["properties"]!)["alt_text"] ?? [[""]], caption: object(value["properties"]!)["caption"] ?? null };
   if (["divider", "column_list", "transclusion_container"].includes(type)) return { type };
   if (type === "column") return { type, column_ratio: object(value["format"] ?? {})["column_ratio"] ?? null };
   if (["header", "sub_header", "sub_sub_header"].includes(type)) return { type, title: normalizeRichText(object(value["properties"] ?? { title: [] })["title"] ?? []), toggleable: object(value["format"] ?? {})["toggleable"] === true };
