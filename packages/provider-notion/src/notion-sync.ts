@@ -922,7 +922,7 @@ async function resolveNotionEmailMentions(runtime: RuntimeCapabilities, blocks: 
 }
 
 async function fetchComments(runtime: RuntimeCapabilities, tree: NotionTree, spaceId: string, cookie: string, headers: HeadersInit): Promise<string> {
-  const records: Record<string, Map<string, JsonObject>> = { discussion: new Map(), comment: new Map(), notion_user: new Map() };
+  const records: Record<string, Map<string, JsonObject>> = { discussion: new Map(), comment: new Map(), notion_user: new Map(), bot: new Map() };
   let startingAfterId: string | undefined;
   while (true) {
     const data = await notionPost(runtime, "getActivityLog", cookie, { spaceId, navigableBlock: { id: tree.id }, limit: 100, ...(startingAfterId === undefined ? {} : { startingAfterId }) }, headers);
@@ -941,14 +941,14 @@ async function fetchComments(runtime: RuntimeCapabilities, tree: NotionTree, spa
   }
   const blockIds = new Set(sidecarBlocksFromNotionTree(tree).map((block) => block.id));
   const discussions = [...records["discussion"]!.values()].filter((discussion) => blockIds.has(discussion["parent_id"] as string) && discussion["alive"] !== false);
-  for (const table of ["comment", "notion_user"]) {
-    const ids = table === "comment" ? discussions.flatMap((discussion) => discussion["comments"] as string[]) : [...records["comment"]!.values()].filter((comment) => comment["alive"] === true).map((comment) => comment["created_by_id"] as string);
+  for (const table of ["comment", "notion_user", "bot"]) {
+    const ids = table === "comment" ? discussions.flatMap((discussion) => discussion["comments"] as string[]) : [...records["comment"]!.values()].filter((comment) => comment["alive"] === true && (comment["created_by_table"] ?? "notion_user") === table).map((comment) => comment["created_by_id"] as string);
     const missing = [...new Set(ids)].filter((id) => !records[table]!.has(id));
     if (missing.length === 0) continue;
     const data = await notionPost(runtime, "getRecordValues", cookie, { requests: missing.map((id) => ({ table, id })) }, headers);
     for (const [index, result] of (data["results"] as JsonObject[]).entries()) records[table]!.set(missing[index]!, object(result["value"]!));
   }
-  return renderComments(tree.id, discussions, records["comment"]!, records["notion_user"]!);
+  return renderComments(tree.id, discussions, records["comment"]!, new Map([...records["notion_user"]!, ...records["bot"]!]));
 }
 
 function renderComments(pageId: string, discussions: readonly JsonObject[], commentsById: ReadonlyMap<string, JsonObject>, users: ReadonlyMap<string, JsonObject>): string {

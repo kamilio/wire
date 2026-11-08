@@ -764,10 +764,10 @@ test("notion comments include paginated threads and replies without becoming pag
     } },
     { activityIds: ["last"], recordMap: {
       discussion: { inline: wrap({ ...inline, version: 1, comments: ["first"] }), page: wrap(pageThread), unrelated: wrap({ id: "unrelated", version: 1, parent_id: "other-page", comments: ["secret"] }) },
-      comment: { first: wrap(firstComment), "page-comment": wrap({ ...firstComment, id: "page-comment", text: [["Resolved page comment"]] }) },
+      comment: { first: wrap(firstComment), "page-comment": wrap({ ...firstComment, id: "page-comment", created_by_table: "bot", created_by_id: "bot-id", text: [["Resolved page comment"]] }) },
     } },
   ];
-  const values = { comment: { reply }, notion_user: { bob: { id: "bob", name: "Bob" } } };
+  const values = { comment: { reply }, notion_user: { bob: { id: "bob", name: "Bob" } }, bot: { "bot-id": { id: "bot-id", name: "Review Bot" } } };
   const baseRuntime = notionRuntime(page, submitted);
   const runtime = { ...baseRuntime, http: { request: async (input, init) => {
     const path = String(input).split("/api/v3/")[1];
@@ -797,10 +797,11 @@ test("notion comments include paginated threads and replies without becoming pag
   assert.match(fetched.markdown, /\*\*Bob\*\* — 1970-01-01T00:00:02.000Z/);
   assert.match(fetched.markdown, /Latest reply\nSecond line/);
   assert.match(fetched.markdown, /Page comment.*\(resolved\)/);
+  assert.match(fetched.markdown, /\*\*Review Bot\*\* — 1970-01-01T00:00:01.000Z\n\nResolved page comment/);
   assert.equal(fetched.markdown.includes("Deleted comment"), false);
   assert.equal(fetched.markdown.includes("secret"), false);
   assert.equal(fetched.markdown.match(/Latest reply/g).length, 1);
-  assert.deepEqual(requested, [{ table: "comment", id: "reply" }, { table: "notion_user", id: "bob" }]);
+  assert.deepEqual(requested, [{ table: "comment", id: "reply" }, { table: "notion_user", id: "bob" }, { table: "bot", id: "bot-id" }]);
   assert.equal(fetched.data.markdown, fetched.markdown);
   assert.deepEqual(fetched.data.blocks.map((block) => block.type), ["page", "text"]);
   const oldMarkdown = fetched.markdown.replace("Latest reply", "Older reply");

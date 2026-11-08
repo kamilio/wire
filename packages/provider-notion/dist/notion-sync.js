@@ -981,7 +981,7 @@ async function resolveNotionEmailMentions(runtime, blocks, cookie, spaceId, head
     }
 }
 async function fetchComments(runtime, tree, spaceId, cookie, headers) {
-    const records = { discussion: new Map(), comment: new Map(), notion_user: new Map() };
+    const records = { discussion: new Map(), comment: new Map(), notion_user: new Map(), bot: new Map() };
     let startingAfterId;
     while (true) {
         const data = await notionPost(runtime, "getActivityLog", cookie, { spaceId, navigableBlock: { id: tree.id }, limit: 100, ...(startingAfterId === undefined ? {} : { startingAfterId }) }, headers);
@@ -1003,8 +1003,8 @@ async function fetchComments(runtime, tree, spaceId, cookie, headers) {
     }
     const blockIds = new Set(sidecarBlocksFromNotionTree(tree).map((block) => block.id));
     const discussions = [...records["discussion"].values()].filter((discussion) => blockIds.has(discussion["parent_id"]) && discussion["alive"] !== false);
-    for (const table of ["comment", "notion_user"]) {
-        const ids = table === "comment" ? discussions.flatMap((discussion) => discussion["comments"]) : [...records["comment"].values()].filter((comment) => comment["alive"] === true).map((comment) => comment["created_by_id"]);
+    for (const table of ["comment", "notion_user", "bot"]) {
+        const ids = table === "comment" ? discussions.flatMap((discussion) => discussion["comments"]) : [...records["comment"].values()].filter((comment) => comment["alive"] === true && (comment["created_by_table"] ?? "notion_user") === table).map((comment) => comment["created_by_id"]);
         const missing = [...new Set(ids)].filter((id) => !records[table].has(id));
         if (missing.length === 0)
             continue;
@@ -1012,7 +1012,7 @@ async function fetchComments(runtime, tree, spaceId, cookie, headers) {
         for (const [index, result] of data["results"].entries())
             records[table].set(missing[index], object(result["value"]));
     }
-    return renderComments(tree.id, discussions, records["comment"], records["notion_user"]);
+    return renderComments(tree.id, discussions, records["comment"], new Map([...records["notion_user"], ...records["bot"]]));
 }
 function renderComments(pageId, discussions, commentsById, users) {
     const threads = discussions.map((discussion) => {
