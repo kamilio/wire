@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { decodeHTML } from "entities";
 import type { RuntimeCapabilities } from "wire-core";
 import { browser, type Query } from "./browser.js";
@@ -147,19 +147,26 @@ function withoutPlaceholders(answer: string, q: Q) {
   const { pick, text } = slots(q);
   let skippedPick = false,
     skippedText = false;
-  const lines = answer.split("\n").filter((line) => {
+  const lines = answer.split("\n").flatMap((line) => {
     const value = line.trim();
     if (pick && value === pick) {
       skippedPick = true;
-      return false;
+      return [];
     }
     if (text && value === text) {
       skippedText = true;
-      return false;
+      return [];
+    }
+    const selected = pick === "<choice: pick one>" && /^<choice:\s*([^<>]+)>$/i.exec(value);
+    if (selected) {
+      const label = norm(selected[1]!).normalize("NFC").toLowerCase();
+      const matches = q.revision.choices!.filter((v) => norm(v).normalize("NFC").toLowerCase() === label);
+      if (matches.length !== 1) throw Error("Invalid choice for: " + heading(q));
+      return ["Selected: " + matches[0]];
     }
     if (/<(?:answer|choice|choices|rating|comment):/i.test(decodeHTML(line)))
       throw Error("Replace the whole placeholder in: " + heading(q));
-    return true;
+    return [line];
   });
   let cleaned = lines.join("\n").trim();
   if (skippedPick && text && !skippedText && cleaned && !/^(?:Selected|Rating|Comment):/i.test(cleaned))
@@ -492,10 +499,15 @@ export async function syncLatticeDrafts(
   runtime: RuntimeCapabilities,
   input: string | undefined,
   directory: string,
+  file?: string,
 ) {
+  const selected = file === undefined ? undefined : resolve(directory, file);
+  if (selected) directory = dirname(selected);
   const stateName = ".wire-lattice-drafts.json",
     folderPattern = /^lattice-drafts(?:-\d{4}(?:-.+)?)?$/;
   const cwdEntries = await readdir(directory, { withFileTypes: true });
+  if (selected && !cwdEntries.some((e) => e.name === stateName && e.isFile()))
+    throw Error("Choose a Markdown file from a saved drafts folder.");
   if (!folderPattern.test(basename(directory)) && !cwdEntries.some((e) => e.name === stateName)) {
     if (input) {
       const { url, cycle } = target(input, false);
@@ -547,19 +559,25 @@ export async function syncLatticeDrafts(
     const docs = new Map<string, { name: string; md: string }>();
     const names = new Set(entries.map((e) => e.name.toLowerCase()));
     for (const e of entries) {
-      if (!e.isFile() || !e.name.endsWith(".md")) continue;
+      if ((selected && e.name !== basename(selected)) || !e.isFile() || !e.name.endsWith(".md")) continue;
       const md = await readFile(join(directory, e.name), "utf8");
       const source = /^\[Open in Lattice\]\((https:\/\/[^)]+)\)$/m.exec(md)?.[1];
       if (!source) continue;
       if (docs.has(source)) throw Error("Multiple draft files for " + source);
       docs.set(source, { name: e.name, md });
     }
+    const address = [...docs.keys()][0];
+    if (selected && (!address || state[address]?.file !== basename(selected)))
+      throw Error("The selected file does not match a tracked Lattice draft.");
+    const single = selected ? target(address!, true) : undefined;
+    if (single && (single.url.origin !== url.origin || single.cycle !== cycle))
+      throw Error("The selected file belongs to another Lattice cycle.");
     return await browser(runtime, url, async (query, args) => {
       const jobs = [];
       let refreshed = 0,
         created = 0,
         answers = 0;
-      for (const row of await openRequests(query, cycle)) {
+      for (const row of single ? [{ entityId: single.request }] : await openRequests(query, cycle)) {
         const address = new URL("response/" + row.entityId, url);
         const key = address.href,
           prev = state[key],

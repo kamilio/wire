@@ -658,16 +658,31 @@ test("draft sync keeps local files, posts only edited answers and detects remote
     assert.equal(writes, 0);
     const edited = full.replace("Existing **draft**", "Updated **draft**");
     await writeFile(path, edited);
-    await syncLatticeDrafts(input, undefined, dir);
+    const stateFile = dir + "/.wire-lattice-drafts.json";
+    const baseline = JSON.parse(await readFile(stateFile, "utf8"));
+    const key = reqs.replace(/requests$/, "response/" + id(2));
+    const other = reqs.replace(/requests$/, "response/" + id(9));
+    baseline.reviews[other] = { file: "Other.md", questions: {} };
+    await writeFile(stateFile, JSON.stringify(baseline));
+    const otherDraft = edited.replace(key, other);
+    await writeFile(dir + "/Other.md", otherDraft);
+    open = false;
+    await assert.rejects(syncLatticeDrafts(input, undefined, parent, path + ".missing"), /tracked/);
+    await syncLatticeDrafts(input, undefined, parent, path);
     assert.equal(writes, 1);
     assert.equal(r.questions[0].reviewResponse.content.body, "Updated **draft**");
-    await syncLatticeDrafts(input, undefined, dir);
+    await syncLatticeDrafts(input, undefined, parent, path);
     assert.equal(writes, 1);
     r.questions[0].reviewResponse.content.body = "Changed in browser";
-    await syncLatticeDrafts(input, undefined, dir);
+    await syncLatticeDrafts(input, undefined, parent, path);
     assert.equal(writes, 1);
     await writeFile(path, edited.replace("Updated **draft**", "Another local edit"));
-    await assert.rejects(syncLatticeDrafts(input, undefined, dir), /Draft conflict/);
+    await assert.rejects(syncLatticeDrafts(input, undefined, parent, path), /Draft conflict/);
+    assert.equal(writes, 1);
+    assert.equal(await readFile(dir + "/Other.md", "utf8"), otherDraft);
+    assert.deepEqual(JSON.parse(await readFile(stateFile, "utf8")).reviews[other], baseline.reviews[other]);
+    r.submittedAt = "2026-01-01";
+    await assert.rejects(syncLatticeDrafts(input, undefined, parent, path), /not open/);
     assert.equal(writes, 1);
     open = false;
     await syncLatticeDrafts(input, undefined, dir);
@@ -839,6 +854,9 @@ test("every editable field has a visible placeholder that never becomes draft co
     saved.map((u) => u.content),
     [{ body: "TBD" }],
   );
+  await latticeReviewDraft(input, url, template.replace("<choice: pick one>", "<choice:No>"));
+  assert.deepEqual(saved.map((u) => u.content), [{ multipleSelect: ["1"] }]);
+  await assert.rejects(latticeReviewDraft(input, url, template.replace("<choice: pick one>", "<choice:Maybe>")), /Invalid choice/);
   await latticeReviewDraft(input, url, template.replace("<choice: pick one>", "false"));
   assert.deepEqual(
     saved.map((u) => u.content),

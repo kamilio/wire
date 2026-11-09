@@ -8,7 +8,7 @@ import type { Auth, AuthResult, AuthService } from "../auth.js";
 
 export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
-export type WireRootOptions = Readonly<{ allowPaste: boolean; latticeSync?: (url: string | undefined) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
+export type WireRootOptions = Readonly<{ allowPaste: boolean; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
 
 const authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
 const removedCliCommandNames = Object.freeze({
@@ -592,8 +592,8 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
           name, description, scope:["cli"], positional:["url"], params:S.Object({url:S.String({description:"Lattice review URL."})}), handler:({params})=>userFacing(()=>run(params.url)), render:render<string>(v=>v),
         })] : []),
         ...(options.latticeSync ? ["sync","sync-drafts"].map(name=>defineCommand({name,hidden:name==="sync-drafts",description:"Create lattice-drafts-YYYY and save edited answers as drafts. Inside the folder the URL is optional. Placeholders stay local.",scope:["cli"],positional:["url"],
-          params:S.Object({url:S.Optional(S.String({description:"Cycle requests URL; required on the first run."}))}),
-          handler:({params})=>userFacing(()=>options.latticeSync!(params.url)),render:render<string>(v=>v),
+          params:S.Object({url:S.Optional(S.String({description:"Cycle requests URL; required on the first run."})),file:S.Optional(S.String({description:"Sync only this tracked Markdown draft."}))}),
+          handler:({params})=>userFacing(()=>options.latticeSync!(params.url,params.file)),render:render<string>(v=>v),
         })) : []),
         ...(options.latticeFill ? [defineCommand({name:"fill",description:"Save a review draft without submitting. Use the displayed option, yes/no or true/false for binary choices, or one option per line for multiple selections.",scope:["cli"],positional:["url","file"],
           params:S.Object({url:S.String({description:"Your Lattice review response URL."}),file:S.String({description:"Markdown file with the template’s question headings."})}),
