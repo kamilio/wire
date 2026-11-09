@@ -108,7 +108,10 @@ function withoutPlaceholders(answer, q) {
         const selected = pick === "<choice: pick one>" && /^<choice:\s*([^<>]+)>$/i.exec(value);
         if (selected) {
             const label = norm(selected[1]).normalize("NFC").toLowerCase();
-            const matches = q.revision.choices.filter((v) => norm(v).normalize("NFC").toLowerCase() === label);
+            const matches = q.revision.choices.filter((v) => {
+                const full = norm(v).normalize("NFC").toLowerCase();
+                return full === label || full.replace(/ \([^()]*\)$/, "") === label;
+            });
             if (matches.length !== 1)
                 throw Error("Invalid choice for: " + heading(q));
             return ["Selected: " + matches[0]];

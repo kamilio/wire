@@ -768,6 +768,12 @@ test("choice inputs use live labels, validate booleans and preserve an explicit 
   await assert.rejects(fill("true"), /Invalid choice/);
   await fill("sort OF");
   assert.deepEqual(content, { multipleSelect: ["2"] });
+  revision.choices = ["Very Closely (~daily)", "Closely (~weekly)", "Somewhat Closely (~monthly)", "Rarely", "Other"];
+  await fill("<choice:Closely>");
+  assert.deepEqual(content, { multipleSelect: ["1"] });
+  await assert.rejects(fill("<choice:Close>"), /Invalid choice/);
+  revision.choices.push("Closely (another option)");
+  await assert.rejects(fill("<choice:Closely>"), /Invalid choice/);
   revision.__typename = "MultipleSelectQuestionRevision";
   revision.choices = ["A", "B", "C"];
   revision.question.maximumSelection = 2;
