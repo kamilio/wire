@@ -80,6 +80,8 @@ const guide = (s: string) =>
     .split(/\r?\n/)
     .map((l) => "> " + l)
     .join("\n");
+const legacyInstructions = "Keep every question heading. Write below its instructions. Blank answers keep existing drafts. For choices, use one “Selected: label” line per choice; for a rating, use “Rating: label”.";
+const instructions = "Keep every question heading. Write below its instructions. Blank answers keep existing drafts. For choices and ratings, enter the number or label shown below the question. Use one line per selection.";
 function intro(r: Review, url: URL) {
   const t = r.reviewGroup.reviewTemplate;
   return [
@@ -87,20 +89,21 @@ function intro(r: Review, url: URL) {
     `[Open in Lattice](${url.href})`,
     r.reviewee.reviewCycle.name,
     t.instructions && richText(t.instructions),
-    "Keep every question heading. Write below its instructions. Blank answers keep existing drafts. For choices, use one “Selected: label” line per choice; for a rating, use “Rating: label”.",
+    instructions,
   ]
     .filter(Boolean)
     .join("\n\n");
 }
-function help(q: Q, limit: number | null) {
+const numbered = (labels: string[]) => labels.map((label, i) => (i + 1) + " = " + label).join(" · ");
+function help(q: Q, limit: number | null, legacy = false) {
   const { question, choices, scale } = q.revision;
   return guide(
     [
       question.isOptional ? "Optional." : "Required for submission.",
       q.isPrivate ? "Hidden from the reviewee." : "",
       q.description && richText(q.description),
-      choices?.length ? "Choices: " + choices.join(" · ") : "",
-      scale?.length ? "Ratings: " + scale.join(" · ") : "",
+      choices?.length ? "Choices: " + (legacy ? choices.join(" · ") : numbered(choices)) : "",
+      scale?.length ? "Ratings: " + (legacy ? scale.join(" · ") : numbered(scale)) : "",
       question.maximumSelection ? "Maximum selections: " + question.maximumSelection + "." : "",
       question.isBodyOptional !== undefined
         ? "Comment: " + (question.isBodyOptional ? "optional." : "required for submission.")
@@ -156,6 +159,12 @@ function withoutPlaceholders(answer: string, q: Q) {
     if (text && value === text) {
       skippedText = true;
       return [];
+    }
+    const numeric = /^<(choice|choices|rating):\s*([1-9]\d*)\s*>$/i.exec(value);
+    if (numeric && pick.startsWith("<" + numeric[1]!.toLowerCase() + ":")) {
+      const option = (q.revision.choices ?? q.revision.scale!)[Number(numeric[2]) - 1];
+      if (option === undefined) throw Error("Invalid choice for: " + heading(q));
+      return [(q.revision.choices ? "Selected: " : "Rating: ") + option];
     }
     const selected = pick === "<choice: pick one>" && /^<choice:\s*([^<>]+)>$/i.exec(value);
     if (selected) {
@@ -215,9 +224,12 @@ function draftDocument(r: Review, url: URL, markdown?: string) {
     .replace(/\r\n?/g, "\n")
     .trim();
   if (src.startsWith("# ")) {
-    if (!src.startsWith(preamble + "\n"))
+    const header = [preamble, preamble.slice(0, -instructions.length) + legacyInstructions].find((value) =>
+      src.startsWith(value + "\n"),
+    );
+    if (!header)
       throw Error("Template header does not match this review. Get a fresh template.");
-    src = src.slice(preamble.length).trim();
+    src = src.slice(header.length).trim();
   }
   const sections = new Map<string, string[]>();
   let current: string[] | undefined;
@@ -243,8 +255,10 @@ function draftDocument(r: Review, url: URL, markdown?: string) {
       lines = sections.get(h);
     if (!lines) throw Error("Missing question: " + h);
     let answer = lines.join("\n").trim();
-    if (answer === guides[i] || answer.startsWith(guides[i] + "\n"))
-      answer = answer.slice(guides[i]!.length).trim();
+    const guidance = [guides[i]!, help(q, limit, true)].find((value) =>
+      answer === value || answer.startsWith(value + "\n"),
+    );
+    if (guidance) answer = answer.slice(guidance.length).trim();
     else if (answer.startsWith("> Required for submission.") || answer.startsWith("> Optional."))
       throw Error("Template guidance changed for: " + h);
     answer = withoutPlaceholders(answer, q);
@@ -269,8 +283,14 @@ function draftDocument(r: Review, url: URL, markdown?: string) {
         labels.length === 2 &&
         (["yes", "no"].every((x) => normalized.includes(x)) ||
           ["true", "false"].every((x) => normalized.includes(x)));
-      const indexOf = (v: string) => {
+      const indexOf = (v: string, explicit: boolean) => {
         let key = canon(v);
+        if (/^[0-9]+$/.test(key) && !(explicit && normalized.includes(key))) {
+          const position = Number(key);
+          if (String(position) !== key || position < 1 || position > labels.length)
+            throw Error("Invalid choice for " + h + ". Options: " + numbered(labels));
+          return position - 1;
+        }
         if (binary && ["yes", "true", "no", "false"].includes(key))
           key =
             key === "yes" || key === "true"
@@ -294,7 +314,7 @@ function draftDocument(r: Review, url: URL, markdown?: string) {
         if (explicit && explicit[1]!.toLowerCase() + ": " !== prefix.toLowerCase())
           throw Error("Invalid choice field for: " + h);
         const label = explicit?.[2] ?? check?.[2] ?? (bullet ? bullet[1]! : line);
-        const n = indexOf(label);
+        const n = indexOf(label, !!explicit);
         if (n < 0 && !explicit && !check && !bullet) break;
         if (n < 0) throw Error("Invalid choice for " + h + ": " + label + ". Options: " + labels.join(" · "));
         if (seen.has(n)) throw Error("Repeated choice for: " + h);

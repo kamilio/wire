@@ -481,7 +481,7 @@ test("current template round trips with draft-only native answers and rejects in
   };
   const template = await latticeReviewDraft(input, url);
   assert.match(template, /\*\*Examples please\.\*\*/);
-  assert.match(template, /Choices: One · Two/);
+  assert.match(template, /Choices: 1 = One · 2 = Two/);
   assert.equal(await latticeReviewDraft(input, url, template), "No draft changes.");
   const answered =
     template
@@ -748,6 +748,9 @@ test("choice inputs use live labels, validate booleans and preserve an explicit 
   };
   const fill = (s) => latticeReviewDraft(inp, url, "## Share?\n\n" + s);
   for (const [value, idx] of [
+    ["1", "0"],
+    ["<choice: 2>", "1"],
+    ["Selected: 2", "1"],
     ["false", "0"],
     ["NO", "0"],
     ["Selected: False", "0"],
@@ -759,7 +762,7 @@ test("choice inputs use live labels, validate booleans and preserve an explicit 
   }
   await fill("false\n\nOnly share **anonymously**.");
   assert.deepEqual(content, { multipleSelect: ["0"], body: "Only share **anonymously**." });
-  for (const value of ["maybe", "Selected: unknown", "true\nfalse", "yes\nYes", "Rating: true"]) {
+  for (const value of ["0", "3", "1\n8", "2\nyes", "maybe", "Selected: unknown", "true\nfalse", "yes\nYes", "Rating: true"]) {
     const n = calls;
     await assert.rejects(fill(value), /choice/);
     assert.equal(calls, n);
@@ -781,12 +784,23 @@ test("choice inputs use live labels, validate booleans and preserve an explicit 
   assert.deepEqual(content, { multipleSelect: ["2", "0"] });
   await fill("B\nA");
   assert.deepEqual(content, { multipleSelect: ["1", "0"] });
+  await fill("3\n<choices: 1>");
+  assert.deepEqual(content, { multipleSelect: ["2", "0"] });
   await assert.rejects(fill("A\nB\nC"), /number of choices/);
   revision.__typename = "RatingAndBodyQuestionRevision";
   delete revision.choices;
   revision.scale = ["Learning", "Strong"];
   await fill("strong\n\nUseful examples.");
   assert.deepEqual(content, { rating: "2", body: "Useful examples." });
+  await fill("<rating: 1>");
+  assert.deepEqual(content, { rating: "1" });
+  await fill("2\n\nUseful examples.");
+  assert.deepEqual(content, { rating: "2", body: "Useful examples." });
+  revision.scale = ["0", "1"];
+  await fill("Rating: 1");
+  assert.deepEqual(content, { rating: "2" });
+  await fill("1");
+  assert.deepEqual(content, { rating: "1" });
   await assert.rejects(fill("Average"), /Invalid choice/);
 });
 
@@ -854,6 +868,13 @@ test("every editable field has a visible placeholder that never becomes draft co
   ])
     assert.ok(template.includes(mark));
   assert.equal(await latticeReviewDraft(input, url, template), "No draft changes.");
+  assert.match(template, /> Ratings: 1 = High/);
+  const oldTemplate = template
+    .replace("For choices and ratings, enter the number or label shown below the question. Use one line per selection.",
+      "For choices, use one “Selected: label” line per choice; for a rating, use “Rating: label”.")
+    .replace(/^(> (?:Choices|Ratings): .*)$/gm, (line) => line.replace(/\d+ = /g, ""));
+  assert.equal(await latticeReviewDraft(input, url, oldTemplate), "No draft changes.");
+  await assert.rejects(latticeReviewDraft(input, url, template.replace("1 = Yes · 2 = No", "1 = No · 2 = Yes")), /guidance changed/);
   assert.equal(saved.length, 0);
   await latticeReviewDraft(input, url, template.replace("<comment: write here>", "TBD"));
   assert.deepEqual(
