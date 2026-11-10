@@ -13,7 +13,9 @@
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
+    "@poe-platform/safe-bash": "^0.1.849",
     "@types/node": "^22.19.3",
+    "esbuild": "^0.25.12",
     "typescript": "^5.9.3"
   },
   "dependencies": {

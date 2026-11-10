@@ -559,6 +559,16 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
         scope: ["cli", "mcp", "sdk"],
         children: [
             defaultAttach,
+            ...(options.scrapeDrive ? [defineGroup({ name: "gdrive", description: "Download Google Drive folders.", scope: ["cli"], children: [
+                        ...(options.previewDrive ? [defineCommand({ name: "preview", description: "List a Drive folder or read a file without saving it.", scope: ["cli"], positional: ["url"],
+                                params: S.Object({ url: S.String({ description: "Google Drive folder or file URL." }) }),
+                                handler: ({ params }) => userFacing(() => options.previewDrive(params.url)), render: render(v => v),
+                            })] : []),
+                        defineCommand({ name: "scrape", description: "Download into a directory named after the Drive folder. Run there without a URL to refresh.", scope: ["cli"], positional: ["url"],
+                            params: S.Object({ url: S.Optional(S.String({ description: "Google Drive folder URL." })) }),
+                            handler: ({ params }) => userFacing(() => options.scrapeDrive(params.url)), render: render(v => v),
+                        }),
+                    ] })] : []),
             ...(options.calendarAgenda ? [defineGroup({ name: "google-calendar", description: "Read Google Calendar.", scope: ["cli"], children: [
                         defineCommand({ name: "agenda", description: "List events overlapping a local day across readable calendars.", scope: ["cli"],
                             params: S.Object({

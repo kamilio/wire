@@ -243,6 +243,7 @@ function excessPositionals(argv: readonly string[]): Readonly<{ commandPath: str
   if (command === "slack" && slackResourceCommands.has(words[1]!)) return { commandPath: `slack ${words[1]}`, expected: 1, received: words.length - 2 };
   if ((command === "slack" || command === "notion" || command === "asana") && words[1] === "users" && words[2] === "lookup") return { commandPath: `${command} users lookup`, expected: 1, received: words.length - 3 };
   if (command === "slack" && (words[1] === "send" || words[1] === "edit")) return { commandPath: `slack ${words[1]}`, expected: 2, received: words.length - 2 };
+  if (command === "gdrive" && (words[1] === "scrape" || words[1] === "preview")) return { commandPath: `gdrive ${words[1]}`, expected: 1, received: words.length - 2 };
   if (command === "zoom" && words[1] === "scrape") return { commandPath: "zoom scrape", expected: 0, received: words.length - 2 };
   if (authServices.has(command)) {
     const authCommand = words[1];
@@ -361,7 +362,7 @@ function renderUnknownRootInput(argv: readonly string[]): boolean {
   const words = positionalWords(argv);
   if (words === null || words.length === 0) return false;
   const command = words[0]!;
-  if ((!hasRootSeparator(argv) && (command in fixedCommandPositionals || command === "lattice" || command === "google-calendar" || authServices.has(command) || command in removedCommandNames)) || isSourceUrl(command)) return false;
+  if ((!hasRootSeparator(argv) && (command in fixedCommandPositionals || command === "lattice" || command === "google-calendar" || command === "gdrive" || authServices.has(command) || command in removedCommandNames)) || isSourceUrl(command)) return false;
   if (isSourceLikeWithoutScheme(command)) {
     renderCliError(argv, expectedSourceMessage("Expected source URL or command", command), "wire --help", expectedSourceMessage("Expected source URL or command", cliValue(command)));
     return true;

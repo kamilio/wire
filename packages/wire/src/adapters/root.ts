@@ -10,7 +10,7 @@ import { formatAgenda, type readAgenda } from "./calendar.js";
 
 export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
-export type WireRootOptions = Readonly<{ allowPaste: boolean; calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
+export type WireRootOptions = Readonly<{ allowPaste: boolean; previewDrive?: (url: string) => Promise<string>; scrapeDrive?: (url?: string) => Promise<string>; calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
 
 const authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
 const removedCliCommandNames = Object.freeze({
@@ -589,6 +589,16 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
     scope: ["cli", "mcp", "sdk"],
     children: [
       defaultAttach,
+      ...(options.scrapeDrive ? [defineGroup({ name: "gdrive", description: "Download Google Drive folders.", scope: ["cli"], children: [
+        ...(options.previewDrive ? [defineCommand({ name: "preview", description: "List a Drive folder or read a file without saving it.", scope: ["cli"], positional: ["url"],
+          params: S.Object({ url: S.String({description: "Google Drive folder or file URL."}) }),
+          handler: ({ params }) => userFacing(() => options.previewDrive!(params.url)), render: render<string>(v => v),
+        })] : []),
+        defineCommand({ name: "scrape", description: "Download into a directory named after the Drive folder. Run there without a URL to refresh.", scope: ["cli"], positional: ["url"],
+          params: S.Object({ url: S.Optional(S.String({ description: "Google Drive folder URL." })) }),
+          handler: ({ params }) => userFacing(() => options.scrapeDrive!(params.url)), render: render<string>(v => v),
+        }),
+      ] })] : []),
       ...(options.calendarAgenda ? [defineGroup({ name: "google-calendar", description: "Read Google Calendar.", scope: ["cli"], children: [
         defineCommand({ name: "agenda", description: "List events overlapping a local day across readable calendars.", scope: ["cli"],
           params: S.Object({

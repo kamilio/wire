@@ -9,6 +9,8 @@ export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
 export type WireRootOptions = Readonly<{
     allowPaste: boolean;
+    previewDrive?: (url: string) => Promise<string>;
+    scrapeDrive?: (url?: string) => Promise<string>;
     calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>;
     latticeSync?: (url: string | undefined, file?: string) => Promise<string>;
     latticeRequests?: (url: string) => Promise<string>;

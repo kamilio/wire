@@ -61,6 +61,12 @@ For a Notion page with subpages, `wire download <url>` saves a directory with an
 
 Run `wire --help` for the full CLI.
 
+### Scrape a Google Drive folder
+
+Use `wire gdrive preview <url>` to list a folder or read a Drive file without saving it. A spreadsheet preview shows the first tab. Run `wire gdrive scrape <folder-url>` to download into a directory named after the Drive folder. Inside that directory, run `wire gdrive scrape` to refresh. Wire keeps the Drive folder structure, exports Docs to Markdown, Sheets to XLSX (all tabs), and Slides to PPTX. Uploaded files retain their original format. Each PDF gets a Markdown copy beside it; review packets preserve questions, reviewer roles, selected answers and visibility notices. The PDF reader is bundled. Image-only PDFs are kept as originals and reported; Wire does not run OCR. Shortcuts and unsupported Google-native items are reported rather than followed.
+
+Set `GOOGLE_CREDENTIALS_FILE` and `GOOGLE_FORMS_TOKEN_FILE` to your OAuth client and matching saved token with Drive read access. The paths can also be set in the Wire workspace configuration. The scraper never uploads or deletes files; a locally edited download is reported and left intact.
+
 ### Browse Asana
 
 ```sh
