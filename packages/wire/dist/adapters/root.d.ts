@@ -4,10 +4,12 @@ import type { listAsanaProjects, listAsanaTasks, moveAsanaTask, showAsanaProject
 import type { zoomProvider } from "provider-zoom";
 import type { SlackSentMessage } from "provider-slack";
 import type { Auth, AuthResult, AuthService } from "../auth.js";
+import { type readAgenda } from "./calendar.js";
 export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
 export type WireRootOptions = Readonly<{
     allowPaste: boolean;
+    calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>;
     latticeSync?: (url: string | undefined, file?: string) => Promise<string>;
     latticeRequests?: (url: string) => Promise<string>;
     latticeTemplate?: (url: string) => Promise<string>;

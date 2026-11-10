@@ -6,9 +6,11 @@ import type { zoomProvider } from "provider-zoom";
 import type { SlackSentMessage } from "provider-slack";
 import type { Auth, AuthResult, AuthService } from "../auth.js";
 
+import { formatAgenda, type readAgenda } from "./calendar.js";
+
 export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
-export type WireRootOptions = Readonly<{ allowPaste: boolean; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
+export type WireRootOptions = Readonly<{ allowPaste: boolean; calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
 
 const authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
 const removedCliCommandNames = Object.freeze({
@@ -587,6 +589,15 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
     scope: ["cli", "mcp", "sdk"],
     children: [
       defaultAttach,
+      ...(options.calendarAgenda ? [defineGroup({ name: "google-calendar", description: "Read Google Calendar.", scope: ["cli"], children: [
+        defineCommand({ name: "agenda", description: "List events overlapping a local day across readable calendars.", scope: ["cli"],
+          params: S.Object({
+            date: S.Optional(S.String({ description: "Local date (YYYY-MM-DD); omit for today." })),
+            "calendar-id": S.Optional(S.String({ description: "Read only this calendar ID." })),
+          }),
+          handler: ({ params }) => options.calendarAgenda!(params.date, params["calendar-id"]), render: render(formatAgenda),
+        }),
+      ] })] : []),
       ...(latticeRoot ? [defineGroup({ name: "lattice", scope: ["cli"], description: "Read reviews and fill your drafts.", children: [
         ...([["requests","List open assignments from a Lattice review requests URL.",options.latticeRequests],["template","Print the current review form as editable Markdown.",options.latticeTemplate]] as const).flatMap(([name,description,run]) => run ? [defineCommand({
           name, description, scope:["cli"], positional:["url"], params:S.Object({url:S.String({description:"Lattice review URL."})}), handler:({params})=>userFacing(()=>run(params.url)), render:render<string>(v=>v),

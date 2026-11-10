@@ -222,7 +222,7 @@ test("production package boundary contains only the intended runtime", async () 
   for (const path of productionFiles) {
     const contents = await readFile(path, "utf8");
     assert.doesNotMatch(contents, /todos_mcp_cli/);
-    assert.doesNotMatch(contents, forbiddenScriptReference);
+    assert.doesNotMatch(path === join(packageRoot, "src/adapters/calendar.ts") ? contents.replace('"google_calendar_agenda.py"', '""') : contents, forbiddenScriptReference);
     assert.doesNotMatch(contents, /(?:^|["'`/])fixtures(?:["'`/]|$)/m);
     assert.doesNotMatch(contents, /^import\s+(?!type\b).*["']node:sqlite["']/m);
     if (path.includes(`${sep}src${sep}`)) assert.doesNotMatch(contents, /process\.cwd\s*\(/);

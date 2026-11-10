@@ -1,5 +1,6 @@
 import { UserError, defineCommand, defineGroup, S } from "toolcraft";
 import { defaultWireBackend, registryPathForBackend } from "wire-core";
+import { formatAgenda } from "./calendar.js";
 const authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"];
 const removedCliCommandNames = Object.freeze({
     create: "Use `wire attach <url>` or `wire <url>`.",
@@ -558,6 +559,14 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
         scope: ["cli", "mcp", "sdk"],
         children: [
             defaultAttach,
+            ...(options.calendarAgenda ? [defineGroup({ name: "google-calendar", description: "Read Google Calendar.", scope: ["cli"], children: [
+                        defineCommand({ name: "agenda", description: "List events overlapping a local day across readable calendars.", scope: ["cli"],
+                            params: S.Object({
+                                date: S.Optional(S.String({ description: "Local date (YYYY-MM-DD); omit for today." })),
+                                "calendar-id": S.Optional(S.String({ description: "Read only this calendar ID." })),
+                            }),
+                            handler: ({ params }) => options.calendarAgenda(params.date, params["calendar-id"]), render: render(formatAgenda), }),
+                    ] })] : []),
             ...(latticeRoot ? [defineGroup({ name: "lattice", scope: ["cli"], description: "Read reviews and fill your drafts.", children: [
                         ...[["requests", "List open assignments from a Lattice review requests URL.", options.latticeRequests], ["template", "Print the current review form as editable Markdown.", options.latticeTemplate]].flatMap(([name, description, run]) => run ? [defineCommand({
                                 name, description, scope: ["cli"], positional: ["url"], params: S.Object({ url: S.String({ description: "Lattice review URL." }) }), handler: ({ params }) => userFacing(() => run(params.url)), render: render(v => v),
