@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -77,6 +78,65 @@ test("scrape paginates nested files, exports whole sheets and protects local edi
     await assert.rejects(scrapeDrive(runtime, dir), /Local file changed/);
     assert.equal(await readFile(path, "utf8"), "local edits");
     assert.equal(exports.length, 2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("verified PDFs stay Markdown-only on refresh; edits, missing copies and warned conversions are protected", async (t) => {
+  if (spawnSync("pdftotext", ["-v"]).status !== 0) return t.skip("Independent PDF verifier not installed");
+  const dir = await mkdtemp(join(import.meta.dirname, "gdrive-"));
+  const doc = PdfDocument.create();
+  doc.addPage().drawText("Keep this response", { x: 30, y: 600, size: 12 });
+  let bytes = doc.save(),
+    version = "1",
+    media = 0;
+  const runtime = {
+    googleFormsTokens: { load: async () => ({ token: "saved" }) },
+    http: {
+      request: async (input) => {
+        const u = new URL(input);
+        if (u.searchParams.has("alt")) {
+          media++;
+          return new Response(bytes);
+        }
+        return Response.json(
+          u.pathname.endsWith("/source")
+            ? { name: basename(dir), mimeType: "application/vnd.google-apps.folder" }
+            : { files: [{ id: "p", name: "packet.pdf", mimeType: "application/pdf", version }] },
+        );
+      },
+    },
+  };
+  const path = join(dir, "packet.pdf"),
+    md = path + ".md";
+  try {
+    await scrapeDrive(runtime, dir, "https://drive.google.com/drive/folders/source");
+    await assert.rejects(readFile(path), { code: "ENOENT" });
+    assert.match(await readFile(md, "utf8"), /Keep this response/);
+    await scrapeDrive(runtime, dir);
+    assert.equal(media, 1);
+    await writeFile(md, "my edit");
+    await assert.rejects(scrapeDrive(runtime, dir), /Local file changed/);
+    assert.equal(await readFile(md, "utf8"), "my edit");
+    await rm(md);
+    await scrapeDrive(runtime, dir);
+    assert.equal(media, 2);
+    // Also clean an existing installation with both files, without refetching.
+    const manifest = join(dir, ".wire-gdrive.json"),
+      state = JSON.parse(await readFile(manifest));
+    delete state.entries["./packet.pdf"].markdownOnly;
+    await writeFile(manifest, JSON.stringify(state));
+    await writeFile(path, bytes);
+    await scrapeDrive(runtime, dir);
+    await assert.rejects(readFile(path), { code: "ENOENT" });
+    assert.equal(media, 2);
+    const figure = doc.addPage();
+    figure.drawRect({ x: 10, y: 10, width: 100, height: 100 });
+    bytes = doc.save();
+    version = "2";
+    await scrapeDrive(runtime, dir);
+    assert.deepEqual(await readFile(path), Buffer.from(bytes));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

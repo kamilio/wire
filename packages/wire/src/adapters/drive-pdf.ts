@@ -1,7 +1,11 @@
+import { spawnSync } from "node:child_process";
 import { PdfDocument, dictGet } from "#pdf-reader";
 
 export function pdfMarkdown(bytes: Uint8Array): string | null {
-  const doc = PdfDocument.load(bytes);
+  return markdownFrom(PdfDocument.load(bytes));
+}
+
+function markdownFrom(doc: PdfDocument): string | null {
   const lines = (i: number) => doc.extractPage(i, "raw").blocks.flatMap((b) => b.lines);
   const cover = lines(0).map((l) => l.text);
   const toc = cover.indexOf("TABLE OF CONTENTS");
@@ -103,4 +107,119 @@ export function pdfMarkdown(bytes: Uint8Array): string | null {
     }
   }
   return out.join("\n\n") + "\n";
+}
+
+// Deletion requires independent, warning-free extraction. Missing verification tools
+// never prevent preview or conversion; they only mean the original stays on disk.
+export function verifiedPdf(bytes: Uint8Array, markdown: string): boolean {
+  try {
+    let warned = false;
+    const doc = PdfDocument.load(bytes, {
+      recovery: "strict",
+      onWarning: () => {
+        warned = true;
+      },
+    });
+    if (markdownFrom(doc) !== markdown || warned) return false;
+    const result = spawnSync("pdftotext", ["-raw", "-enc", "UTF-8", "-", "-"], {
+      input: bytes,
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    if (result.error || result.status !== 0 || result.stderr || !result.stdout.endsWith("\f")) return false;
+    const pages = result.stdout
+      .slice(0, -1)
+      .split("\f")
+      .map((s) => s.trim().split(/\r?\n/));
+    if (pages.length !== doc.pageCount || pages.some((lines) => !lines.join("").trim())) return false;
+    const cover = pages[0]!;
+    const review =
+      cover.includes("MANAGER VERSION") && cover.includes("DO NOT SHARE") && cover.includes("TABLE OF CONTENTS");
+    for (const { value } of doc.cos.objects.values()) {
+      const d = value.kind === "stream" ? value.dict : value.kind === "dict" ? value : null;
+      if (!d) continue;
+      if (
+        ["EmbeddedFiles", "EF", "AcroForm", "XFA", "RichMediaContent", "Collection", "OCProperties"].some((k) =>
+          dictGet(d, k),
+        )
+      )
+        return false;
+      const sub = dictGet(d, "Subtype"),
+        type = dictGet(d, "Type");
+      if (type?.kind === "name" && type.decoded === "Annot" && !(sub?.kind === "name" && sub.decoded === "Link"))
+        return false;
+    }
+    for (let i = 0; i < pages.length; i++) {
+      const display = doc.getPage(i).evaluateDisplayList();
+      if (!display.glyphs.length || (!review && display.paths.length)) return false;
+      if (display.annotations.some((a) => a.contents || (a.uri && !/^#page\d+$/.test(a.uri) && !markdown.includes(a.uri))))
+        return false;
+      // Lattice's small square reviewer avatars are decorative. Keep other images.
+      if (
+        display.images.some(
+          (img) =>
+            !(
+              review &&
+              img.width === 200 &&
+              img.height === 200 &&
+              img.matrix[0] >= 22 &&
+              img.matrix[0] <= 24.1 &&
+              img.matrix[1] === 0 &&
+              img.matrix[2] === 0 &&
+              Math.abs(img.matrix[3] - img.matrix[0]) < 0.1 &&
+              Math.abs(img.matrix[4] - 30) < 1
+            ),
+        )
+      )
+        return false;
+    }
+    if (warned || /\uFFFD|[\x00-\x08\x0e-\x1f]/u.test(markdown)) return false;
+    const compact = (s: string) => s.normalize("NFKC").replace(/\s+/gu, "");
+    if (!review) return pages.flat().join(" ").trim().replace(/\s+/gu, " ") === markdown.trim().replace(/\s+/gu, " ");
+    // Only omit the known navigation, running feet, avatar initials and duplicated
+    // scale options. Any other character difference keeps the PDF.
+    const toc = cover.indexOf("TABLE OF CONTENTS");
+    if (
+      !/^RESPONSES OVERVIEW\nBy question\s*\.+\s*\d+(?:\nCLOSING\nAcknowledgement\s*\.+\s*\d+)?(?:\n1)?$/.test(
+        cover.slice(toc + 1).join("\n"),
+      )
+    )
+      return false;
+    const source = [...cover.slice(0, toc)];
+    for (let i = 1; i < pages.length; i++) {
+      const lines = pages[i]!,
+        footer = lines.lastIndexOf(cover[0]!);
+      if (
+        footer < 0 ||
+        (compact(lines.slice(footer + 1).join("")) !==
+          compact(cover[1]! + "Manager versionResponses overview by question" + (i + 1)) &&
+          compact(lines.slice(footer + 1).join("")) !== compact(cover[1]! + "Manager versionAcknowledgement" + (i + 1)))
+      )
+        return false;
+      const body = lines
+        .slice(0, footer)
+        .join("\n")
+        .replace(
+          /^Manager\n(Critically underperform-\s*ing\s+Needs Improvement\s+Performing\s+Exceeding|No, not at this time\s+Yes, I’m proposing this person for promotion|Needs improvement\s+On track)\n(?=[^\n]+Manager\nRATING\n)/gm,
+          "",
+        )
+        .replace(/^[A-Z]{1,4} (?=.+ (?:Self|Manager|Peer|Direct report|Upward)$)/gm, "")
+        .replace(/^\s*[•◦▪]\s*/gm, "");
+      if (!body.trim()) return false;
+      source.push(body);
+    }
+    const plain = markdown
+      .split("\n")
+      .map((l) =>
+        l
+          .replace(/^#{1,4} /, "")
+          .replace(/^\s*- /, "")
+          .replace(/^\*\*(.+)\*\*$/, "$1")
+          .replace(/^\*(Your response .+)\*$/, "$1"),
+      )
+      .join("\n");
+    return compact(source.join("\n")) === compact(plain);
+  } catch {
+    return false;
+  }
 }

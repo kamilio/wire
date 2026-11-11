@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 const google = "application/vnd.google-apps.";
 const formats = {
@@ -107,7 +107,7 @@ export async function scrapeDrive(runtime, cwd, url) {
         await drive(runtime, "/" + encodeURIComponent(state.folder), { fields: "id", supportsAllDrives: "true" });
     if (match && state.folder !== match[1])
         throw new Error("This directory tracks a different Drive folder.");
-    let downloaded = 0, unchanged = 0;
+    let downloaded = 0, unchanged = 0, removed = 0;
     const errors = [], skipped = [], images = [];
     async function visit(parent, dir) {
         for await (const f of children(runtime, parent)) {
@@ -149,11 +149,28 @@ export async function scrapeDrive(runtime, cwd, url) {
                     await visit(f.id, path);
                     continue;
                 }
+                const original = state.entries[key(path)];
+                const removeVerified = async (bytes, md) => {
+                    const { verifiedPdf } = await import("./drive-pdf.js");
+                    if (!verifiedPdf(bytes, md.toString("utf8")))
+                        return;
+                    // Recheck both local files after verification, before removing the managed copy.
+                    for (const p of paths()) {
+                        const local = join(cwd, p);
+                        if (!(await lstat(local)).isFile() || digest(await readFile(local)) !== state.entries[key(p)]?.hash)
+                            throw new Error("Local file changed: " + p);
+                    }
+                    await unlink(full);
+                    state.entries[key(path)].markdownOnly = true;
+                    removed++;
+                };
                 let current = true;
                 for (const p of paths()) {
-                    if (p !== path && state.entries[key(path)]?.noText)
-                        continue;
                     const entry = state.entries[key(p)], info = await stat(join(cwd, p));
+                    if (!info && p !== path && original?.noText)
+                        continue;
+                    if (!info && p === path && original?.markdownOnly && original.version === f.version)
+                        continue;
                     if (info && (!info.isFile() || digest(await readFile(join(cwd, p))) !== entry?.hash))
                         throw new Error("Local file changed: " + p);
                     if (!info || entry?.version !== f.version)
@@ -162,6 +179,8 @@ export async function scrapeDrive(runtime, cwd, url) {
                 if (current) {
                     if (state.entries[key(path)]?.noText)
                         images.push(path);
+                    if (pdf && !original?.noText && (await stat(full)))
+                        await removeVerified(await readFile(full), await readFile(full + ".md"));
                     unchanged++;
                     continue;
                 }
@@ -183,6 +202,7 @@ export async function scrapeDrive(runtime, cwd, url) {
                     const md = Buffer.from(text);
                     await save(full + ".md", md);
                     state.entries[key(path + ".md")] = { id: f.id, version: f.version, hash: digest(md) };
+                    await removeVerified(bytes, md);
                 }
                 downloaded++;
             }
@@ -202,6 +222,7 @@ export async function scrapeDrive(runtime, cwd, url) {
         " downloaded, " +
         unchanged +
         " unchanged." +
+        (removed ? " Verified Markdown; removed " + removed + " local PDF copies." : "") +
         (images.length ? "\nPDFs with no text layer (originals kept): " + images.join(", ") : "") +
         (skipped.length ? "\nUnsupported Drive items: " + skipped.join(", ") : "");
     if (errors.length)

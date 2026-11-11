@@ -1,1 +1,1 @@
-{"version":3,"file":"drive-pdf.d.ts","sourceRoot":"","sources":["../../src/adapters/drive-pdf.ts"],"names":[],"mappings":"AAEA,wBAAgB,WAAW,CAAC,KAAK,EAAE,UAAU,GAAG,MAAM,GAAG,IAAI,CAuG5D"}
+{"version":3,"file":"drive-pdf.d.ts","sourceRoot":"","sources":["../../src/adapters/drive-pdf.ts"],"names":[],"mappings":"AAGA,wBAAgB,WAAW,CAAC,KAAK,EAAE,UAAU,GAAG,MAAM,GAAG,IAAI,CAE5D;AA4GD,wBAAgB,WAAW,CAAC,KAAK,EAAE,UAAU,EAAE,QAAQ,EAAE,MAAM,GAAG,OAAO,CA+GxE"}
