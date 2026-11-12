@@ -1,7 +1,7 @@
 import { UserError, defineCommand, defineGroup, S } from "toolcraft";
 import { defaultWireBackend, registryPathForBackend } from "wire-core";
 import { formatAgenda } from "./calendar.js";
-const authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"];
+const authServices = ["ashby", "asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"];
 const removedCliCommandNames = Object.freeze({
     create: "Use `wire attach <url>` or `wire <url>`.",
     fetch: "Use `wire download <url>`.",
@@ -135,7 +135,7 @@ function wireUserErrorMessage(message) {
         || /^Resource (path |identifier |URL )?not found: /.test(message)
         || /^Ambiguous resource path /.test(message)
         || /^Login not saved$/.test(message)
-        || /authentication (is missing|is missing or expired|failed|expired).*Run `wire (asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.test(message)
+        || /authentication (is missing|is missing or expired|failed|expired).*Run `wire (ashby|asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.test(message)
         || /^Asana API /.test(message)
         || /^(GET|POST|PUT|DELETE) \/.* failed: \d+ /.test(message)
         || /^(Invalid Asana project heading|Asana section appears|Asana milestone appears|Asana task appears|Asana subtask appears|Unsupported Asana Markdown|Duplicate Asana identity|Missing Asana project heading|Asana project identity changed|Unknown Asana identity|Conflicting Asana edits)/.test(message)
@@ -175,7 +175,7 @@ function wireUserErrorDisplayMessage(message) {
     const existingWorkspace = /^Wire workspace already initialized with (sqlite|files) registry at ([\s\S]+)\. Existing registries are not overwritten\.$/.exec(message);
     if (existingWorkspace !== null)
         return `workspace already initialized\nbackend: ${existingWorkspace[1]}\nregistry: ${lineText(existingWorkspace[2])}\nkept: existing registry`;
-    const authentication = /authentication (is missing or expired|is missing|failed|expired).*Run `wire (asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.exec(message);
+    const authentication = /authentication (is missing or expired|is missing|failed|expired).*Run `wire (ashby|asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.exec(message);
     if (authentication !== null)
         return `login required\nservice: ${serviceTitle(authentication[2])}\nrun: wire ${authentication[2]} login`;
     const asanaApi = /^Asana API ([^\s]+) failed: HTTP (\d+)(?: ([\s\S]+))?$/.exec(message);
@@ -316,6 +316,7 @@ function userFacing(operation) {
 }
 function serviceTitle(service) {
     return {
+        ashby: "Ashby",
         asana: "Asana",
         chatgpt: "ChatGPT",
         gmail: "Gmail",
@@ -388,7 +389,7 @@ function authGroup(service, description, loginDescription, auth, readInput, opti
     const login = async (paste) => {
         if (paste === true && !options.allowPaste)
             throw new UserError("Cookie paste is CLI-only.");
-        return paste === true ? auth.pasteCookies(service, await readInput()) : service === "asana" ? auth.extractAsana() : service === "chatgpt" ? auth.extractChatgpt() : service === "gmail" ? auth.extractGmail() : service === "google-docs" ? auth.extractGoogleDocs() : service === "notion" ? auth.extractNotion() : service === "slack" ? auth.extractSlack() : auth.extractZoom();
+        return paste === true ? auth.pasteCookies(service, await readInput()) : service === "ashby" ? auth.extractAshby() : service === "asana" ? auth.extractAsana() : service === "chatgpt" ? auth.extractChatgpt() : service === "gmail" ? auth.extractGmail() : service === "google-docs" ? auth.extractGoogleDocs() : service === "notion" ? auth.extractNotion() : service === "slack" ? auth.extractSlack() : auth.extractZoom();
     };
     const title = serviceTitle(service);
     return defineGroup({ name: service, description, children: [
@@ -529,6 +530,18 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
                                     render: render((comment) => `Updated comment ${comment["gid"]}`),
                                 })] })] : []),
                 ] });
+        if (service === "ashby" && options.ashby) {
+            const run = options.ashby;
+            return defineGroup({ ...group, description: "Read your interviews and sync feedback drafts.", children: [...group.children,
+                    ...[["interviews", "List your upcoming interviews."], ["pending", "List interviews awaiting your feedback."], ["latest", "Read your most recently submitted feedback."]].map(([name, description]) => defineCommand({
+                        name, description, params: S.Object({}), handler: () => userFacing(() => run(name)), render: render(v => v),
+                    })),
+                    ...[["prep", "Read the interview briefing and candidate background."], ["template", "Print your editable Markdown feedback draft."]].map(([name, description]) => defineCommand({
+                        name, description, positional: ["url"], params: S.Object({ url: S.String({ description: "Interview briefing URL." }) }), handler: ({ params }) => userFacing(() => run(name, params.url)), render: render(v => v),
+                    })),
+                    defineCommand({ name: "sync", description: "Save edited Markdown sections as drafts. Blank answers are skipped. Final submission is manual.", positional: ["file"], params: S.Object({ file: S.String({ description: "Markdown file created with ashby template." }) }), handler: ({ params }) => userFacing(() => run("sync", params.file)), render: render(v => v) }),
+                ] });
+        }
         if (service === "zoom" && options.scrapeZoom)
             return defineGroup({ ...group, children: [...group.children, defineCommand({
                         name: "scrape", scope: ["cli"], description: "Sync available Zoom Hub transcripts into ./zoom without deleting existing files.", params: S.Object({}),

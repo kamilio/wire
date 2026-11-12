@@ -8,7 +8,7 @@ import { composeAuth, composeWire, configuredWireRoot, createCookiesCapability, 
 import { serviceCatalog } from "./service-catalog.js";
 
 const execFileAsync = promisify(execFile);
-const authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
+const authServices = ["ashby", "asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
 let wireStatus: vscode.StatusBarItem;
 
 function operationPath(value: string, path: string): string {
@@ -314,6 +314,7 @@ async function authLogin(): Promise<void> {
   const service = await selectedAuthService();
   const authClient = await auth();
   const actions = {
+    ashby: authClient.extractAshby,
     asana: authClient.extractAsana,
     chatgpt: authClient.extractChatgpt,
     gmail: authClient.extractGmail,

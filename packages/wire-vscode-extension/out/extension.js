@@ -14185,6 +14185,7 @@ function serializeNetscapeCookies(cookies, metadata) {
 }
 function createCookiesCapability(filesystem, home, repositoryRoot2, overrideFile) {
   const paths = (service) => {
+    if (service === "ashby") return [cookiesFile(home(), service)];
     const overridePath = overrideFile?.(service);
     const repositoryRootPath = repositoryRoot2?.();
     return [
@@ -14213,7 +14214,7 @@ function createCookiesCapability(filesystem, home, repositoryRoot2, overrideFile
       const contents = serializeNetscapeCookies(cookies, metadata);
       const existingPaths = [];
       for (const path of candidatePaths) if (await filesystem.exists(path)) existingPaths.push(path);
-      for (const path of existingPaths.length === 0 ? [candidatePaths[0]] : existingPaths) await filesystem.writeText(path, contents);
+      for (const path of existingPaths.length === 0 ? [candidatePaths[0]] : existingPaths) await filesystem.writeText(path, contents, 384);
     },
     delete: async (service) => {
       for (const path of paths(service)) if (await filesystem.exists(path)) await filesystem.delete(path);
@@ -15289,6 +15290,44 @@ function composeWire(dependencies) {
   });
 }
 
+// ../wire/src/adapters/ashby.ts
+var origin = "https://app.ashbyhq.com";
+async function ashbySession(runtime2, cookies) {
+  const cookie = cookies.filter(
+    (c) => ["ashbyhq.com", "app.ashbyhq.com"].includes(c.domain.replace(/^\./, ""))
+  ).map((c) => c.name + "=" + c.value).join("; ");
+  const res = await runtime2.http.request(origin + "/api/csrf/token", {
+    headers: { cookie },
+    redirect: "error"
+  });
+  if (!res.ok)
+    throw new Error("Ashby authentication failed. Run `wire ashby login`.");
+  const { token } = await res.json();
+  const csrfCookie = res.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+  return async (query, variables = {}) => {
+    const response = await runtime2.http.request(origin + "/api/graphql", {
+      method: "POST",
+      redirect: "error",
+      headers: {
+        cookie: [cookie, csrfCookie].filter(Boolean).join("; "),
+        "x-csrf-token": token,
+        "x-ashby-app": "Recruiting",
+        "content-type": "application/json",
+        origin
+      },
+      body: JSON.stringify({ query, variables })
+    });
+    if (!response.ok)
+      throw new Error("Ashby request failed (HTTP " + response.status + ").");
+    const result = await response.json();
+    if (result.errors?.length || !result.data)
+      throw new Error(
+        "Ashby rejected the request. Check your login and access to the interview."
+      );
+    return result.data;
+  };
+}
+
 // ../wire/src/auth.ts
 function cookieHeader(cookies) {
   return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
@@ -15312,10 +15351,10 @@ async function verifyNotion(runtime2, cookies) {
 }
 async function verifySlack(runtime2, cookies, metadata) {
   const cookie = cookieHeader(cookies);
-  const origin = metadata["origin"];
+  const origin2 = metadata["origin"];
   const token = metadata["token"];
-  if (origin === void 0 || token === void 0) return null;
-  const response = await runtime2.http.request(`${origin}/api/auth.test`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded", "user-agent": "Mozilla/5.0" }, body: new URLSearchParams({ token }) });
+  if (origin2 === void 0 || token === void 0) return null;
+  const response = await runtime2.http.request(`${origin2}/api/auth.test`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded", "user-agent": "Mozilla/5.0" }, body: new URLSearchParams({ token }) });
   const identity = await responseJson(response);
   if (identity === null) return null;
   if (identity["ok"] !== true) return null;
@@ -15479,8 +15518,8 @@ async function verifyGoogleDocsCookies(runtime2, cookies) {
   return Object.freeze({ service: "google-docs", identity: Object.freeze(email === void 0 ? { service: "google-docs" } : { email }) });
 }
 function composeAuth(runtime2, environment2, extractCookies) {
-  const cookieDomains = Object.freeze({ asana: ".asana.com", chatgpt: ".chatgpt.com", gmail: ".google.com", "google-docs": ".google.com", notion: ".notion.so", slack: ".slack.com", zoom: ".zoom.us" });
-  const verifyCookies = (service, cookies, metadata) => service === "asana" ? verifyAsana(runtime2, cookies) : service === "chatgpt" ? verifyChatgpt(runtime2, cookies) : service === "gmail" ? verifyGmailCookies(runtime2, cookies) : service === "google-docs" ? verifyGoogleDocsCookies(runtime2, cookies) : service === "notion" ? verifyNotion(runtime2, cookies) : service === "slack" ? verifySlack(runtime2, cookies, metadata) : verifyZoom(runtime2, cookies);
+  const cookieDomains = Object.freeze({ ashby: ".ashbyhq.com", asana: ".asana.com", chatgpt: ".chatgpt.com", gmail: ".google.com", "google-docs": ".google.com", notion: ".notion.so", slack: ".slack.com", zoom: ".zoom.us" });
+  const verifyCookies = (service, cookies, metadata) => service === "ashby" ? ashbySession(runtime2, cookies).then((q2) => q2("query { sessionUser { id } }")).then((d) => d.sessionUser ? { service, identity: { user_id: d.sessionUser.id } } : null).catch(() => null) : service === "asana" ? verifyAsana(runtime2, cookies) : service === "chatgpt" ? verifyChatgpt(runtime2, cookies) : service === "gmail" ? verifyGmailCookies(runtime2, cookies) : service === "google-docs" ? verifyGoogleDocsCookies(runtime2, cookies) : service === "notion" ? verifyNotion(runtime2, cookies) : service === "slack" ? verifySlack(runtime2, cookies, metadata) : verifyZoom(runtime2, cookies);
   const verifyCookieState = async (service, cookies, metadata) => {
     if (service === "zoom") return verifyZoomCookieState(runtime2, cookies, metadata);
     return Object.freeze({ result: await verifyCookies(service, cookies, metadata), cookies, metadata, changed: false });
@@ -15526,6 +15565,7 @@ function composeAuth(runtime2, environment2, extractCookies) {
       await runtime2.cookies.delete(service);
       return Object.freeze({ service, deleted: true });
     },
+    extractAshby: () => extract("ashby", "https://app.ashbyhq.com/", ["ashbyhq.com"], (values2) => values2.length > 0),
     extractAsana: () => extract("asana", "https://app.asana.com/", ["asana.com"], (values2) => values2.some((cookie) => cookie.domain === ".asana.com" || cookie.domain.endsWith(".asana.com"))),
     extractChatgpt: () => extract("chatgpt", "https://chatgpt.com/", ["chatgpt.com", "openai.com"], (values2) => values2.some((cookie) => cookie.name === "oai-did") && values2.some((cookie) => cookie.name === "__Secure-next-auth.session-token" || cookie.name === "__Secure-next-auth.session-token.0"), void 0, true),
     extractGmail: () => extract("gmail", "https://mail.google.com/mail/u/0/", ["google.com"], googleReady),
@@ -17564,13 +17604,13 @@ function createChatgptRequester(http, onCooldown = async () => {
   let stopped;
   return async (url, headers, endpoint2) => {
     if (stopped !== void 0) throw stopped;
-    const origin = new URL(url).origin;
+    const origin2 = new URL(url).origin;
     for (let attempt = 1; ; attempt++) {
-      while (timing.now() < (deadlines.get(origin) ?? 0)) await timing.sleep(Math.min(2147483647, deadlines.get(origin) - timing.now()));
+      while (timing.now() < (deadlines.get(origin2) ?? 0)) await timing.sleep(Math.min(2147483647, deadlines.get(origin2) - timing.now()));
       const response = await http.request(url, { headers, redirect: "manual", signal: AbortSignal.timeout(6e4) });
       if (![429, 500, 502, 503, 504].includes(response.status)) return response;
       const cooldown = responseCooldown(response, timing.now(), attempt, endpoint2);
-      deadlines.set(origin, Math.max(deadlines.get(origin) ?? 0, Date.parse(cooldown.retry_at)));
+      deadlines.set(origin2, Math.max(deadlines.get(origin2) ?? 0, Date.parse(cooldown.retry_at)));
       await onCooldown(cooldown);
       if (attempt === 5) {
         if (response.status !== 429) return response;
@@ -19724,7 +19764,7 @@ function canonicalBlock(value, columnOrder) {
   if (type === "to_do") return { type, title: normalizeRichText(object4(value["properties"])["title"]), checked: object4(value["properties"])["checked"] ?? [["No"]] };
   if (type === "table") return { type, column_count: object4(value["format"])["table_block_column_order"].length };
   if (type === "table_row") return { type, cells: columnOrder.map((column) => normalizeRichText(object4(value["properties"])[column] ?? [])) };
-  if (type === "image") return { type, source: object4(value["properties"])["source"], alt_text: object4(value["properties"])["alt_text"], caption: object4(value["properties"])["caption"] ?? null };
+  if (type === "image") return { type, source: object4(value["properties"])["source"], alt_text: object4(value["properties"])["alt_text"] ?? [[""]], caption: object4(value["properties"])["caption"] ?? null };
   if (["divider", "column_list", "transclusion_container"].includes(type)) return { type };
   if (type === "column") return { type, column_ratio: object4(value["format"] ?? {})["column_ratio"] ?? null };
   if (["header", "sub_header", "sub_sub_header"].includes(type)) return { type, title: normalizeRichText(object4(value["properties"] ?? { title: [] })["title"] ?? []), toggleable: object4(value["format"] ?? {})["toggleable"] === true };
@@ -20013,7 +20053,7 @@ async function resolveNotionEmailMentions(runtime2, blocks, cookie, spaceId, hea
   }
 }
 async function fetchComments(runtime2, tree, spaceId, cookie, headers) {
-  const records = { discussion: /* @__PURE__ */ new Map(), comment: /* @__PURE__ */ new Map(), notion_user: /* @__PURE__ */ new Map() };
+  const records = { discussion: /* @__PURE__ */ new Map(), comment: /* @__PURE__ */ new Map(), notion_user: /* @__PURE__ */ new Map(), bot: /* @__PURE__ */ new Map() };
   let startingAfterId;
   while (true) {
     const data = await notionPost(runtime2, "getActivityLog", cookie, { spaceId, navigableBlock: { id: tree.id }, limit: 100, ...startingAfterId === void 0 ? {} : { startingAfterId } }, headers);
@@ -20032,14 +20072,14 @@ async function fetchComments(runtime2, tree, spaceId, cookie, headers) {
   }
   const blockIds = new Set(sidecarBlocksFromNotionTree(tree).map((block) => block.id));
   const discussions = [...records["discussion"].values()].filter((discussion) => blockIds.has(discussion["parent_id"]) && discussion["alive"] !== false);
-  for (const table of ["comment", "notion_user"]) {
-    const ids = table === "comment" ? discussions.flatMap((discussion) => discussion["comments"]) : [...records["comment"].values()].filter((comment) => comment["alive"] === true).map((comment) => comment["created_by_id"]);
+  for (const table of ["comment", "notion_user", "bot"]) {
+    const ids = table === "comment" ? discussions.flatMap((discussion) => discussion["comments"]) : [...records["comment"].values()].filter((comment) => comment["alive"] === true && (comment["created_by_table"] ?? "notion_user") === table).map((comment) => comment["created_by_id"]);
     const missing = [...new Set(ids)].filter((id) => !records[table].has(id));
     if (missing.length === 0) continue;
     const data = await notionPost(runtime2, "getRecordValues", cookie, { requests: missing.map((id) => ({ table, id })) }, headers);
     for (const [index, result] of data["results"].entries()) records[table].set(missing[index], object4(result["value"]));
   }
-  return renderComments(tree.id, discussions, records["comment"], records["notion_user"]);
+  return renderComments(tree.id, discussions, records["comment"], new Map([...records["notion_user"], ...records["bot"]]));
 }
 function renderComments(pageId, discussions, commentsById, users) {
   const threads = discussions.map((discussion) => {
@@ -20866,11 +20906,11 @@ ${"    ".repeat(indent)}${" ".repeat(prefix.length)}`)}`;
   };
   return blocks.map(render2).join("\n\n");
 }
-async function api(runtime2, origin, token, cookie, method, parameters) {
+async function api(runtime2, origin2, token, cookie, method, parameters) {
   const body2 = new URLSearchParams({ token, ...parameters });
   const read = ["conversations.history", "conversations.replies", "users.info", "users.list", "bots.info", "search.modules.channels"].includes(method);
   for (let attempt = 0; ; attempt++) {
-    const response = await runtime2.http.request(`${origin}/api/${method}`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded", "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36" }, body: body2 });
+    const response = await runtime2.http.request(`${origin2}/api/${method}`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded", "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36" }, body: body2 });
     const json = response.status === 429 ? {} : await response.json();
     if (response.status === 429) await response.body?.cancel();
     const limitedRead = read && (response.status === 429 || json["error"] === "ratelimited");
@@ -20932,12 +20972,12 @@ var slackService = defineService({
   },
   fetch: async (runtime2, url, source) => {
     const session = await slackSession(runtime2);
-    const origin = new URL(url).hostname === "app.slack.com" ? session.origin : new URL(url).origin;
+    const origin2 = new URL(url).hostname === "app.slack.com" ? session.origin : new URL(url).origin;
     const { token, cookie } = session;
     const replies = [];
     let cursor;
     do {
-      const response = await api(runtime2, origin, token, cookie, source["thread_timestamp"] === void 0 ? "conversations.history" : "conversations.replies", { channel: source["channel_id"], ...source["thread_timestamp"] === void 0 ? {} : { ts: source["thread_timestamp"] }, limit: "200", ...cursor === void 0 ? {} : { cursor } });
+      const response = await api(runtime2, origin2, token, cookie, source["thread_timestamp"] === void 0 ? "conversations.history" : "conversations.replies", { channel: source["channel_id"], ...source["thread_timestamp"] === void 0 ? {} : { ts: source["thread_timestamp"] }, limit: "200", ...cursor === void 0 ? {} : { cursor } });
       replies.push(...response["messages"]);
       cursor = response["response_metadata"]?.["next_cursor"];
     } while (cursor !== void 0 && cursor !== "");
@@ -20946,7 +20986,7 @@ var slackService = defineService({
         if (typeof parent["reply_count"] !== "number" || parent["reply_count"] === 0) continue;
         let cursor2;
         do {
-          const response = await api(runtime2, origin, token, cookie, "conversations.replies", { channel: source["channel_id"], ts: parent["ts"], limit: "200", ...cursor2 === void 0 ? {} : { cursor: cursor2 } });
+          const response = await api(runtime2, origin2, token, cookie, "conversations.replies", { channel: source["channel_id"], ts: parent["ts"], limit: "200", ...cursor2 === void 0 ? {} : { cursor: cursor2 } });
           replies.push(...response["messages"].filter((message) => message["ts"] !== parent["ts"]));
           cursor2 = response["response_metadata"]?.["next_cursor"];
         } while (cursor2 !== void 0 && cursor2 !== "");
@@ -20957,7 +20997,7 @@ var slackService = defineService({
     const botCache = /* @__PURE__ */ new Map();
     const resolveUser = async (id) => {
       if (!userCache.has(id)) {
-        const profile = await api(runtime2, origin, token, cookie, "users.info", { user: id });
+        const profile = await api(runtime2, origin2, token, cookie, "users.info", { user: id });
         const user = profile["user"];
         const userProfile = user["profile"];
         const realName = userProfile === void 0 ? void 0 : userProfile["real_name"];
@@ -20975,7 +21015,7 @@ var slackService = defineService({
       else if (raw["bot_profile"] !== void 0) userName = raw["bot_profile"]["name"];
       else if (raw["bot_id"] !== void 0) {
         const botId = raw["bot_id"];
-        if (!botCache.has(botId)) botCache.set(botId, (await api(runtime2, origin, token, cookie, "bots.info", { bot: botId }))["bot"]["name"]);
+        if (!botCache.has(botId)) botCache.set(botId, (await api(runtime2, origin2, token, cookie, "bots.info", { bot: botId }))["bot"]["name"]);
         userName = botCache.get(botId);
       } else userName = "unknown";
       const text3 = raw["text"];
@@ -21022,7 +21062,7 @@ var slackService = defineService({
     for (const [index, message] of messages.entries()) {
       lines.push(`## ${message.user_name} \u2014 ${formatTimestamp(message.ts, timezone)}`, "");
       const thread = replies[index]["thread_ts"];
-      if (source["thread_timestamp"] === void 0 && thread !== void 0 && thread !== message.ts) lines.push(`[Thread](${origin}/archives/${source["channel_id"]}/p${thread.replace(".", "")})`, "");
+      if (source["thread_timestamp"] === void 0 && thread !== void 0 && thread !== message.ts) lines.push(`[Thread](${origin2}/archives/${source["channel_id"]}/p${thread.replace(".", "")})`, "");
       lines.push(message.text, "");
     }
     return Object.freeze({ title: `${date}-${titleText}`, markdown: `${lines.join("\n").trimEnd()}
@@ -21377,7 +21417,7 @@ var serviceCatalog = createServiceRegistry().use(zoomProvider).use(notionProvide
 
 // src/extension.ts
 var execFileAsync2 = (0, import_node_util3.promisify)(import_node_child_process3.execFile);
-var authServices = ["asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"];
+var authServices = ["ashby", "asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"];
 var wireStatus;
 function operationPath(value, path) {
   if (value.startsWith("http://") || value.startsWith("https://")) return path;
@@ -21653,6 +21693,7 @@ async function authLogin() {
   const service = await selectedAuthService();
   const authClient = await auth();
   const actions = {
+    ashby: authClient.extractAshby,
     asana: authClient.extractAsana,
     chatgpt: authClient.extractChatgpt,
     gmail: authClient.extractGmail,

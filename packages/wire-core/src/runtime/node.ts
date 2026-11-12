@@ -25,9 +25,9 @@ export function createNodeFilesystem(): FilesystemCapability {
   return Object.freeze({
     exists: async (path: string) => existsSync(path),
     readText: (path: string) => readFile(path, "utf8"),
-    writeText: async (path: string, contents: string) => {
+    writeText: async (path: string, contents: string, mode?: number) => {
       await mkdir(dirname(path), { recursive: true });
-      await writeFile(path, contents, "utf8");
+      await writeFile(path, contents, { encoding: "utf8", mode });
     },
     delete: (path: string) => rm(path, { force: true }),
   });

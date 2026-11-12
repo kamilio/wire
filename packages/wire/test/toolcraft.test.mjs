@@ -1919,7 +1919,7 @@ test("MCP exposes only Wire tools", async () => {
   const listed = await server.handleMessage("tools/list");
   assert.deepEqual(listed.result.tools.map((tool) => tool.name), [
     "attach", "init", "preview", "sync", "download", "detach", "open", "sync_all",
-    "asana__status", "asana__login", "asana__logout", "chatgpt__status", "chatgpt__login", "chatgpt__logout", "gmail__status", "gmail__login", "gmail__logout", "google_docs__status", "google_docs__login", "google_docs__logout", "notion__status", "notion__login", "notion__logout", "slack__preview", "slack__attach", "slack__sync", "slack__status", "slack__login", "slack__logout", "zoom__status", "zoom__login", "zoom__logout",
+    "ashby__status", "ashby__login", "ashby__logout", "asana__status", "asana__login", "asana__logout", "chatgpt__status", "chatgpt__login", "chatgpt__logout", "gmail__status", "gmail__login", "gmail__logout", "google_docs__status", "google_docs__login", "google_docs__logout", "notion__status", "notion__login", "notion__logout", "slack__preview", "slack__attach", "slack__sync", "slack__status", "slack__login", "slack__logout", "zoom__status", "zoom__login", "zoom__logout",
   ]);
   const called = await server.handleMessage("tools/call", { name: "notion__status", arguments: {} });
   assert.deepEqual(JSON.parse(called.result.content[0].text), { service: "notion", identity: { service: "notion" } });

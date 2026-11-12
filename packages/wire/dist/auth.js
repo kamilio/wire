@@ -1,4 +1,5 @@
 import { parsePastedCookieMetadata, parsePastedCookies } from "wire-core";
+import { ashbySession } from "./adapters/ashby.js";
 function cookieHeader(cookies) {
     return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
 }
@@ -212,8 +213,8 @@ async function verifyGoogleDocsCookies(runtime, cookies) {
     return Object.freeze({ service: "google-docs", identity: Object.freeze(email === undefined ? { service: "google-docs" } : { email }) });
 }
 export function composeAuth(runtime, environment, extractCookies) {
-    const cookieDomains = Object.freeze({ asana: ".asana.com", chatgpt: ".chatgpt.com", gmail: ".google.com", "google-docs": ".google.com", notion: ".notion.so", slack: ".slack.com", zoom: ".zoom.us" });
-    const verifyCookies = (service, cookies, metadata) => service === "asana" ? verifyAsana(runtime, cookies) : service === "chatgpt" ? verifyChatgpt(runtime, cookies) : service === "gmail" ? verifyGmailCookies(runtime, cookies) : service === "google-docs" ? verifyGoogleDocsCookies(runtime, cookies) : service === "notion" ? verifyNotion(runtime, cookies) : service === "slack" ? verifySlack(runtime, cookies, metadata) : verifyZoom(runtime, cookies);
+    const cookieDomains = Object.freeze({ ashby: ".ashbyhq.com", asana: ".asana.com", chatgpt: ".chatgpt.com", gmail: ".google.com", "google-docs": ".google.com", notion: ".notion.so", slack: ".slack.com", zoom: ".zoom.us" });
+    const verifyCookies = (service, cookies, metadata) => service === "ashby" ? ashbySession(runtime, cookies).then(q => q("query { sessionUser { id } }")).then(d => d.sessionUser ? { service, identity: { user_id: d.sessionUser.id } } : null).catch(() => null) : service === "asana" ? verifyAsana(runtime, cookies) : service === "chatgpt" ? verifyChatgpt(runtime, cookies) : service === "gmail" ? verifyGmailCookies(runtime, cookies) : service === "google-docs" ? verifyGoogleDocsCookies(runtime, cookies) : service === "notion" ? verifyNotion(runtime, cookies) : service === "slack" ? verifySlack(runtime, cookies, metadata) : verifyZoom(runtime, cookies);
     const verifyCookieState = async (service, cookies, metadata) => {
         if (service === "zoom")
             return verifyZoomCookieState(runtime, cookies, metadata);
@@ -265,6 +266,7 @@ export function composeAuth(runtime, environment, extractCookies) {
             await runtime.cookies.delete(service);
             return Object.freeze({ service, deleted: true });
         },
+        extractAshby: () => extract("ashby", "https://app.ashbyhq.com/", ["ashbyhq.com"], values => values.length > 0),
         extractAsana: () => extract("asana", "https://app.asana.com/", ["asana.com"], (values) => values.some((cookie) => cookie.domain === ".asana.com" || cookie.domain.endsWith(".asana.com"))),
         extractChatgpt: () => extract("chatgpt", "https://chatgpt.com/", ["chatgpt.com", "openai.com"], (values) => values.some((cookie) => cookie.name === "oai-did") && values.some((cookie) => cookie.name === "__Secure-next-auth.session-token" || cookie.name === "__Secure-next-auth.session-token.0"), undefined, true),
         extractGmail: () => extract("gmail", "https://mail.google.com/mail/u/0/", ["google.com"], googleReady),

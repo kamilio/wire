@@ -166,6 +166,7 @@ export function serializeNetscapeCookies(cookies: readonly Cookie[], metadata: R
 
 export function createCookiesCapability(filesystem: FilesystemCapability, home: () => string, repositoryRoot?: () => string | undefined, overrideFile?: (service: string) => string | undefined): CookiesCapability {
   const paths = (service: string) => {
+    if (service === "ashby") return [cookiesFile(home(), service)];
     const overridePath = overrideFile?.(service);
     const repositoryRootPath = repositoryRoot?.();
     return [
@@ -194,7 +195,7 @@ export function createCookiesCapability(filesystem: FilesystemCapability, home: 
       const contents = serializeNetscapeCookies(cookies, metadata);
       const existingPaths = [];
       for (const path of candidatePaths) if (await filesystem.exists(path)) existingPaths.push(path);
-      for (const path of existingPaths.length === 0 ? [candidatePaths[0]!] : existingPaths) await filesystem.writeText(path, contents);
+      for (const path of existingPaths.length === 0 ? [candidatePaths[0]!] : existingPaths) await filesystem.writeText(path, contents, 0o600);
     },
     delete: async (service: string) => {
       for (const path of paths(service)) if (await filesystem.exists(path)) await filesystem.delete(path);

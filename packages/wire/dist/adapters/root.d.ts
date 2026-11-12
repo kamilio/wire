@@ -9,6 +9,7 @@ export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
 export type WireRootOptions = Readonly<{
     allowPaste: boolean;
+    ashby?: (action: string, arg?: string) => Promise<string>;
     previewDrive?: (url: string) => Promise<string>;
     scrapeDrive?: (url?: string) => Promise<string>;
     calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>;

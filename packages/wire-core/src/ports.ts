@@ -58,7 +58,7 @@ export interface HttpCapability {
 export interface FilesystemCapability {
   exists(path: string): Promise<boolean>;
   readText(path: string): Promise<string>;
-  writeText(path: string, contents: string): Promise<void>;
+  writeText(path: string, contents: string, mode?: number): Promise<void>;
   delete(path: string): Promise<void>;
 }
 

@@ -1,5 +1,5 @@
 import { type ChromeCookieExtraction, type ChromeCookieResult, type NodeEnvironment, type RuntimeCapabilities } from "wire-core";
-export type AuthService = "asana" | "chatgpt" | "gmail" | "google-docs" | "notion" | "slack" | "zoom";
+export type AuthService = "ashby" | "asana" | "chatgpt" | "gmail" | "google-docs" | "notion" | "slack" | "zoom";
 export type CookieAuthService = AuthService;
 export interface AuthResult {
     readonly service: AuthService;
@@ -12,6 +12,7 @@ export interface Auth {
         readonly service: AuthService;
         readonly deleted: true;
     }>;
+    readonly extractAshby: () => Promise<AuthResult>;
     readonly extractAsana: () => Promise<AuthResult>;
     readonly extractChatgpt: () => Promise<AuthResult>;
     readonly extractGmail: () => Promise<AuthResult>;
