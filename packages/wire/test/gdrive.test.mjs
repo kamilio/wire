@@ -1,3 +1,4 @@
+import { zip } from "./support/zip.mjs";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
@@ -146,16 +147,26 @@ test("verified PDFs stay Markdown-only on refresh; edits, missing copies and war
 test("Google Docs images are local private attachments, repaired when missing and never overwritten", async () => {
   const dir = await mkdtemp(join(import.meta.dirname, "gdrive-"));
   const google = "application/vnd.google-apps.";
-  const data = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+xj0kAAAAASUVORK5CYII=", "base64");
+  const data = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAYAAAACCAIAAAD0PzoJAAAAEElEQVR4nGP8z4AOmDBEGAAlTQEDFimLUAAAAABJRU5ErkJggg==", "base64");
   const hash = createHash("sha256").update(data).digest("hex");
-  const uri = "data:image/png;base64," + data.toString("base64");
+  const preview = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "base64");
+  const uri = "data:image/png;base64," + preview.toString("base64");
   const text = "First ![Chart][image1] then ![](" + uri + ")\n\n[image1]: <" + uri + ">\n";
-  let downloads = 0;
+  const other = Buffer.from("R0lGODdhAwADAIEAAP8AAAAAAAAAAAAAACwAAAAAAwADAAAIBwABCBw4MCAAOw==", "base64");
+  const otherHash = createHash("sha256").update(other).digest("hex");
+  const originalName = "images/image10.png", secondName = "images/image2.gif";
+  let docsImages = [originalName, secondName];
+  let downloads = 0, archives = 0;
   const runtime = {
     googleFormsTokens: { load: async () => ({ token: "saved" }) },
     http: { request: async input => {
       const u = new URL(input);
       if (u.pathname.endsWith("/export")) {
+        if (u.searchParams.get("mimeType") === "application/zip") {
+          archives++;
+          return new Response(zip({ [secondName]: other, [originalName]: data,
+            "Notes.html": docsImages.map(name => '<img src="' + name + '">').join("") }));
+        }
         downloads++;
         return new Response(text);
       }
@@ -168,8 +179,9 @@ test("Google Docs images are local private attachments, repaired when missing an
     await scrapeDrive(runtime, dir, "https://drive.google.com/drive/folders/source");
     const md = await readFile(note, "utf8");
     const url = "attachments/Team%20%28old%29/" + hash + ".png";
-    assert.equal(md.trim(), "First ![Chart](" + url + ") then ![](" + url + ")");
-    assert.deepEqual(await readdir(folder), [hash + ".png"]);
+    assert.equal(md.trim(), "First ![Chart](" + url + ") then ![](attachments/Team%20%28old%29/" + otherHash + ".gif)");
+    assert.deepEqual((await readdir(folder)).sort(), [hash + ".png", otherHash + ".gif"].sort());
+    assert.equal(archives, 1);
     assert.deepEqual(await readFile(image), data);
     await scrapeDrive(runtime, dir);
     assert.equal(downloads, 1);
@@ -192,6 +204,25 @@ test("Google Docs images are local private attachments, repaired when missing an
     assert.equal(await readFile(note, "utf8"), md);
     assert.deepEqual(await readFile(image), data);
     assert.equal(downloads, 2);
+    assert.equal(archives, 3);
+    // Upgrade an existing scrape that saved the downscaled Markdown preview.
+    const cached = JSON.parse(await readFile(manifest));
+    const thumbnail = createHash("sha256").update(preview).digest("hex") + ".png";
+    const low = md.replaceAll(hash + ".png", thumbnail).replaceAll(otherHash + ".gif", thumbnail);
+    await writeFile(note, low);
+    await writeFile(join(folder, thumbnail), preview);
+    const old = cached.entries["./team (old).md"];
+    old.hash = createHash("sha256").update(low).digest("hex");
+    old.images = [thumbnail];
+    delete old.originalImages;
+    await writeFile(manifest, JSON.stringify(cached));
+    docsImages = [originalName];
+    await assert.rejects(scrapeDrive(runtime, dir), /Image count differs/);
+    assert.equal(await readFile(note, "utf8"), low);
+    docsImages = [originalName, secondName];
+    await scrapeDrive(runtime, dir);
+    assert.equal(JSON.parse(await readFile(manifest)).entries["./team (old).md"].originalImages, true);
+    assert.equal(await readFile(note, "utf8"), md);
     await rm(folder, { recursive: true });
     await symlink(dir, folder);
     await assert.rejects(scrapeDrive(runtime, dir), /Expected an attachment directory/);

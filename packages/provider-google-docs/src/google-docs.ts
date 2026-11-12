@@ -330,7 +330,7 @@ function zipEndOfCentralDirectory(bytes: Uint8Array): number {
   for (let index = bytes.length - 22; index >= Math.max(0, bytes.length - 65557); index -= 1) {
     if (bytes[index] === 0x50 && bytes[index + 1] === 0x4b && bytes[index + 2] === 0x05 && bytes[index + 3] === 0x06) return index;
   }
-  throw new Error("PPTX ZIP missing central directory");
+  throw new Error("Google export ZIP missing central directory");
 }
 
 function unzipFiles(bytes: Uint8Array): ReadonlyMap<string, Uint8Array> {
@@ -341,7 +341,7 @@ function unzipFiles(bytes: Uint8Array): ReadonlyMap<string, Uint8Array> {
   const files = new Map<string, Uint8Array>();
   const decoder = new TextDecoder();
   for (let entryIndex = 0; entryIndex < totalEntries; entryIndex += 1) {
-    if (view.getUint32(centralOffset, true) !== 0x02014b50) throw new Error("PPTX ZIP central directory entry is invalid");
+    if (view.getUint32(centralOffset, true) !== 0x02014b50) throw new Error("Google export ZIP central directory entry is invalid");
     const method = view.getUint16(centralOffset + 10, true);
     const compressedSize = view.getUint32(centralOffset + 20, true);
     const nameLength = view.getUint16(centralOffset + 28, true);
@@ -349,17 +349,31 @@ function unzipFiles(bytes: Uint8Array): ReadonlyMap<string, Uint8Array> {
     const commentLength = view.getUint16(centralOffset + 32, true);
     const localOffset = view.getUint32(centralOffset + 42, true);
     const name = decoder.decode(bytes.subarray(centralOffset + 46, centralOffset + 46 + nameLength));
-    if (view.getUint32(localOffset, true) !== 0x04034b50) throw new Error("PPTX ZIP local file entry is invalid");
+    if (view.getUint32(localOffset, true) !== 0x04034b50) throw new Error("Google export ZIP local file entry is invalid");
     const localNameLength = view.getUint16(localOffset + 26, true);
     const localExtraLength = view.getUint16(localOffset + 28, true);
     const dataStart = localOffset + 30 + localNameLength + localExtraLength;
     const compressed = bytes.subarray(dataStart, dataStart + compressedSize);
     if (method === 0) files.set(name, compressed);
     else if (method === 8) files.set(name, inflateRawSync(compressed));
-    else throw new Error(`PPTX ZIP compression method is unsupported: ${method}`);
+    else throw new Error(`Google export ZIP compression method is unsupported: ${method}`);
     centralOffset += 46 + nameLength + extraLength + commentLength;
   }
   return files;
+}
+
+export function googleDocOriginalImages(bytes: Uint8Array) {
+  const files = unzipFiles(bytes);
+  const pages = [...files.keys()].filter(name => /\.html?$/i.test(name));
+  if (pages.length !== 1) throw new Error("Expected one page in Google Docs HTML export");
+  const html = new TextDecoder().decode(files.get(pages[0]!)!);
+  return [...html.matchAll(/<img\b[^>]*?\ssrc\s*=\s*(["'])([^"']+)\1/gi)].map(([, , src]) => {
+    const path = decodeURIComponent(src!);
+    const data = files.get(path);
+    const ext = /\.(png|jpe?g|gif|webp)$/i.exec(path)?.[1]?.toLowerCase();
+    if (!data || !ext) throw new Error("Missing or unsupported original image in Google Docs HTML export: " + path);
+    return { data, ext: ext === "jpg" ? "jpeg" : ext };
+  });
 }
 
 function zipText(files: ReadonlyMap<string, Uint8Array>, name: string): string {

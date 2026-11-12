@@ -1,4 +1,8 @@
 import type { JsonValue, RuntimeCapabilities, Source } from "wire-core";
+export declare function googleDocOriginalImages(bytes: Uint8Array): {
+    data: Uint8Array<ArrayBufferLike>;
+    ext: string;
+}[];
 export declare const googleDocsService: Readonly<{
     name: string;
     matches(url: URL): boolean;

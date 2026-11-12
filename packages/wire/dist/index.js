@@ -3,7 +3,7 @@ export * from "provider-asana";
 export * from "provider-notion";
 export * from "provider-chatgpt";
 export * from "provider-gmail";
-export * from "provider-google-docs";
+export { googleDocsProvider, googleDocsService, googleFormsService } from "provider-google-docs";
 export * from "provider-slack";
 export * from "provider-zoom";
 export { composeAuth } from "./auth.js";

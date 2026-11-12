@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
+import { googleDocOriginalImages } from "provider-google-docs";
 import type { RuntimeCapabilities } from "wire-core";
 
 const google = "application/vnd.google-apps.";
@@ -11,7 +12,7 @@ const formats: Record<string, [string, string]> = {
   drawing: [".svg", "image/svg+xml"],
 };
 type File = { id: string; name: string; mimeType: string; version: string };
-type Entry = { id: string; version?: string; hash?: string; noText?: true; markdownOnly?: true; images?: string[] };
+type Entry = { id: string; version?: string; hash?: string; noText?: true; markdownOnly?: true; images?: string[]; originalImages?: true };
 type State = { folder: string; entries: Record<string, Entry> };
 const digest = (data: Uint8Array) => createHash("sha256").update(data).digest("hex");
 async function stat(path: string) {
@@ -29,7 +30,7 @@ async function save(path: string, data: string | Uint8Array) {
 
 const imageData = /data:image\/(png|jpeg|gif|webp);base64,([a-zA-Z0-9+/]+=*)/;
 const imageDefinition = new RegExp("^\\[(image\\d+)\\]:[ \\t]*<?(" + imageData.source + ")>?[ \\t]*\\r?$", "gm");
-const inlineImage = new RegExp("(!\\[(?:\\\\.|[^\\]\\\\\\n])*\\])\\(<?(" + imageData.source + ")>?\\)", "g");
+const imageUse = new RegExp("(!\\[(?:\\\\.|[^\\]\\\\\\n])*\\])(?:\\[(image\\d+)\\]|\\(<?" + imageData.source + ">?\\))", "g");
 
 async function docImageDir(full: string, create: boolean) {
   const root = join(dirname(full), "attachments"), folder = join(root, basename(full, ".md"));
@@ -51,30 +52,33 @@ async function checkDocImage(folder: string, name: string) {
   return true;
 }
 
-async function extractDocImages(full: string, text: string) {
-  const files = new Map<string, Buffer>(), links = new Map<string, string>();
-  const link = (ext: string, base64: string) => {
-    const data = Buffer.from(base64, "base64");
-    if (data.toString("base64") !== base64) throw new Error("Invalid image encoding.");
-    const name = digest(data) + "." + ext;
+async function extractDocImages(runtime: DriveRuntime, id: string, full: string, text: string) {
+  const labels = new Set([...text.matchAll(imageDefinition)].map(m => m[1]));
+  const images = [...text.matchAll(imageUse)].filter(m => m[2] === undefined || labels.has(m[2]));
+  if (!images.length) return { bytes: Buffer.from(text), images: [] };
+  const response = await drive(runtime, "/" + id + "/export", { mimeType: "application/zip" });
+  const originals = googleDocOriginalImages(new Uint8Array(await response.arrayBuffer()));
+  if (images.length !== originals.length) throw new Error("Image count differs between Google Docs Markdown and HTML exports; kept local copy.");
+  const files = new Map<string, Uint8Array>(), links = new Map<string, string>();
+  const dir = encodeURIComponent(basename(full, ".md")).replace(/[()]/g, c => c === "(" ? "%28" : "%29");
+  let index = 0;
+  text = text.replace(imageUse, (all, alt, label) => {
+    if (label !== undefined && !labels.has(label)) return all;
+    const { data, ext } = originals[index++]!;
+    const name = digest(data) + "." + ext, url = "attachments/" + dir + "/" + name;
     files.set(name, data);
-    return "attachments/" + encodeURIComponent(basename(full, ".md")).replace(/[()]/g, c => c === "(" ? "%28" : "%29") + "/" + name;
-  };
-  for (const m of text.matchAll(imageDefinition)) links.set(m[1]!, link(m[3]!, m[4]!));
-  text = text.replace(inlineImage, (_, alt, _uri, ext, data) => alt + "(" + link(ext, data) + ")");
-  if (links.size) {
-    text = text.replace(/(!\[(?:\\.|[^\]\\\n])*\])\[(image\d+)\]/g, (all, alt, id) =>
-      links.has(id) ? alt + "(" + links.get(id) + ")" : all);
-    // Keep a relative definition for ordinary links that use the same reference.
-    text = text.replace(imageDefinition, (line, id, _uri, _ext, _data, offset) =>
-      (text.slice(0, offset) + text.slice(offset + line.length)).includes("[" + id + "]")
-        ? "[" + id + "]: <" + links.get(id) + ">" : "");
-  }
-  if (files.size) {
-    const folder = await docImageDir(full, true);
-    for (const [name, data] of files) {
-      if (!(await checkDocImage(folder, name))) await writeFile(join(folder, name), data, { flag: "wx", mode: 0o600 });
-    }
+    if (label) links.set(label, url);
+    return alt + "(" + url + ")";
+  });
+  text = text.replace(imageDefinition, (line, label, _uri, _ext, _data, offset) => {
+    const url = links.get(label);
+    if (!url) return line;
+    return (text.slice(0, offset) + text.slice(offset + line.length)).includes("[" + label + "]")
+      ? "[" + label + "]: <" + url + ">" : "";
+  });
+  const folder = await docImageDir(full, true);
+  for (const [name, data] of files) {
+    if (!(await checkDocImage(folder, name))) await writeFile(join(folder, name), data, { flag: "wx", mode: 0o600 });
   }
   return { bytes: Buffer.from(text), images: [...files.keys()] };
 }
@@ -237,14 +241,16 @@ export async function scrapeDrive(runtime: DriveRuntime, cwd: string, url?: stri
           if (original?.images?.length) {
             const dir = await docImageDir(full, false);
             for (const image of original.images) if (!(await checkDocImage(dir, image))) current = false;
+            if (!original.originalImages) current = false;
           } else if (!original?.images) {
-            // Upgrade prior exports on refresh, without another network request.
-            const local = await extractDocImages(full, await readFile(full, "utf8"));
+            // Upgrade prior exports using their Markdown and the original HTML media.
+            const local = await extractDocImages(runtime, f.id, full, await readFile(full, "utf8"));
             if (local.images.length) {
               await save(full, local.bytes);
               original!.hash = digest(local.bytes);
             }
             original!.images = local.images;
+            original!.originalImages = true;
           }
         }
         if (current) {
@@ -258,10 +264,10 @@ export async function scrapeDrive(runtime: DriveRuntime, cwd: string, url?: stri
           ? await drive(runtime, "/" + f.id + "/export", { mimeType: format[1] })
           : await drive(runtime, "/" + f.id, { alt: "media", supportsAllDrives: "true" });
         const raw = new Uint8Array(await response.arrayBuffer());
-        const doc = f.mimeType === google + "document" ? await extractDocImages(full, Buffer.from(raw).toString("utf8")) : undefined;
+        const doc = f.mimeType === google + "document" ? await extractDocImages(runtime, f.id, full, Buffer.from(raw).toString("utf8")) : undefined;
         const bytes = doc?.bytes ?? raw;
         await save(full, bytes);
-        state.entries[key(path)] = { id: f.id, version: f.version, hash: digest(bytes), ...(doc ? { images: doc.images } : {}) };
+        state.entries[key(path)] = { id: f.id, version: f.version, hash: digest(bytes), ...(doc ? { images: doc.images, originalImages: true } : {}) };
         if (pdf) {
           const { pdfMarkdown } = await import("./drive-pdf.js");
           const text = pdfMarkdown(bytes);
