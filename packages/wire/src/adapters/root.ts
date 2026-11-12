@@ -602,13 +602,13 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
     scope: ["cli", "mcp", "sdk"],
     children: [
       defaultAttach,
-      ...(options.scrapeDrive ? [defineGroup({ name: "gdrive", description: "Download Google Drive folders.", scope: ["cli"], children: [
+      ...(options.scrapeDrive ? [defineGroup({ name: "gdrive", description: "Download Google Drive folders and spreadsheets.", scope: ["cli"], children: [
         ...(options.previewDrive ? [defineCommand({ name: "preview", description: "List a Drive folder or read a file without saving it.", scope: ["cli"], positional: ["url"],
           params: S.Object({ url: S.String({description: "Google Drive folder or file URL."}) }),
           handler: ({ params }) => userFacing(() => options.previewDrive!(params.url)), render: render<string>(v => v),
         })] : []),
-        defineCommand({ name: "scrape", description: "Download into a directory named after the Drive folder. Run there without a URL to refresh.", scope: ["cli"], positional: ["url"],
-          params: S.Object({ url: S.Optional(S.String({ description: "Google Drive folder URL." })) }),
+        defineCommand({ name: "scrape", description: "Download a folder, or a spreadsheet and its linked Drive files, into its own directory. Run there without a URL to refresh.", scope: ["cli"], positional: ["url"],
+          params: S.Object({ url: S.Optional(S.String({ description: "Google Drive folder or Google Sheets URL." })) }),
           handler: ({ params }) => userFacing(() => options.scrapeDrive!(params.url)), render: render<string>(v => v),
         }),
       ] })] : []),

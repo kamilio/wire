@@ -230,3 +230,61 @@ test("Google Docs images are local private attachments, repaired when missing an
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("spreadsheet scrape downloads all tabs and directly linked files, without walking linked folders", async () => {
+  const dir = await mkdtemp(join(import.meta.dirname, "gdrive-sheet-"));
+  const base = "application/vnd.google-apps.";
+  const hits = [], exports = [];
+  let denied = true;
+  const plain = "https://drive.google.com/open?id=doc";
+  const runtime = {
+    googleFormsTokens: { load: async () => ({ token: "saved" }) },
+    http: { request: async (input, init) => {
+      assert.equal(init.headers.authorization, "Bearer saved");
+      const u = new URL(input);
+      const id = u.pathname.split("/").at(-1);
+      if (u.hostname === "sheets.googleapis.com") {
+        assert.match(u.searchParams.get("fields"), /chipRuns/);
+        return Response.json({ sheets: [
+          { properties: { title: "First" }, data: [{ rowData: [{ values: [
+            { formattedValue: plain, hyperlink: plain, userEnteredValue: { stringValue: plain } },
+            { textFormatRuns: [{ format: { link: { uri: "https://docs.google.com/document/d/second/edit" } } }] },
+            { chipRuns: [{ chip: { richLinkProperties: { uri: "https://drive.google.com/drive/u/0/folders/group" } } }] },
+          ] }] }] },
+          { properties: { title: "Second" }, data: [{ startRow: 4, startColumn: 26, rowData: [{ values: [
+            { userEnteredValue: { formulaValue: '=HYPERLINK("https://drive.google.com/file/d/third/view","Notes")' } },
+            { hyperlink: plain },
+            { hyperlink: "https://docs.google.com/spreadsheets/d/tracker/edit#gid=1" },
+            { formattedValue: "https://somewhere.example/open?id=unrelated" },
+          ] }] }] },
+        ] });
+      }
+      assert.equal(u.hostname, "www.googleapis.com");
+      assert.ok(!u.searchParams.has("q"), "linked folders must not be listed");
+      if (id === "export") {
+        const target = u.pathname.split("/").at(-2);
+        exports.push([target, u.searchParams.get("mimeType")]);
+        return new Response(target === "tracker" ? "workbook export bytes" : "document " + target);
+      }
+      hits.push(id);
+      if (id === "third" && denied) return new Response("No access", { status: 403 });
+      assert.ok(["tracker", "doc", "second", "third", "group"].includes(id));
+      return Response.json({ id, name: id === "tracker" ? "Eng tracker" : id === "group" ? "Links" : "Review", mimeType: base + (id === "tracker" ? "spreadsheet" : id === "group" ? "folder" : "document"), version: "1" });
+    } },
+  };
+  const target = join(dir, "Eng tracker");
+  try {
+    await assert.rejects(scrapeDrive(runtime, dir, "https://docs.google.com/spreadsheets/d/tracker/edit"), /3 downloaded.*\n.*linked folder.*\nSecond!AA5 \(third\).*403/s);
+    assert.equal(await readFile(join(target, "Eng tracker.xlsx"), "utf8"), "workbook export bytes");
+    assert.equal(await readFile(join(target, "Review (second).md"), "utf8"), "document second");
+    assert.deepEqual(hits, ["tracker", "doc", "second", "group", "third"]);
+    const state = JSON.parse(await readFile(join(target, ".wire-gdrive.json")));
+    assert.deepEqual(state.links.doc, ["First!A1", "Second!AB5"]);
+    denied = false;
+    assert.match(await scrapeDrive(runtime, target), /1 downloaded, 3 unchanged/);
+    assert.deepEqual(exports.map(v => v[0]), ["tracker", "doc", "second", "third"]);
+    await writeFile(join(target, "Review.md"), "local edit");
+    await assert.rejects(scrapeDrive(runtime, target), /Local file changed/);
+    assert.equal(await readFile(join(target, "Review.md"), "utf8"), "local edit");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
