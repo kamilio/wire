@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import test from "node:test";
 import { PdfDocument } from "@poe-platform/safe-bash/pdf-ast";
@@ -137,6 +138,63 @@ test("verified PDFs stay Markdown-only on refresh; edits, missing copies and war
     version = "2";
     await scrapeDrive(runtime, dir);
     assert.deepEqual(await readFile(path), Buffer.from(bytes));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Google Docs images are local private attachments, repaired when missing and never overwritten", async () => {
+  const dir = await mkdtemp(join(import.meta.dirname, "gdrive-"));
+  const google = "application/vnd.google-apps.";
+  const data = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+xj0kAAAAASUVORK5CYII=", "base64");
+  const hash = createHash("sha256").update(data).digest("hex");
+  const uri = "data:image/png;base64," + data.toString("base64");
+  const text = "First ![Chart][image1] then ![](" + uri + ")\n\n[image1]: <" + uri + ">\n";
+  let downloads = 0;
+  const runtime = {
+    googleFormsTokens: { load: async () => ({ token: "saved" }) },
+    http: { request: async input => {
+      const u = new URL(input);
+      if (u.pathname.endsWith("/export")) {
+        downloads++;
+        return new Response(text);
+      }
+      return Response.json(u.pathname.endsWith("/source") ? { name: basename(dir), mimeType: google + "folder" }
+        : {files:[{id:"d", name:"Team (old)", mimeType:google+"document", version:"1"}]});
+    } },
+  };
+  const note = join(dir, "Team (old).md"), folder = join(dir, "attachments", "Team (old)"), image = join(folder, hash + ".png");
+  try {
+    await scrapeDrive(runtime, dir, "https://drive.google.com/drive/folders/source");
+    const md = await readFile(note, "utf8");
+    const url = "attachments/Team%20%28old%29/" + hash + ".png";
+    assert.equal(md.trim(), "First ![Chart](" + url + ") then ![](" + url + ")");
+    assert.deepEqual(await readdir(folder), [hash + ".png"]);
+    assert.deepEqual(await readFile(image), data);
+    await scrapeDrive(runtime, dir);
+    assert.equal(downloads, 1);
+    await rm(image);
+    await scrapeDrive(runtime, dir);
+    assert.equal(downloads, 2);
+    assert.deepEqual(await readFile(image), data);
+    await writeFile(image, "local edit");
+    await assert.rejects(scrapeDrive(runtime, dir), /Local attachment changed/);
+    assert.equal(await readFile(image, "utf8"), "local edit");
+    await rm(image);
+    // Older managed exports upgrade in place without another download.
+    const manifest = join(dir, ".wire-gdrive.json"), state = JSON.parse(await readFile(manifest));
+    await writeFile(note, text);
+    const entry = state.entries["./team (old).md"];
+    delete entry.images;
+    entry.hash = createHash("sha256").update(text).digest("hex");
+    await writeFile(manifest, JSON.stringify(state));
+    await scrapeDrive(runtime, dir);
+    assert.equal(await readFile(note, "utf8"), md);
+    assert.deepEqual(await readFile(image), data);
+    assert.equal(downloads, 2);
+    await rm(folder, { recursive: true });
+    await symlink(dir, folder);
+    await assert.rejects(scrapeDrive(runtime, dir), /Expected an attachment directory/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

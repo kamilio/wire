@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 const google = "application/vnd.google-apps.";
 const formats = {
     document: [".md", "text/markdown"],
@@ -22,6 +22,61 @@ async function save(path, data) {
     const tmp = path + "." + randomUUID();
     await writeFile(tmp, data, { flag: "wx", mode: 0o600 });
     await rename(tmp, path);
+}
+const imageData = /data:image\/(png|jpeg|gif|webp);base64,([a-zA-Z0-9+/]+=*)/;
+const imageDefinition = new RegExp("^\\[(image\\d+)\\]:[ \\t]*<?(" + imageData.source + ")>?[ \\t]*\\r?$", "gm");
+const inlineImage = new RegExp("(!\\[(?:\\\\.|[^\\]\\\\\\n])*\\])\\(<?(" + imageData.source + ")>?\\)", "g");
+async function docImageDir(full, create) {
+    const root = join(dirname(full), "attachments"), folder = join(root, basename(full, ".md"));
+    for (const path of [root, folder]) {
+        const info = await stat(path);
+        if (info && !info.isDirectory())
+            throw new Error("Expected an attachment directory: " + path);
+        if (!info && create)
+            await mkdir(path, { mode: 0o700 });
+        if (!info && !create)
+            break;
+    }
+    return folder;
+}
+async function checkDocImage(folder, name) {
+    const hash = /^([a-f0-9]{64})\.(png|jpeg|gif|webp)$/.exec(name)?.[1];
+    if (!hash)
+        throw new Error("Invalid attachment name: " + name);
+    const path = join(folder, name), info = await stat(path);
+    if (!info)
+        return false;
+    if (!info.isFile() || digest(await readFile(path)) !== hash)
+        throw new Error("Local attachment changed: " + path);
+    return true;
+}
+async function extractDocImages(full, text) {
+    const files = new Map(), links = new Map();
+    const link = (ext, base64) => {
+        const data = Buffer.from(base64, "base64");
+        if (data.toString("base64") !== base64)
+            throw new Error("Invalid image encoding.");
+        const name = digest(data) + "." + ext;
+        files.set(name, data);
+        return "attachments/" + encodeURIComponent(basename(full, ".md")).replace(/[()]/g, c => c === "(" ? "%28" : "%29") + "/" + name;
+    };
+    for (const m of text.matchAll(imageDefinition))
+        links.set(m[1], link(m[3], m[4]));
+    text = text.replace(inlineImage, (_, alt, _uri, ext, data) => alt + "(" + link(ext, data) + ")");
+    if (links.size) {
+        text = text.replace(/(!\[(?:\\.|[^\]\\\n])*\])\[(image\d+)\]/g, (all, alt, id) => links.has(id) ? alt + "(" + links.get(id) + ")" : all);
+        // Keep a relative definition for ordinary links that use the same reference.
+        text = text.replace(imageDefinition, (line, id, _uri, _ext, _data, offset) => (text.slice(0, offset) + text.slice(offset + line.length)).includes("[" + id + "]")
+            ? "[" + id + "]: <" + links.get(id) + ">" : "");
+    }
+    if (files.size) {
+        const folder = await docImageDir(full, true);
+        for (const [name, data] of files) {
+            if (!(await checkDocImage(folder, name)))
+                await writeFile(join(folder, name), data, { flag: "wx", mode: 0o600 });
+        }
+    }
+    return { bytes: Buffer.from(text), images: [...files.keys()] };
 }
 const folderUrl = /^https:\/\/drive\.google\.com\/drive\/(?:u\/\d+\/)?folders\/([\w-]+)\/?(?:[?#].*)?$/;
 const safeName = (name) => name.replace(/[/\\:\x00-\x1f]/g, "_").replace(/^\.+/, "_") || "_";
@@ -176,6 +231,23 @@ export async function scrapeDrive(runtime, cwd, url) {
                     if (!info || entry?.version !== f.version)
                         current = false;
                 }
+                if (current && f.mimeType === google + "document") {
+                    if (original?.images?.length) {
+                        const dir = await docImageDir(full, false);
+                        for (const image of original.images)
+                            if (!(await checkDocImage(dir, image)))
+                                current = false;
+                    }
+                    else if (!original?.images) {
+                        // Upgrade prior exports on refresh, without another network request.
+                        const local = await extractDocImages(full, await readFile(full, "utf8"));
+                        if (local.images.length) {
+                            await save(full, local.bytes);
+                            original.hash = digest(local.bytes);
+                        }
+                        original.images = local.images;
+                    }
+                }
                 if (current) {
                     if (state.entries[key(path)]?.noText)
                         images.push(path);
@@ -187,9 +259,11 @@ export async function scrapeDrive(runtime, cwd, url) {
                 const response = format
                     ? await drive(runtime, "/" + f.id + "/export", { mimeType: format[1] })
                     : await drive(runtime, "/" + f.id, { alt: "media", supportsAllDrives: "true" });
-                const bytes = new Uint8Array(await response.arrayBuffer());
+                const raw = new Uint8Array(await response.arrayBuffer());
+                const doc = f.mimeType === google + "document" ? await extractDocImages(full, Buffer.from(raw).toString("utf8")) : undefined;
+                const bytes = doc?.bytes ?? raw;
                 await save(full, bytes);
-                state.entries[key(path)] = { id: f.id, version: f.version, hash: digest(bytes) };
+                state.entries[key(path)] = { id: f.id, version: f.version, hash: digest(bytes), ...(doc ? { images: doc.images } : {}) };
                 if (pdf) {
                     const { pdfMarkdown } = await import("./drive-pdf.js");
                     const text = pdfMarkdown(bytes);
