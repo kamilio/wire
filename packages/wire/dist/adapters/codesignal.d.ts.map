@@ -1,0 +1,1 @@
+{"version":3,"file":"codesignal.d.ts","sourceRoot":"","sources":["../../src/adapters/codesignal.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,EAAE,eAAe,EAAE,mBAAmB,EAAE,MAAM,WAAW,CAAC;AA8ItE,eAAO,MAAM,gBAAgB,GAAI,OAAO,MAAM;;;;;SAIzC,CAAC;AA0CN,wBAAgB,qBAAqB,CAAC,GAAG,EAAE,MAAM,sBAIhD;AAED,wBAAsB,iBAAiB,CACrC,OAAO,EAAE,mBAAmB,EAC5B,EAAE,EAAE,MAAM,GACT,OAAO,CAAC,eAAe,CAAC,CA6C1B"}

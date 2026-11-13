@@ -126,7 +126,7 @@ const fixedCommandPositionals = Object.freeze({
   "sync-all": Object.freeze({ expected: 0, name: "" }),
   watch: Object.freeze({ expected: 1, name: "file" }),
 });
-const authServices = new Set(["ashby", "asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"]);
+const authServices = new Set(["ashby", "asana", "chatgpt", "codesignal", "gmail", "google-docs", "notion", "slack", "zoom"]);
 const slackResourceCommands = new Set(["preview", "attach", "sync"]);
 const authCommands = new Set(["login", "logout", "status"]);
 const removedCommandNames = Object.freeze({
@@ -148,7 +148,7 @@ function isSourceUrl(value: string): boolean {
 }
 
 function isSourceLikeWithoutScheme(value: string): boolean {
-  return /^(docs\.google\.com|mail\.google\.com|app\.asana\.com|chatgpt\.com|chat\.openai\.com|hub\.zoom\.us|www\.notion\.so|notion\.so|app\.notion\.com|[^/\s]+\.notion\.site|[^/\s]+\.slack\.com)(?:[/?:#]|$)/.test(value);
+  return /^(docs\.google\.com|mail\.google\.com|app\.asana\.com|chatgpt\.com|app\.codesignal\.com|chat\.openai\.com|hub\.zoom\.us|www\.notion\.so|notion\.so|app\.notion\.com|[^/\s]+\.notion\.site|[^/\s]+\.slack\.com)(?:[/?:#]|$)/.test(value);
 }
 
 function expectedSourceMessage(prefix: string, value: string): string {

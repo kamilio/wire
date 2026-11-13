@@ -7,6 +7,7 @@ import { listLatticeReviewRequests, latticeReviewDraft, syncLatticeDrafts } from
 import { zoomProvider } from "provider-zoom";
 import { lookupNotionUsers } from "provider-notion";
 import { previewDrive, scrapeDrive } from "./adapters/gdrive.js";
+import { codeSignalInterviewId, previewCodeSignal } from "./adapters/codesignal.js";
 import { ashby } from "./adapters/ashby.js";
 import { readAgenda } from "./adapters/calendar.js";
 import { createRoot } from "./adapters/root.js";
@@ -128,7 +129,7 @@ export function createExecutableRoot(environment, currentDirectory, options = { 
         ...baseWire,
         attach: async (url, path, editorReceipts) => { activeConfigurationPath = path; return baseWire.attach(url, path, editorReceipts); },
         create: async (url, path) => { activeConfigurationPath = path; return baseWire.create(url, path); },
-        view: async (url) => { activeConfigurationPath = currentDirectory; return baseWire.view(url); },
+        view: async (url) => { activeConfigurationPath = currentDirectory; const id = codeSignalInterviewId(url); return id ? previewCodeSignal(runtime, id) : baseWire.view(url); },
         downloadSource: async (url, path) => { activeConfigurationPath = path; return baseWire.downloadSource(url, path); },
         sync: async (value, path) => { activeConfigurationPath = operationPath(value, path); return baseWire.sync(value, path); },
         download: async (value, path) => { activeConfigurationPath = operationPath(value, path); return baseWire.download(value, path); },

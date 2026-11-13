@@ -1,8 +1,9 @@
 import { parsePastedCookieMetadata, parsePastedCookies, type ChromeCookieExtraction, type ChromeCookieResult, type Cookie, type NodeEnvironment, type RuntimeCapabilities } from "wire-core";
 
+import { verifyCodeSignal } from "./adapters/codesignal.js";
 import { ashbySession } from "./adapters/ashby.js";
 
-export type AuthService = "ashby" | "asana" | "chatgpt" | "gmail" | "google-docs" | "notion" | "slack" | "zoom";
+export type AuthService = "ashby" | "asana" | "chatgpt" | "codesignal" | "gmail" | "google-docs" | "notion" | "slack" | "zoom";
 export type CookieAuthService = AuthService;
 
 export interface AuthResult {
@@ -232,6 +233,7 @@ export interface Auth {
   readonly extractAshby: () => Promise<AuthResult>;
   readonly extractAsana: () => Promise<AuthResult>;
   readonly extractChatgpt: () => Promise<AuthResult>;
+  readonly extractCodeSignal: () => Promise<AuthResult>;
   readonly extractGmail: () => Promise<AuthResult>;
   readonly extractGoogleDocs: () => Promise<AuthResult>;
   readonly extractNotion: () => Promise<AuthResult>;
@@ -242,8 +244,8 @@ export interface Auth {
 export type CookieExtractor = (environment: NodeEnvironment, extraction: ChromeCookieExtraction) => Promise<ChromeCookieResult>;
 
 export function composeAuth(runtime: RuntimeCapabilities, environment: NodeEnvironment, extractCookies: CookieExtractor): Auth {
-  const cookieDomains: Readonly<Record<AuthService, string>> = Object.freeze({ ashby: ".ashbyhq.com", asana: ".asana.com", chatgpt: ".chatgpt.com", gmail: ".google.com", "google-docs": ".google.com", notion: ".notion.so", slack: ".slack.com", zoom: ".zoom.us" });
-  const verifyCookies = (service: AuthService, cookies: readonly Cookie[], metadata: Readonly<Record<string, string>>) => service === "ashby" ? ashbySession(runtime,cookies).then(q=>q("query { sessionUser { id } }")).then(d=>d.sessionUser ? {service,identity:{user_id:d.sessionUser.id}} : null).catch(()=>null) : service === "asana" ? verifyAsana(runtime, cookies) : service === "chatgpt" ? verifyChatgpt(runtime, cookies) : service === "gmail" ? verifyGmailCookies(runtime, cookies) : service === "google-docs" ? verifyGoogleDocsCookies(runtime, cookies) : service === "notion" ? verifyNotion(runtime, cookies) : service === "slack" ? verifySlack(runtime, cookies, metadata) : verifyZoom(runtime, cookies);
+  const cookieDomains: Readonly<Record<AuthService, string>> = Object.freeze({ ashby: ".ashbyhq.com", asana: ".asana.com", chatgpt: ".chatgpt.com", codesignal: ".codesignal.com", gmail: ".google.com", "google-docs": ".google.com", notion: ".notion.so", slack: ".slack.com", zoom: ".zoom.us" });
+  const verifyCookies = (service: AuthService, cookies: readonly Cookie[], metadata: Readonly<Record<string, string>>) => service === "codesignal" ? (metadata.token ? verifyCodeSignal(metadata.token) : null) : service === "ashby" ? ashbySession(runtime,cookies).then(q=>q("query { sessionUser { id } }")).then(d=>d.sessionUser ? {service,identity:{user_id:d.sessionUser.id}} : null).catch(()=>null) : service === "asana" ? verifyAsana(runtime, cookies) : service === "chatgpt" ? verifyChatgpt(runtime, cookies) : service === "gmail" ? verifyGmailCookies(runtime, cookies) : service === "google-docs" ? verifyGoogleDocsCookies(runtime, cookies) : service === "notion" ? verifyNotion(runtime, cookies) : service === "slack" ? verifySlack(runtime, cookies, metadata) : verifyZoom(runtime, cookies);
   const verifyCookieState = async (service: AuthService, cookies: readonly Cookie[], metadata: Readonly<Record<string, string>>) => {
     if (service === "zoom") return verifyZoomCookieState(runtime, cookies, metadata);
     return Object.freeze({ result: await verifyCookies(service, cookies, metadata), cookies, metadata, changed: false });
@@ -292,6 +294,7 @@ export function composeAuth(runtime: RuntimeCapabilities, environment: NodeEnvir
     extractAshby: () => extract("ashby", "https://app.ashbyhq.com/", ["ashbyhq.com"], values => values.length > 0),
     extractAsana: () => extract("asana", "https://app.asana.com/", ["asana.com"], (values) => values.some((cookie) => cookie.domain === ".asana.com" || cookie.domain.endsWith(".asana.com"))),
     extractChatgpt: () => extract("chatgpt", "https://chatgpt.com/", ["chatgpt.com", "openai.com"], (values) => values.some((cookie) => cookie.name === "oai-did") && values.some((cookie) => cookie.name === "__Secure-next-auth.session-token" || cookie.name === "__Secure-next-auth.session-token.0"), undefined, true),
+    extractCodeSignal: () => extract("codesignal", "https://app.codesignal.com/", ["codesignal.com"], () => true, `(() => { const token = location.origin === "https://app.codesignal.com" && localStorage.getItem("Meteor.loginToken"); return token ? {token} : {}; })()`),
     extractGmail: () => extract("gmail", "https://mail.google.com/mail/u/0/", ["google.com"], googleReady),
     extractGoogleDocs: () => extract("google-docs", "https://docs.google.com/", ["google.com"], googleReady),
     extractNotion: () => extract("notion", "https://www.notion.so/login", ["notion.so", "notion.com"], requiredReady(["token_v2", "notion_user_id", "notion_users"])),

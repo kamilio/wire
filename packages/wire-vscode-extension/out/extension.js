@@ -13847,8 +13847,184 @@ var import_node_child_process3 = require("node:child_process");
 var import_node_fs5 = require("node:fs");
 var import_promises10 = require("node:fs/promises");
 var import_node_path9 = require("node:path");
-var import_node_util3 = require("node:util");
+var import_node_util4 = require("node:util");
 var vscode = __toESM(require("vscode"));
+
+// ../wire/src/adapters/codesignal.ts
+var import_node_util = require("node:util");
+var loginRequired = "codesignal cookie authentication is missing or expired. Run `wire codesignal login` once; other commands reuse saved cookies.";
+async function session(token, read) {
+  const socket = new WebSocket("wss://app.codesignal.com/websocket");
+  let sequence = 0;
+  const send = (value) => socket.send(JSON.stringify(value));
+  const exchange = (start, accept) => new Promise((resolve7, reject) => {
+    const listeners = new AbortController();
+    const finish = () => {
+      clearTimeout(timer);
+      listeners.abort();
+    };
+    const fail = () => {
+      finish();
+      reject(new Error("CodeSignal connection interrupted."));
+    };
+    const timer = setTimeout(fail, 3e4);
+    const options = { signal: listeners.signal };
+    socket.addEventListener("error", fail, options);
+    socket.addEventListener("close", fail, options);
+    socket.addEventListener(
+      "message",
+      (event) => {
+        try {
+          const frame = JSON.parse(String(event.data));
+          if (frame.msg === "ping") {
+            send({ msg: "pong", id: frame.id });
+            return;
+          }
+          const result = accept(frame);
+          if (result) {
+            finish();
+            resolve7(result.value);
+          }
+        } catch (error) {
+          finish();
+          reject(error);
+        }
+      },
+      options
+    );
+    if (socket.readyState === WebSocket.CONNECTING)
+      socket.addEventListener("open", () => send(start), options);
+    else send(start);
+  });
+  const call = (name, params) => {
+    const id = String(++sequence);
+    return exchange(
+      { msg: "method", method: name, params, id },
+      (f) => f.msg === "result" && f.id === id ? { value: f } : void 0
+    );
+  };
+  try {
+    await exchange(
+      { msg: "connect", version: "1", support: ["1"] },
+      (f) => f.msg === "connected" ? { value: true } : void 0
+    );
+    const login = await call("login", [{ resume: token }]);
+    if (login.error) return null;
+    return await read(
+      login.result.id,
+      async (name, ...params) => {
+        const result = await call(name, params);
+        if (result.error) throw new Error("CodeSignal: " + result.error.reason);
+        return result.result;
+      },
+      async (interviewId) => {
+        let candidate;
+        for (const name of [
+          "liveInterviews.byId",
+          "liveInterviews.finished.byId"
+        ]) {
+          const id = String(++sequence);
+          await exchange(
+            { msg: "sub", name, params: [interviewId], id },
+            (f) => {
+              if (f.msg === "added" && f.collection === "liveInterviews" && f.id === interviewId)
+                candidate = f.fields?.candidateId;
+              if (f.msg === "nosub" && f.id === id)
+                throw new Error("CodeSignal: " + f.error?.reason);
+              return f.msg === "ready" && f.subs?.includes(id) ? { value: true } : void 0;
+            }
+          );
+          if (candidate) break;
+        }
+        return candidate;
+      }
+    );
+  } finally {
+    socket.close();
+  }
+}
+var verifyCodeSignal = (token) => session(token, async (user_id) => ({
+  service: "codesignal",
+  identity: { user_id }
+}));
+function block(value) {
+  const fence = "`".repeat(
+    Math.max(3, ...Array.from(value.matchAll(/`+/g), (m2) => m2[0].length + 1))
+  );
+  return fence + "\n" + value + (value.endsWith("\n") ? "" : "\n") + fence;
+}
+function output(events) {
+  let terminals = {};
+  const runs = [];
+  for (const e of events) {
+    if (e.action === "setState" && e.terminal)
+      terminals = { ...e.terminal.terminalContents };
+    if (e.action === "terminalCreate" || e.action === "terminalReset")
+      terminals[e.id] = "";
+    if (e.action === "terminalDelete") delete terminals[e.id];
+    if (e.action === "terminalWrite")
+      terminals[e.id] = (terminals[e.id] ?? "") + e.command;
+    if (e.action === "runResult" && e.testResults) {
+      const { compilationLog, output: output2 } = JSON.parse(e.testResults);
+      runs.push(
+        ...[compilationLog, output2].filter(
+          (v2) => typeof v2 === "string" && v2.length > 0
+        )
+      );
+    }
+  }
+  const clean = (v2) => (0, import_node_util.stripVTControlCharacters)(v2).replace(/\r\n/g, "\n").replace(/[^\n]*\r/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+  return [
+    ...Object.entries(terminals).map(
+      ([id, v2]) => "### Terminal " + id + "\n\n" + block(clean(v2))
+    ),
+    ...runs.map((v2) => "### Run output\n\n" + block(clean(v2)))
+  ];
+}
+function codeSignalInterviewId(url) {
+  return /^https:\/\/app\.codesignal\.com\/live-interview\/([a-zA-Z0-9]+)\/?(?:[?#].*)?$/.exec(
+    url
+  )?.[1];
+}
+async function previewCodeSignal(runtime2, id) {
+  const { token } = await runtime2.cookies.metadata("codesignal");
+  if (!token) throw new Error(loginRequired);
+  const result = await session(token, async (user, method, interview) => {
+    const replayUser = await interview(id);
+    const questions = await method("liveInterviewService.getSolutions", id);
+    const title2 = "CodeSignal interview " + id;
+    const parts = ["# " + title2];
+    for (const question of questions) {
+      for (const solution of "taskLevels" in question ? question.taskLevels : [question]) {
+        const state = solution.solutions.finalState ?? solution.solutions.submission;
+        parts.push("## " + solution.taskDoc.name);
+        for (const file of state?.sources ?? [])
+          if (!file.isHidden && !file.excluded)
+            parts.push("### " + file.path, block(file.source));
+        const data = await method("taskRecordingService.getRecording", {
+          taskId: solution.taskDoc._id,
+          replayUserId: replayUser ?? user,
+          context: { mode: "live-interview", liveInterviewId: id, role: null },
+          taskLevelId: solution.levelId ?? null,
+          executionEnvironment: state?.executionEnvironment,
+          clientUserId: user
+        });
+        const terminal = output(data?.recording?.events ?? []);
+        parts.push(
+          ...terminal.length ? terminal : ["No recorded terminal output."]
+        );
+      }
+    }
+    if (!questions.length) parts.push("No saved solutions.");
+    return {
+      title: title2,
+      markdown: parts.join("\n\n") + "\n",
+      data: { url: "https://app.codesignal.com/live-interview/" + id }
+    };
+  });
+  if (!result) throw new Error(loginRequired);
+  return result;
+}
 
 // ../wire-core/src/core/json.ts
 function compareStrings(left, right) {
@@ -14202,7 +14378,7 @@ function serializeNetscapeCookies(cookies, metadata) {
 }
 function createCookiesCapability(filesystem, home, repositoryRoot2, overrideFile) {
   const paths = (service) => {
-    if (service === "ashby") return [cookiesFile(home(), service)];
+    if (service === "ashby" || service === "codesignal") return [cookiesFile(home(), service)];
     const overridePath = overrideFile?.(service);
     const repositoryRootPath = repositoryRoot2?.();
     return [
@@ -16468,10 +16644,10 @@ async function verifyChatgpt(runtime2, cookies) {
   } });
   const text3 = await response.text();
   if (!text3.startsWith("{")) return null;
-  const session = JSON.parse(text3);
+  const session2 = JSON.parse(text3);
   if (!response.ok) return null;
-  if ("error" in session) return null;
-  const account = session["account"];
+  if ("error" in session2) return null;
+  const account = session2["account"];
   return Object.freeze({ service: "chatgpt", identity: Object.freeze({ account_id: account["id"] }) });
 }
 async function verifyAsana(runtime2, cookies) {
@@ -16497,8 +16673,8 @@ async function verifyGoogleDocsCookies(runtime2, cookies) {
   return Object.freeze({ service: "google-docs", identity: Object.freeze(email === void 0 ? { service: "google-docs" } : { email }) });
 }
 function composeAuth(runtime2, environment2, extractCookies) {
-  const cookieDomains = Object.freeze({ ashby: ".ashbyhq.com", asana: ".asana.com", chatgpt: ".chatgpt.com", gmail: ".google.com", "google-docs": ".google.com", notion: ".notion.so", slack: ".slack.com", zoom: ".zoom.us" });
-  const verifyCookies = (service, cookies, metadata) => service === "ashby" ? ashbySession(runtime2, cookies).then((q2) => q2("query { sessionUser { id } }")).then((d) => d.sessionUser ? { service, identity: { user_id: d.sessionUser.id } } : null).catch(() => null) : service === "asana" ? verifyAsana(runtime2, cookies) : service === "chatgpt" ? verifyChatgpt(runtime2, cookies) : service === "gmail" ? verifyGmailCookies(runtime2, cookies) : service === "google-docs" ? verifyGoogleDocsCookies(runtime2, cookies) : service === "notion" ? verifyNotion(runtime2, cookies) : service === "slack" ? verifySlack(runtime2, cookies, metadata) : verifyZoom(runtime2, cookies);
+  const cookieDomains = Object.freeze({ ashby: ".ashbyhq.com", asana: ".asana.com", chatgpt: ".chatgpt.com", codesignal: ".codesignal.com", gmail: ".google.com", "google-docs": ".google.com", notion: ".notion.so", slack: ".slack.com", zoom: ".zoom.us" });
+  const verifyCookies = (service, cookies, metadata) => service === "codesignal" ? metadata.token ? verifyCodeSignal(metadata.token) : null : service === "ashby" ? ashbySession(runtime2, cookies).then((q2) => q2("query { sessionUser { id } }")).then((d) => d.sessionUser ? { service, identity: { user_id: d.sessionUser.id } } : null).catch(() => null) : service === "asana" ? verifyAsana(runtime2, cookies) : service === "chatgpt" ? verifyChatgpt(runtime2, cookies) : service === "gmail" ? verifyGmailCookies(runtime2, cookies) : service === "google-docs" ? verifyGoogleDocsCookies(runtime2, cookies) : service === "notion" ? verifyNotion(runtime2, cookies) : service === "slack" ? verifySlack(runtime2, cookies, metadata) : verifyZoom(runtime2, cookies);
   const verifyCookieState = async (service, cookies, metadata) => {
     if (service === "zoom") return verifyZoomCookieState(runtime2, cookies, metadata);
     return Object.freeze({ result: await verifyCookies(service, cookies, metadata), cookies, metadata, changed: false });
@@ -16547,6 +16723,7 @@ function composeAuth(runtime2, environment2, extractCookies) {
     extractAshby: () => extract("ashby", "https://app.ashbyhq.com/", ["ashbyhq.com"], (values2) => values2.length > 0),
     extractAsana: () => extract("asana", "https://app.asana.com/", ["asana.com"], (values2) => values2.some((cookie) => cookie.domain === ".asana.com" || cookie.domain.endsWith(".asana.com"))),
     extractChatgpt: () => extract("chatgpt", "https://chatgpt.com/", ["chatgpt.com", "openai.com"], (values2) => values2.some((cookie) => cookie.name === "oai-did") && values2.some((cookie) => cookie.name === "__Secure-next-auth.session-token" || cookie.name === "__Secure-next-auth.session-token.0"), void 0, true),
+    extractCodeSignal: () => extract("codesignal", "https://app.codesignal.com/", ["codesignal.com"], () => true, `(() => { const token = location.origin === "https://app.codesignal.com" && localStorage.getItem("Meteor.loginToken"); return token ? {token} : {}; })()`),
     extractGmail: () => extract("gmail", "https://mail.google.com/mail/u/0/", ["google.com"], googleReady),
     extractGoogleDocs: () => extract("google-docs", "https://docs.google.com/", ["google.com"], googleReady),
     extractNotion: () => extract("notion", "https://www.notion.so/login", ["notion.so", "notion.com"], requiredReady(["token_v2", "notion_user_id", "notion_users"])),
@@ -16561,7 +16738,7 @@ var import_node_child_process2 = require("node:child_process");
 var import_node_fs4 = require("node:fs");
 var import_promises7 = require("node:fs/promises");
 var import_node_path6 = require("node:path");
-var import_node_util = require("node:util");
+var import_node_util2 = require("node:util");
 
 // ../wire-core/dist/storage/registry.js
 var import_node_module2 = require("node:module");
@@ -16660,7 +16837,7 @@ var wireWatchHooks2 = Symbol("wireWatchHooks");
 var sourceLock2 = (source) => source.service === "google-docs" && source.type === "document" ? "google-docs:" + String(source["document_id"] ?? source.identifier.split("#tab=")[0]) : resourceId2(source);
 
 // ../wire/src/hooks.ts
-var execFileAsync = (0, import_node_util.promisify)(import_node_child_process2.execFile);
+var execFileAsync = (0, import_node_util2.promisify)(import_node_child_process2.execFile);
 function primaryFilesystemLink(resource) {
   return resource.filesystem_links.find((link5) => link5.role === "primary");
 }
@@ -16775,9 +16952,9 @@ async function runResourceHooks(options, command, result, tracked = true) {
   };
   for (const path of await hookCommandPaths(wireRoot2, "post-resource")) {
     const hookResult = await execFileAsync(path, [], { cwd: (0, import_node_path6.dirname)(wireRoot2), env: environment2, encoding: "utf8" });
-    const output = outputEnvironment(hookResult.stdout);
-    environment2 = { ...environment2, ...output };
-    const outputPath = output["WIRE_PATH"];
+    const output2 = outputEnvironment(hookResult.stdout);
+    environment2 = { ...environment2, ...output2 };
+    const outputPath = output2["WIRE_PATH"];
     if (outputPath !== void 0 && (0, import_node_path6.resolve)((0, import_node_path6.dirname)(wireRoot2), outputPath) !== currentResult.path) {
       currentResult = await updateMovedResult(options, wireRoot2, currentResult, outputPath, tracked);
       environment2 = { ...environment2, ...resourceEnvironment(command, options.currentDirectory, wireRoot2, currentResult) };
@@ -16833,7 +17010,7 @@ function withWireHooks(wire2, options) {
 }
 
 // ../provider-asana/src/asana-http.ts
-var import_node_util2 = require("node:util");
+var import_node_util3 = require("node:util");
 async function asanaHttp(runtime2, url, init) {
   for (let attempt = 0; ; attempt++) {
     const response = await runtime2.http.request(url, init);
@@ -16856,7 +17033,7 @@ async function request(runtime2, method, path, parameters, data) {
     if (!token) {
       const tokenFile = runtime2.configuration?.getOptional?.("ASANA_TOKEN_FILE");
       if (tokenFile) {
-        token = (0, import_node_util2.parseEnv)(await runtime2.filesystem.readText(tokenFile))["ASANA_ACCESS_TOKEN"];
+        token = (0, import_node_util3.parseEnv)(await runtime2.filesystem.readText(tokenFile))["ASANA_ACCESS_TOKEN"];
         if (!token) throw new Error(`${method} ${path} failed: 401 ASANA_TOKEN_FILE must contain ASANA_ACCESS_TOKEN.`);
       }
     }
@@ -18727,12 +18904,12 @@ async function connectChatgpt(runtime2, referer, onCooldown) {
   const response = await runtime2.http.request("https://chatgpt.com/api/auth/session", { headers, signal: AbortSignal.timeout(6e4), redirect: "error" });
   const contents = await response.text();
   if (!response.ok || !contents.trimStart().startsWith("{")) throw authError();
-  const session = object3(JSON.parse(contents));
-  if (session["error"] !== void 0 || text(session["accessToken"]) === void 0 || session["account"] == null) throw authError();
-  const account = object3(session["account"]);
+  const session2 = object3(JSON.parse(contents));
+  if (session2["error"] !== void 0 || text(session2["accessToken"]) === void 0 || session2["account"] == null) throw authError();
+  const account = object3(session2["account"]);
   const accountId = text(account["id"]);
   if (accountId === void 0) throw authError();
-  headers["authorization"] = `Bearer ${session["accessToken"]}`;
+  headers["authorization"] = `Bearer ${session2["accessToken"]}`;
   const request2 = createChatgptRequester(runtime2.http, onCooldown);
   const forAccount = (id) => {
     const authenticated = { ...headers, "chatgpt-account-id": id };
@@ -18853,12 +19030,12 @@ async function downloadChatgpt(runtime2, url, source, write2, render2) {
       return void 0;
     }
   };
-  const session = await connectChatgpt(runtime2, url, async (cooldown) => {
+  const session2 = await connectChatgpt(runtime2, url, async (cooldown) => {
     cooldowns.push(cooldown);
     await json2(`${base}/manifest.json`, { status: "cooldown", source: url, started_at: started, records, files, errors, skipped, cooldowns, retry_at: cooldown.retry_at });
   });
   await json2(`${base}/manifest.json`, { status: "in_progress", source: url, started_at: started });
-  const paged = async (client, path2, query, output, consume, offsetMode = false, filter) => {
+  const paged = async (client, path2, query, output2, consume, offsetMode = false, filter) => {
     const seen = /* @__PURE__ */ new Set();
     let cursor;
     let offset = 0;
@@ -18867,7 +19044,7 @@ async function downloadChatgpt(runtime2, url, source, write2, render2) {
       const parameters = { ...query, ...offsetMode ? { offset: String(offset) } : cursor === void 0 ? {} : { cursor } };
       const page = object3(await client.json(endpoint(path2, parameters)));
       const entries = items(page["items"]);
-      await json2(`${output}/${pageNumber++}.json`, filter === void 0 ? page : { ...page, items: entries.filter(filter) });
+      await json2(`${output2}/${pageNumber++}.json`, filter === void 0 ? page : { ...page, items: entries.filter(filter) });
       for (const item of entries) consume(item);
       if (offsetMode) {
         if (page["offset"] !== void 0 && page["offset"] !== offset) throw new Error(`ChatGPT returned a different offset for ${path2}`);
@@ -19039,12 +19216,12 @@ ${links.join("\n")}
   };
   const exportAll = async () => {
     if (!wholeHistory) {
-      await exportAccount(session.forAccount(session.accountId), base, source.identifier);
+      await exportAccount(session2.forAccount(session2.accountId), base, source.identifier);
       return;
     }
-    const current = session.forAccount(session.accountId);
+    const current = session2.forAccount(session2.accountId);
     const accounts = await attempt("accounts", () => current.json("/backend-api/accounts/check/v4-2023-04-27"));
-    const accountIds = /* @__PURE__ */ new Set([session.accountId]);
+    const accountIds = /* @__PURE__ */ new Set([session2.accountId]);
     if (accounts !== void 0) {
       await json2(`${base}/accounts.json`, accounts);
       await attempt("account listing", async () => {
@@ -19058,7 +19235,7 @@ ${links.join("\n")}
         }
       });
     }
-    for (const id of accountIds) await exportAccount(session.forAccount(id), `${base}/accounts/${segment(id)}`);
+    for (const id of accountIds) await exportAccount(session2.forAccount(id), `${base}/accounts/${segment(id)}`);
   };
   try {
     await exportAll();
@@ -19223,8 +19400,8 @@ var chatgptService = defineService({
   download: (runtime2, url, source, write2) => downloadChatgpt(runtime2, url, source, write2, conversationMarkdown),
   fetch: async (runtime2, url, source) => {
     if (source.type === "project") throw new Error("Use `wire download <url>` to export ChatGPT history or projects as a directory.");
-    const session = await connectChatgpt(runtime2, url);
-    const conversation = await session.forAccount(session.accountId).json(`/backend-api/conversation/${encodeURIComponent(source.identifier)}`);
+    const session2 = await connectChatgpt(runtime2, url);
+    const conversation = await session2.forAccount(session2.accountId).json(`/backend-api/conversation/${encodeURIComponent(source.identifier)}`);
     return fetchedConversation(object3(conversation));
   }
 });
@@ -19324,19 +19501,19 @@ function docBlocks(markdown) {
   const result = [];
   const lines = markdown.match(/[^\n]*\n|[^\n]+$/g) ?? [];
   for (let i = 0; i < lines.length; i++) {
-    let block = lines[i];
-    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(block)?.[1];
+    let block2 = lines[i];
+    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(block2)?.[1];
     if (fence) {
       const close = new RegExp("^ {0,3}" + fence[0] + "{" + fence.length + ",}\\s*$");
       while (i + 1 < lines.length) {
         const next = lines[++i];
-        block += next;
+        block2 += next;
         if (close.test(next)) break;
       }
-    } else if (/^\s*\|/.test(block)) {
-      while (i + 1 < lines.length && /^\s*\|/.test(lines[i + 1])) block += lines[++i];
+    } else if (/^\s*\|/.test(block2)) {
+      while (i + 1 < lines.length && /^\s*\|/.test(lines[i + 1])) block2 += lines[++i];
     }
-    result.push(block);
+    result.push(block2);
   }
   return result;
 }
@@ -19428,7 +19605,7 @@ function mergeDocBlocks(base, local, remote, sameRendering = (a, b2) => a === b2
     const sidePositions = occurrences(side, 0, side.length);
     for (const change of changes) {
       if (change.end - change.start === change.replacement.length) continue;
-      const repeated = [...blocks.slice(change.start, change.end), ...change.replacement].some((block) => block.trim() && (positions.get(block) === -1 || positions.has(block) && sidePositions.get(block) === -1));
+      const repeated = [...blocks.slice(change.start, change.end), ...change.replacement].some((block2) => block2.trim() && (positions.get(block2) === -1 || positions.has(block2) && sidePositions.get(block2) === -1));
       if (repeated && !(change.end === change.start + 1 && !change.replacement.length && boundedDeletion(blocks, side, side === localBlocks ? remoteBlocks : localBlocks, change.start))) throw new Error(conflictMessage());
     }
   }
@@ -19441,10 +19618,10 @@ function mergeDocBlocks(base, local, remote, sameRendering = (a, b2) => a === b2
         const unique = (rows, i) => i >= 0 && rows.every((row, n) => n === i || !sameRendering(row.replace(/\r?\n$/, ""), rows[i].replace(/\r?\n$/, "")));
         const replacement = localChanges.find((c) => c.start === change.start)?.replacement;
         if (replacement?.length === 1 && unique(blocks, change.start)) {
-          const block = replacement[0], index = localBlocks.indexOf(block);
+          const block2 = replacement[0], index = localBlocks.indexOf(block2);
           if (unique(localBlocks, index)) {
             const first = 1 + localBlocks.slice(0, index).reduce((n, b2) => n + b2.split("\n").length - 1, 0);
-            const last = first + block.replace(/\n$/, "").split("\n").length - 1;
+            const last = first + block2.replace(/\n$/, "").split("\n").length - 1;
             if (last - first > 5) conflict(` Local Markdown line ${first} (start of block).`);
             conflict(first === last ? ` Local Markdown line ${first}.` : ` Local Markdown lines ${first}-${last}.`);
           }
@@ -19687,11 +19864,11 @@ function duplicateContext(base, local, revision, raw) {
   const identity = typeof revision === "string" && proof && proof.revision === revision && typeof proof.tab === "string" && proof.markdown === digest2(base) && Array.isArray(proof.slots) && proof.slots.every((s) => typeof s === "string" && /^[a-f0-9]{64}$/.test(s)) ? proof : void 0;
   return { base, local, identity };
 }
-function characters(block) {
+function characters(block2) {
   let pos = 0, span = 0;
-  return Array.from(block.text, (text3) => {
-    while (span < block.spans.length && block.spans[span].to <= pos) span++;
-    const s = block.spans[span];
+  return Array.from(block2.text, (text3) => {
+    while (span < block2.spans.length && block2.spans[span].to <= pos) span++;
+    const s = block2.spans[span];
     const c = { text: text3, pos, style: s && s.from <= pos ? s.style : {} };
     pos += text3.length;
     return c;
@@ -19810,8 +19987,8 @@ function movePlainLabel(tab, oldMd, newMd, guard) {
   const region = [left, ...(forward ? label.concat(group) : group.concat(label)).filter((v2) => v2 !== ""), right];
   const start = first - 1 - (forward ? 0 : group.length);
   if (start < 0 || !region.every((line, j2) => {
-    const e = body2[start + j2], p = e?.paragraph, block = paragraph(line);
-    return e && p && p.elements.every((r) => r.textRun) && contents(e) === block.text + "\n" && (p.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT") === block.heading && (p.bullet ? p.bullet.nestingLevel ?? 0 : null) === block.level && !hasSuggestion(p) && !p.positionedObjectIds;
+    const e = body2[start + j2], p = e?.paragraph, block2 = paragraph(line);
+    return e && p && p.elements.every((r) => r.textRun) && contents(e) === block2.text + "\n" && (p.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT") === block2.heading && (p.bullet ? p.bullet.nestingLevel ?? 0 : null) === block2.level && !hasSuggestion(p) && !p.positionedObjectIds;
   })) return unsafe("section boundary does not match adjacent native paragraphs");
   const ps = cells[1].paragraph.paragraphStyle ?? {};
   if (ps.direction && ps.direction !== "LEFT_TO_RIGHT" || Object.entries(ps).some(([k2, v2]) => {
@@ -19866,9 +20043,9 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition, context)
   const range = (startIndex, endIndex) => ({ startIndex, endIndex, tabId });
   const location = (index) => ({ index, tabId });
   const requests = [];
-  function matches(e, block) {
+  function matches(e, block2) {
     const p = e.paragraph;
-    return p && p.elements.every((run) => run.textRun) && p.elements.map((run) => run.textRun.content).join("") === block.text + "\n" && (p.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT") === block.heading && (p.bullet ? p.bullet.nestingLevel ?? 0 : null) === block.level;
+    return p && p.elements.every((run) => run.textRun) && p.elements.map((run) => run.textRun.content).join("") === block2.text + "\n" && (p.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT") === block2.heading && (p.bullet ? p.bullet.nestingLevel ?? 0 : null) === block2.level;
   }
   let ordered;
   function byPosition(i) {
@@ -19919,25 +20096,25 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition, context)
     }) ?? unsafe("native identity of duplicate paragraph changed");
   }
   const locate = (i, deleted = 0) => {
-    const block = paragraph(before[i]);
-    const candidates = body2.filter((e2) => matches(e2, block));
+    const block2 = paragraph(before[i]);
+    const candidates = body2.filter((e2) => matches(e2, block2));
     if (!candidates.length) return unsafe("paragraph is missing");
     const e = boundedTarget(i, candidates, deleted) ?? (candidates.length === 1 ? candidates[0] : byPosition(i));
-    if (!Number.isInteger(e.startIndex) || e.endIndex - e.startIndex !== block.text.length + 1) return unsafe("unrecognized paragraph range");
-    return { block, e, start: e.startIndex, end: e.endIndex };
+    if (!Number.isInteger(e.startIndex) || e.endIndex - e.startIndex !== block2.text.length + 1) return unsafe("unrecognized paragraph range");
+    return { block: block2, e, start: e.startIndex, end: e.endIndex };
   };
-  const style = (block, start, reset2) => {
-    if (reset2) requests.push({ updateTextStyle: { range: range(start, start + block.text.length), textStyle: block.heading === "NORMAL_TEXT" ? {} : { bold: false, italic: false, strikethrough: false }, fields: "bold,italic,strikethrough,link" } });
-    for (const s of block.spans) requests.push({ updateTextStyle: { range: range(start + s.from, start + s.to), textStyle: s.style, fields: Object.keys(s.style).join(",") } });
+  const style = (block2, start, reset2) => {
+    if (reset2) requests.push({ updateTextStyle: { range: range(start, start + block2.text.length), textStyle: block2.heading === "NORMAL_TEXT" ? {} : { bold: false, italic: false, strikethrough: false }, fields: "bold,italic,strikethrough,link" } });
+    for (const s of block2.spans) requests.push({ updateTextStyle: { range: range(start + s.from, start + s.to), textStyle: s.style, fields: Object.keys(s.style).join(",") } });
   };
-  const setParagraph = (block, start, hasBullet, structure, priorLevel, headingChanged) => {
+  const setParagraph = (block2, start, hasBullet, structure, priorLevel, headingChanged) => {
     if (!structure) return;
     const part = range(start, start + 1);
     if (hasBullet) requests.push({ deleteParagraphBullets: { range: part } });
-    if (headingChanged || hasBullet) requests.push({ updateParagraphStyle: { range: part, paragraphStyle: headingChanged ? { namedStyleType: block.heading } : {}, fields: headingChanged ? "namedStyleType,indentStart,indentFirstLine" : "indentStart,indentFirstLine" } });
-    if (block.level !== null) {
-      if (block.numbered) return unsafe("cannot create a numbered level without a matching native list paragraph");
-      const relative3 = block.level - priorLevel;
+    if (headingChanged || hasBullet) requests.push({ updateParagraphStyle: { range: part, paragraphStyle: headingChanged ? { namedStyleType: block2.heading } : {}, fields: headingChanged ? "namedStyleType,indentStart,indentFirstLine" : "indentStart,indentFirstLine" } });
+    if (block2.level !== null) {
+      if (block2.numbered) return unsafe("cannot create a numbered level without a matching native list paragraph");
+      const relative3 = block2.level - priorLevel;
       if (relative3 < 0) return unsafe("outdent would split the preceding native list");
       const prefix2 = relative3 ? "x\n" + "	".repeat(relative3) : "";
       if (prefix2) requests.push({ insertText: { location: location(start), text: prefix2 } });
@@ -20595,15 +20772,15 @@ function imageLayout(style) {
 }
 async function docImages(markdown, archive) {
   if (!markdown.includes("data:image/")) return markdown;
-  const sections = docBlocks(markdown).flatMap((block) => {
-    if (/^ {0,3}(?:`{3,}|~{3,})/.test(block)) return [{ literal: true, text: block }];
+  const sections = docBlocks(markdown).flatMap((block2) => {
+    if (/^ {0,3}(?:`{3,}|~{3,})/.test(block2)) return [{ literal: true, text: block2 }];
     const parts = [];
     let from = 0;
-    for (const code3 of block.matchAll(/(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g)) {
-      parts.push({ literal: false, text: block.slice(from, code3.index) }, { literal: true, text: code3[0] });
+    for (const code3 of block2.matchAll(/(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g)) {
+      parts.push({ literal: false, text: block2.slice(from, code3.index) }, { literal: true, text: code3[0] });
       from = code3.index + code3[0].length;
     }
-    parts.push({ literal: false, text: block.slice(from) });
+    parts.push({ literal: false, text: block2.slice(from) });
     return parts;
   });
   const active = sections.filter((s) => !s.literal);
@@ -20777,10 +20954,10 @@ function formulaLikeCell(value) {
   return value.startsWith("=") || value.startsWith("+") || value.startsWith("@") || /^-(?!\d+(?:\.\d+)?$)/.test(value);
 }
 async function uploadSheetRows(runtime2, documentId, gid2, key2, cells) {
-  const session = sheetSession(await googleText(runtime2, sheetEditUrl(documentId, gid2, key2), "Sheets editor"));
-  const bundles = [{ commands: cells.map((cell) => sheetCellCommand(session.gridId, cell.row, cell.column, cell.value)), sid: session.sid, reqId: 0 }];
-  const body2 = new URLSearchParams({ rev: String(session.revision), bundles: JSON.stringify(bundles) });
-  const response = await runtime2.http.request(`https://docs.google.com/spreadsheets/u/0/d/${encodeURIComponent(documentId)}/save?id=${encodeURIComponent(documentId)}&token=${encodeURIComponent(session.token)}`, { method: "POST", headers: { Cookie: await cookieHeader2(runtime2), "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: body2.toString() });
+  const session2 = sheetSession(await googleText(runtime2, sheetEditUrl(documentId, gid2, key2), "Sheets editor"));
+  const bundles = [{ commands: cells.map((cell) => sheetCellCommand(session2.gridId, cell.row, cell.column, cell.value)), sid: session2.sid, reqId: 0 }];
+  const body2 = new URLSearchParams({ rev: String(session2.revision), bundles: JSON.stringify(bundles) });
+  const response = await runtime2.http.request(`https://docs.google.com/spreadsheets/u/0/d/${encodeURIComponent(documentId)}/save?id=${encodeURIComponent(documentId)}&token=${encodeURIComponent(session2.token)}`, { method: "POST", headers: { Cookie: await cookieHeader2(runtime2), "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: body2.toString() });
   if (response.status === 401 || response.status === 403) throw cookieAuthenticationError();
   if (!response.ok) throw new Error(`Google Sheets save failed: HTTP ${response.status}`);
   const text3 = await response.text();
@@ -21300,25 +21477,25 @@ function renderMarks(marks) {
   return [...marks].sort((left, right) => priority.get(array(left)[0]) - priority.get(array(right)[0]) || compact(left).localeCompare(compact(right)));
 }
 function normalizeRichText(value) {
-  const output = [];
+  const output2 = [];
   for (const raw of value) {
     const content = text2(raw[0]).replace(/\r\n?/g, "\n");
     if (content === "") continue;
     const marks = raw.length > 1 ? normalizeMarks(raw[1]) : [];
-    if (marks.length > 0 && content.match(/^ +/) !== null) output.push([content.match(/^ +/)[0]]);
+    if (marks.length > 0 && content.match(/^ +/) !== null) output2.push([content.match(/^ +/)[0]]);
     const trimmedContent = marks.length === 0 ? content : content.replace(/^ +| +$/g, "");
     const segment2 = marks.length === 0 ? [trimmedContent] : [trimmedContent, marks];
     if (trimmedContent === "") continue;
-    const previous = output[output.length - 1];
+    const previous = output2[output2.length - 1];
     if (previous !== void 0 && compact(previous[1] ?? []) === compact(segment2[1] ?? [])) previous[0] = `${previous[0]}${trimmedContent}`;
-    else output.push(segment2);
-    if (marks.length > 0 && content.match(/ +$/) !== null) output.push([content.match(/ +$/)[0]]);
+    else output2.push(segment2);
+    if (marks.length > 0 && content.match(/ +$/) !== null) output2.push([content.match(/ +$/)[0]]);
   }
-  while (output.length > 0 && text2(output[0][0]).trim() === "") output.shift();
-  while (output.length > 0 && text2(output[output.length - 1][0]).trim() === "") output.pop();
-  if (output.length > 0) output[0][0] = text2(output[0][0]).replace(/^ +/, "");
-  if (output.length > 0) output[output.length - 1][0] = text2(output[output.length - 1][0]).replace(/ +$/, "");
-  return output;
+  while (output2.length > 0 && text2(output2[0][0]).trim() === "") output2.shift();
+  while (output2.length > 0 && text2(output2[output2.length - 1][0]).trim() === "") output2.pop();
+  if (output2.length > 0) output2[0][0] = text2(output2[0][0]).replace(/^ +/, "");
+  if (output2.length > 0) output2[output2.length - 1][0] = text2(output2[output2.length - 1][0]).replace(/ +$/, "");
+  return output2;
 }
 function parseInline(value) {
   const segments = [];
@@ -21451,18 +21628,18 @@ function renderRichText(value) {
   return normalizeRichText(value).map((segment2) => renderSegment(text2(segment2[0]), segment2[1] ?? [])).join("");
 }
 function renderUserMentions(markdownText3, mentions) {
-  let output = markdownText3;
+  let output2 = markdownText3;
   for (const [userId, handle] of Object.entries(mentions)) {
-    output = output.replace(new RegExp(`<span data-notion-mention="u" data-notion-id="${escapeRegExp(escapeHtml(userId))}">(.*?)</span>`, "g"), (_match, content) => content.replaceAll("\u2023", `@${handle}`));
+    output2 = output2.replace(new RegExp(`<span data-notion-mention="u" data-notion-id="${escapeRegExp(escapeHtml(userId))}">(.*?)</span>`, "g"), (_match, content) => content.replaceAll("\u2023", `@${handle}`));
   }
-  return output;
+  return output2;
 }
 function hydrateUserMentions(markdownText3, mentions) {
-  let output = markdownText3;
+  let output2 = markdownText3;
   for (const [userId, handle] of Object.entries(mentions)) {
-    output = output.replace(new RegExp(`(?<![A-Za-z0-9_])@${escapeRegExp(handle)}(?![A-Za-z0-9_])`, "g"), `<span data-notion-mention="u" data-notion-id="${escapeHtml(userId)}">\u2023</span>`);
+    output2 = output2.replace(new RegExp(`(?<![A-Za-z0-9_])@${escapeRegExp(handle)}(?![A-Za-z0-9_])`, "g"), `<span data-notion-mention="u" data-notion-id="${escapeHtml(userId)}">\u2023</span>`);
   }
-  return output;
+  return output2;
 }
 function baseUserMentions(base) {
   return base["user_mentions"];
@@ -21718,8 +21895,8 @@ function parseLines(lines, baseIndent = 0) {
 function parseNotionMarkdown(markdown) {
   return parseLines(markdown.replace(/^\ufeff/, "").split("\n"));
 }
-function tableRowCells(block, columnOrder) {
-  const cells = object4(block.properties["cells"]);
+function tableRowCells(block2, columnOrder) {
+  const cells = object4(block2.properties["cells"]);
   if (columnOrder === void 0) return cells;
   const localColumns = Object.keys(cells);
   return Object.fromEntries(columnOrder.map((column, index) => [column, cells[localColumns[index]]]));
@@ -21735,21 +21912,21 @@ function tableColumnOrder(remote, local) {
     return value;
   });
 }
-function parserBlockToNotionBlock(block, id, parentId, parentTable, spaceId, userId, currentTime, columnOrder) {
-  const base = { id, type: block.type, space_id: spaceId, parent_id: parentId, parent_table: parentTable, alive: true, created_time: currentTime, created_by_table: "notion_user", created_by_id: userId, last_edited_time: currentTime, last_edited_by_table: "notion_user", last_edited_by_id: userId };
-  if (block.properties["notion_opaque"] !== void 0) return { ...object4(block.properties["notion_opaque"]), ...base };
-  if (block.type === "divider") return base;
-  if (block.type === "toggle") return { ...base, type: "text", properties: { title: block.rich_text }, format: { toggleable: true } };
-  if (block.type === "code") return { ...base, properties: { title: [[block.content]], language: [[block.properties["language"]]] } };
-  if (block.type === "to_do") return { ...base, properties: { title: block.rich_text, checked: [[block.properties["checked"] === true ? "Yes" : "No"]] } };
-  if (block.type === "image") return { ...base, properties: { source: [[block.properties["source"]]], alt_text: [[block.properties["alt_text"]]], ...block.properties["caption"] === void 0 ? {} : { caption: block.properties["caption"] } } };
-  if (block.type === "table") return { ...base, properties: {}, format: { table_block_column_order: columnOrder ?? block.properties["column_ids"], table_block_column_header: block.properties["has_header"], table_block_row_header: block.properties["has_row_header"] } };
-  if (block.type === "table_row") return { ...base, properties: tableRowCells(block, columnOrder) };
-  if (block.type === "column_list" || block.type === "transclusion_container") return { ...base, properties: {} };
-  if (block.type === "column") return { ...base, properties: {}, ...block.properties["format"] === void 0 ? {} : { format: block.properties["format"] } };
-  if (block.type === "callout") return { ...base, properties: { title: block.rich_text }, ...block.properties["format"] === void 0 ? {} : { format: block.properties["format"] } };
-  if (["header", "sub_header", "sub_sub_header"].includes(block.type)) return { ...base, properties: { title: block.rich_text }, ...block.properties["format"] === void 0 ? {} : { format: block.properties["format"] } };
-  return { ...base, properties: { title: block.rich_text } };
+function parserBlockToNotionBlock(block2, id, parentId, parentTable, spaceId, userId, currentTime, columnOrder) {
+  const base = { id, type: block2.type, space_id: spaceId, parent_id: parentId, parent_table: parentTable, alive: true, created_time: currentTime, created_by_table: "notion_user", created_by_id: userId, last_edited_time: currentTime, last_edited_by_table: "notion_user", last_edited_by_id: userId };
+  if (block2.properties["notion_opaque"] !== void 0) return { ...object4(block2.properties["notion_opaque"]), ...base };
+  if (block2.type === "divider") return base;
+  if (block2.type === "toggle") return { ...base, type: "text", properties: { title: block2.rich_text }, format: { toggleable: true } };
+  if (block2.type === "code") return { ...base, properties: { title: [[block2.content]], language: [[block2.properties["language"]]] } };
+  if (block2.type === "to_do") return { ...base, properties: { title: block2.rich_text, checked: [[block2.properties["checked"] === true ? "Yes" : "No"]] } };
+  if (block2.type === "image") return { ...base, properties: { source: [[block2.properties["source"]]], alt_text: [[block2.properties["alt_text"]]], ...block2.properties["caption"] === void 0 ? {} : { caption: block2.properties["caption"] } } };
+  if (block2.type === "table") return { ...base, properties: {}, format: { table_block_column_order: columnOrder ?? block2.properties["column_ids"], table_block_column_header: block2.properties["has_header"], table_block_row_header: block2.properties["has_row_header"] } };
+  if (block2.type === "table_row") return { ...base, properties: tableRowCells(block2, columnOrder) };
+  if (block2.type === "column_list" || block2.type === "transclusion_container") return { ...base, properties: {} };
+  if (block2.type === "column") return { ...base, properties: {}, ...block2.properties["format"] === void 0 ? {} : { format: block2.properties["format"] } };
+  if (block2.type === "callout") return { ...base, properties: { title: block2.rich_text }, ...block2.properties["format"] === void 0 ? {} : { format: block2.properties["format"] } };
+  if (["header", "sub_header", "sub_sub_header"].includes(block2.type)) return { ...base, properties: { title: block2.rich_text }, ...block2.properties["format"] === void 0 ? {} : { format: block2.properties["format"] } };
+  return { ...base, properties: { title: block2.rich_text } };
 }
 function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTime, createId = () => (0, import_node_crypto10.randomUUID)(), initialTableColumnOrder) {
   const operations = [];
@@ -21758,25 +21935,25 @@ function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTim
   const lastChildByParent = /* @__PURE__ */ new Map();
   let lastTableId = null;
   let tableColumnOrder2 = initialTableColumnOrder;
-  for (const block of blocks) {
+  for (const block2 of blocks) {
     const blockId = formatBlockId(createId().replaceAll("-", ""));
     let parentId = pageId;
-    if (block.type === "table_row") parentId = lastTableId;
-    else if (block.indent > 0) {
-      const parent = lastAtIndent.get(block.indent - 1);
-      if (parent === void 0) throw new Error(`Indented Notion Markdown block has no parent at indent ${block.indent - 1}`);
+    if (block2.type === "table_row") parentId = lastTableId;
+    else if (block2.indent > 0) {
+      const parent = lastAtIndent.get(block2.indent - 1);
+      if (parent === void 0) throw new Error(`Indented Notion Markdown block has no parent at indent ${block2.indent - 1}`);
       parentId = parent;
     }
-    if (block.type !== "table_row" && block.indent === 0) topLevelIds.push(blockId);
+    if (block2.type !== "table_row" && block2.indent === 0) topLevelIds.push(blockId);
     const parentTable = "block";
-    operations.push({ pointer: pointer(blockId, spaceId), path: [], command: "set", args: parserBlockToNotionBlock(block, blockId, parentId, parentTable, spaceId, userId, currentTime, block.type === "table_row" ? tableColumnOrder2 : void 0) });
+    operations.push({ pointer: pointer(blockId, spaceId), path: [], command: "set", args: parserBlockToNotionBlock(block2, blockId, parentId, parentTable, spaceId, userId, currentTime, block2.type === "table_row" ? tableColumnOrder2 : void 0) });
     const after = lastChildByParent.get(parentId);
     operations.push({ pointer: pointer(parentId, spaceId), path: ["content"], command: after === void 0 ? "listBefore" : "listAfter", args: after === void 0 ? { id: blockId } : { id: blockId, after } });
     lastChildByParent.set(parentId, blockId);
-    if (["bulleted_list", "numbered_list", "to_do", "quote", "callout", "toggle", "header", "sub_header", "sub_sub_header", "table", "page", "column_list", "column", "transclusion_container"].includes(block.type)) lastAtIndent.set(block.indent, blockId);
-    if (block.type === "table") {
+    if (["bulleted_list", "numbered_list", "to_do", "quote", "callout", "toggle", "header", "sub_header", "sub_sub_header", "table", "page", "column_list", "column", "transclusion_container"].includes(block2.type)) lastAtIndent.set(block2.indent, blockId);
+    if (block2.type === "table") {
       lastTableId = blockId;
-      tableColumnOrder2 = block.properties["column_ids"];
+      tableColumnOrder2 = block2.properties["column_ids"];
     }
   }
   if (operations.length > 0) operations.push({ pointer: pointer(pageId, spaceId), path: ["last_edited_time"], command: "set", args: currentTime });
@@ -21795,25 +21972,25 @@ function canonicalBlock(value, columnOrder) {
   if (["header", "sub_header", "sub_sub_header"].includes(type)) return { type, title: normalizeRichText(object4(value["properties"] ?? { title: [] })["title"] ?? []), toggleable: object4(value["format"] ?? {})["toggleable"] === true };
   return { type, title: normalizeRichText(object4(value["properties"] ?? { title: [] })["title"] ?? []) };
 }
-function canonicalParserBlock(block, columnOrder) {
-  if (block.properties["notion_opaque"] !== void 0) return canonicalBlock(object4(block.properties["notion_opaque"]), columnOrder);
-  if (block.type === "header" || block.type === "sub_header" || block.type === "sub_sub_header") return { type: block.type, title: normalizeRichText(block.rich_text), toggleable: object4(block.properties["format"] ?? {})["toggleable"] === true };
-  if (block.type === "text" || block.type === "bulleted_list" || block.type === "numbered_list" || block.type === "quote" || block.type === "callout" || block.type === "toggle") return { type: block.type, title: normalizeRichText(block.rich_text) };
-  if (block.type === "code") return { type: "code", title: normalizeRichText([[block.content]]), language: [[block.properties["language"]]] };
-  if (block.type === "to_do") return { type: "to_do", title: normalizeRichText(block.rich_text), checked: [[block.properties["checked"] === true ? "Yes" : "No"]] };
-  if (block.type === "table") return { type: "table", column_count: block.properties["column_ids"].length };
-  if (block.type === "table_row") {
-    const cells = tableRowCells(block, columnOrder);
+function canonicalParserBlock(block2, columnOrder) {
+  if (block2.properties["notion_opaque"] !== void 0) return canonicalBlock(object4(block2.properties["notion_opaque"]), columnOrder);
+  if (block2.type === "header" || block2.type === "sub_header" || block2.type === "sub_sub_header") return { type: block2.type, title: normalizeRichText(block2.rich_text), toggleable: object4(block2.properties["format"] ?? {})["toggleable"] === true };
+  if (block2.type === "text" || block2.type === "bulleted_list" || block2.type === "numbered_list" || block2.type === "quote" || block2.type === "callout" || block2.type === "toggle") return { type: block2.type, title: normalizeRichText(block2.rich_text) };
+  if (block2.type === "code") return { type: "code", title: normalizeRichText([[block2.content]]), language: [[block2.properties["language"]]] };
+  if (block2.type === "to_do") return { type: "to_do", title: normalizeRichText(block2.rich_text), checked: [[block2.properties["checked"] === true ? "Yes" : "No"]] };
+  if (block2.type === "table") return { type: "table", column_count: block2.properties["column_ids"].length };
+  if (block2.type === "table_row") {
+    const cells = tableRowCells(block2, columnOrder);
     return { type: "table_row", cells: columnOrder.map((column) => normalizeRichText(cells[column] ?? [])) };
   }
-  if (block.type === "image") return { type: "image", source: [[block.properties["source"]]], alt_text: [[block.properties["alt_text"]]], caption: block.properties["caption"] ?? null };
-  if (block.type === "page" || block.type === "equation") return { type: block.type, title: normalizeRichText(block.rich_text) };
-  if (block.type === "column") return { type: "column", column_ratio: object4(block.properties["format"] ?? {})["column_ratio"] ?? null };
-  if (block.type === "column_list" || block.type === "transclusion_container") return { type: block.type };
-  return { type: block.type };
+  if (block2.type === "image") return { type: "image", source: [[block2.properties["source"]]], alt_text: [[block2.properties["alt_text"]]], caption: block2.properties["caption"] ?? null };
+  if (block2.type === "page" || block2.type === "equation") return { type: block2.type, title: normalizeRichText(block2.rich_text) };
+  if (block2.type === "column") return { type: "column", column_ratio: object4(block2.properties["format"] ?? {})["column_ratio"] ?? null };
+  if (block2.type === "column_list" || block2.type === "transclusion_container") return { type: block2.type };
+  return { type: block2.type };
 }
-function notionBlockContentHash(block, columnOrder) {
-  return hash3("rich_text" in block ? canonicalParserBlock(block, columnOrder) : canonicalBlock(block, columnOrder));
+function notionBlockContentHash(block2, columnOrder) {
+  return hash3("rich_text" in block2 ? canonicalParserBlock(block2, columnOrder) : canonicalBlock(block2, columnOrder));
 }
 function sidecarBlocksFromNotionTree(tree) {
   const blocks = [];
@@ -21829,19 +22006,19 @@ function sidecarBlocksFromNotionTree(tree) {
 function localTree(blocks) {
   const roots = [];
   const stack = [{ indent: -1, children: roots }];
-  for (const block of blocks) {
-    const node = { block, children: [] };
-    while (stack[stack.length - 1].indent >= block.indent) stack.pop();
+  for (const block2 of blocks) {
+    const node = { block: block2, children: [] };
+    while (stack[stack.length - 1].indent >= block2.indent) stack.pop();
     stack[stack.length - 1].children.push(node);
-    if (["bulleted_list", "numbered_list", "to_do", "quote", "callout", "toggle", "header", "sub_header", "sub_sub_header", "table", "page", "column_list", "column", "transclusion_container"].includes(block.type)) stack.push({ indent: block.indent, children: node.children });
+    if (["bulleted_list", "numbered_list", "to_do", "quote", "callout", "toggle", "header", "sub_header", "sub_sub_header", "table", "page", "column_list", "column", "transclusion_container"].includes(block2.type)) stack.push({ indent: block2.indent, children: node.children });
   }
   return roots;
 }
 function outputNode(node, remoteNode, parentId, remote, currentTime, columnOrder) {
   const id = remoteNode?.id ?? formatBlockId((0, import_node_crypto10.randomUUID)().replaceAll("-", ""));
-  const block = parserBlockToNotionBlock(node.block, id, parentId, "block", remote.spaceId, remote.userId, currentTime, node.block.type === "table" ? tableColumnOrder(remoteNode?.block, node.block) : node.block.type === "table_row" ? columnOrder : void 0);
-  const nextColumnOrder = block["type"] === "table" ? object4(block["format"])["table_block_column_order"] : columnOrder;
-  return { id, block, children: node.children.map((child, index) => outputNode(child, remoteNode?.children[index], id, remote, currentTime, nextColumnOrder)) };
+  const block2 = parserBlockToNotionBlock(node.block, id, parentId, "block", remote.spaceId, remote.userId, currentTime, node.block.type === "table" ? tableColumnOrder(remoteNode?.block, node.block) : node.block.type === "table_row" ? columnOrder : void 0);
+  const nextColumnOrder = block2["type"] === "table" ? object4(block2["format"])["table_block_column_order"] : columnOrder;
+  return { id, block: block2, children: node.children.map((child, index) => outputNode(child, remoteNode?.children[index], id, remote, currentTime, nextColumnOrder)) };
 }
 function emitUpdates(remote, local, blockId, spaceId, columnOrder) {
   const operations = [];
@@ -22055,10 +22232,10 @@ async function resolveNotionEmailMentions(runtime2, blocks, cookie, spaceId, hea
       else for (const child of value) visit(child);
     } else if (value !== null && typeof value === "object") for (const child of Object.values(value)) visit(child);
   };
-  for (const block of blocks) {
-    if (block.type === "code" || block.properties["notion_opaque"] !== void 0) continue;
-    visit(block.rich_text);
-    visit(block.properties);
+  for (const block2 of blocks) {
+    if (block2.type === "code" || block2.properties["notion_opaque"] !== void 0) continue;
+    visit(block2.rich_text);
+    visit(block2.properties);
   }
   if (segments.length === 0) return;
   const response = await notionPost(runtime2, "getVisibleUsers", cookie, { spaceId }, headers);
@@ -22095,7 +22272,7 @@ async function fetchComments(runtime2, tree, spaceId, cookie, headers) {
     if (activityIds.length < 100) break;
     startingAfterId = activityIds[activityIds.length - 1];
   }
-  const blockIds = new Set(sidecarBlocksFromNotionTree(tree).map((block) => block.id));
+  const blockIds = new Set(sidecarBlocksFromNotionTree(tree).map((block2) => block2.id));
   const discussions = [...records["discussion"].values()].filter((discussion) => blockIds.has(discussion["parent_id"]) && discussion["alive"] !== false);
   for (const table of ["comment", "notion_user", "bot"]) {
     const ids = table === "comment" ? discussions.flatMap((discussion) => discussion["comments"]) : [...records["comment"].values()].filter((comment) => comment["alive"] === true && (comment["created_by_table"] ?? "notion_user") === table).map((comment) => comment["created_by_id"]);
@@ -22162,26 +22339,26 @@ async function fetchTree(runtime2, url, source) {
       const idValue = pending.pop();
       if (visited.has(idValue)) continue;
       visited.add(idValue);
-      const block = blocks.get(idValue);
-      if (block === void 0) {
+      const block2 = blocks.get(idValue);
+      if (block2 === void 0) {
         missing3.add(idValue);
         continue;
       }
-      if (idValue !== pageId && block["type"] === "page") continue;
-      for (const child of block["content"] ?? []) pending.push(child);
+      if (idValue !== pageId && block2["type"] === "page") continue;
+      for (const child of block2["content"] ?? []) pending.push(child);
     }
     if (missing3.size === 0) break;
     const missingIds = [...missing3];
     const data = await notionPost(runtime2, "getRecordValues", cookie, { requests: missingIds.map((idValue) => ({ table: "block", id: idValue })) }, headers);
     for (const [index, result] of data["results"].entries()) {
-      const block = object4(result["value"]);
-      blocks.set(block["id"] ?? missingIds[index], block);
+      const block2 = object4(result["value"]);
+      blocks.set(block2["id"] ?? missingIds[index], block2);
     }
   }
   const build = (idValue) => {
-    const block = blocks.get(idValue);
-    if (idValue !== pageId && block["type"] === "page") return { id: idValue, block, children: [] };
-    return { id: idValue, block, children: (block["content"] ?? []).filter((child) => blocks.get(child)?.["alive"] !== false).map(build) };
+    const block2 = blocks.get(idValue);
+    if (idValue !== pageId && block2["type"] === "page") return { id: idValue, block: block2, children: [] };
+    return { id: idValue, block: block2, children: (block2["content"] ?? []).filter((child) => blocks.get(child)?.["alive"] !== false).map(build) };
   };
   const tree = build(pageId);
   const comments = await fetchComments(runtime2, tree, spaceId, cookie, headers);
@@ -22217,9 +22394,9 @@ async function downloadNotionDirectory(runtime2, url, source, write2) {
     await read("block", pending, blocks);
     const next = [];
     for (const id of pending) {
-      const block = blocks.get(id);
-      if (block === void 0 || block["alive"] === false) continue;
-      for (const child of block["content"] ?? []) {
+      const block2 = blocks.get(id);
+      if (block2 === void 0 || block2["alive"] === false) continue;
+      for (const child of block2["content"] ?? []) {
         if (seen.has(child)) continue;
         seen.add(child);
         next.push(child);
@@ -22229,10 +22406,10 @@ async function downloadNotionDirectory(runtime2, url, source, write2) {
   }
   const root = blocks.get(rootId);
   if (root === void 0 || root["alive"] === false) throw new Error(`Notion page is unavailable: ${url}`);
-  if (![...blocks.values()].some((block) => block !== root && block["alive"] !== false && block["type"] === "page")) return null;
+  if (![...blocks.values()].some((block2) => block2 !== root && block2["alive"] !== false && block2["type"] === "page")) return null;
   const discussions = /* @__PURE__ */ new Map(), comments = /* @__PURE__ */ new Map(), users = /* @__PURE__ */ new Map();
-  const live = [...blocks.values()].filter((block) => block["alive"] !== false);
-  await read("discussion", [...new Set(live.flatMap((block) => block["discussions"] ?? []))], discussions);
+  const live = [...blocks.values()].filter((block2) => block2["alive"] !== false);
+  await read("discussion", [...new Set(live.flatMap((block2) => block2["discussions"] ?? []))], discussions);
   await read("comment", [...new Set([...discussions.values()].flatMap((discussion) => discussion["comments"]))], comments);
   for (const table of ["notion_user", "bot"]) {
     const authors = [...comments.values()].filter((comment) => comment["alive"] === true && comment["created_by_table"] === table);
@@ -22249,29 +22426,29 @@ async function downloadNotionDirectory(runtime2, url, source, write2) {
     paths.set(id, path);
     const threads = [];
     const build = async (blockId, pageRoot) => {
-      const block = blocks.get(blockId);
-      if (block === void 0 || !pageRoot && block["type"] === "page") {
+      const block2 = blocks.get(blockId);
+      if (block2 === void 0 || !pageRoot && block2["type"] === "page") {
         let label = "Unavailable Notion block";
         let href = `https://www.notion.so/${blockId.replaceAll("-", "")}`;
-        if (block !== void 0) {
-          label = richTextText(object4(block["properties"] ?? {})["title"] ?? []) || "Untitled";
+        if (block2 !== void 0) {
+          label = richTextText(object4(block2["properties"] ?? {})["title"] ?? []) || "Untitled";
           if (!paths.has(blockId)) {
-            const child = await exportPage(block, import_node_path7.posix.join(directory, directoryName(block)));
+            const child = await exportPage(block2, import_node_path7.posix.join(directory, directoryName(block2)));
             await write2(child.path, child.markdown);
           }
           href = import_node_path7.posix.relative(directory, paths.get(blockId));
         }
         return { id: blockId, block: { type: "text", properties: { title: [[label, [["a", href]]]] } }, children: [] };
       }
-      for (const threadId of block["discussions"] ?? []) {
+      for (const threadId of block2["discussions"] ?? []) {
         const thread = discussions.get(threadId);
         if (thread !== void 0 && thread["alive"] !== false) threads.push(thread);
       }
       const children = [];
-      for (const child of block["content"] ?? []) {
+      for (const child of block2["content"] ?? []) {
         if (blocks.get(child)?.["alive"] !== false) children.push(await build(child, false));
       }
-      return { id: blockId, block, children };
+      return { id: blockId, block: block2, children };
     };
     const tree = await build(id, true);
     const markdown = renderNotionTreeToMarkdown(tree, void 0, {}, true) + renderComments(id, threads, comments, users);
@@ -22326,9 +22503,9 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
     block: pageOperation.args,
     children: localTree(localBlocks).map((node) => outputNode(node, void 0, pageId, { spaceId, userId }, currentTime))
   };
-  const output = renderNotionTreeToMarkdown(pageTree, void 0, emailMentions);
+  const output2 = renderNotionTreeToMarkdown(pageTree, void 0, emailMentions);
   const slug = split.title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return { url: slug === "" ? `https://www.notion.so/${compactPageId}` : `https://www.notion.so/${slug}-${compactPageId}`, title: split.title, markdown: output, data: notionData(compactPageId, output, pageTree, void 0, emailMentions) };
+  return { url: slug === "" ? `https://www.notion.so/${compactPageId}` : `https://www.notion.so/${slug}-${compactPageId}`, title: split.title, markdown: output2, data: notionData(compactPageId, output2, pageTree, void 0, emailMentions) };
 }
 function splitTitle(markdown) {
   const lines = markdown.replace(/^\ufeff/, "").split("\n");
@@ -22628,8 +22805,8 @@ function applyStyles(text3, styles) {
     return text3;
   }
   const open5 = styles.map((style) => style.open).join("");
-  const output = text3.includes(reset) ? replaceAll(text3, reset, `${reset}${open5}`) : text3;
-  return `${open5}${output}${reset}`;
+  const output2 = text3.includes(reset) ? replaceAll(text3, reset, `${reset}${open5}`) : text3;
+  return `${open5}${output2}${reset}`;
 }
 function clampRgb(value) {
   if (Number.isNaN(value)) {
@@ -22835,7 +23012,7 @@ ${value}
 ${fence}`;
 }
 function richInline(elements, users) {
-  let output = "";
+  let output2 = "";
   let active = [];
   for (const element of elements) {
     const style = element["style"];
@@ -22878,27 +23055,27 @@ function richInline(elements, users) {
     const next = [...active.filter((marker) => markers.includes(marker)), ...markers.filter((marker) => !active.includes(marker))];
     let common = 0;
     while (common < active.length && active[common] === next[common]) common += 1;
-    const trailing2 = /\s*$/.exec(output)[0];
-    output = output.slice(0, output.length - trailing2.length) + active.slice(common).reverse().join("") + trailing2;
+    const trailing2 = /\s*$/.exec(output2)[0];
+    output2 = output2.slice(0, output2.length - trailing2.length) + active.slice(common).reverse().join("") + trailing2;
     const leading = /^\s*/.exec(text3)[0];
-    output += leading + next.slice(common).join("") + text3.slice(leading.length);
+    output2 += leading + next.slice(common).join("") + text3.slice(leading.length);
     active = next;
   }
-  const trailing = /\s*$/.exec(output)[0];
-  return output.slice(0, output.length - trailing.length) + active.reverse().join("") + trailing;
+  const trailing = /\s*$/.exec(output2)[0];
+  return output2.slice(0, output2.length - trailing.length) + active.reverse().join("") + trailing;
 }
 function slackBlocksToMarkdown(blocks, users) {
-  const render2 = (block) => {
-    const elements = block["elements"];
-    switch (block["type"]) {
+  const render2 = (block2) => {
+    const elements = block2["elements"];
+    switch (block2["type"]) {
       case "rich_text": {
-        const output = [];
+        const output2 = [];
         for (const [index, child] of elements.entries()) {
           const previous = elements[index - 1];
           const adjacentLists = child["type"] === "rich_text_list" && previous?.["type"] === "rich_text_list" && (child["style"] === previous["style"] || child["indent"] !== previous["indent"]);
-          output.push(`${index === 0 ? "" : adjacentLists ? "\n" : "\n\n"}${render2(child)}`);
+          output2.push(`${index === 0 ? "" : adjacentLists ? "\n" : "\n\n"}${render2(child)}`);
         }
-        return output.join("");
+        return output2.join("");
       }
       case "rich_text_section":
         return richInline(elements, users);
@@ -22908,32 +23085,32 @@ function slackBlocksToMarkdown(blocks, users) {
         return richInline(elements, users).split("\n").map((line) => `> ${line}`).join("\n");
       case "rich_text_list":
         return elements.map((element, index) => {
-          const indent = block["indent"] === void 0 ? 0 : block["indent"];
-          const offset = block["offset"] === void 0 ? 0 : block["offset"];
-          const prefix2 = block["style"] === "ordered" ? `${offset + index + 1}. ` : "- ";
+          const indent = block2["indent"] === void 0 ? 0 : block2["indent"];
+          const offset = block2["offset"] === void 0 ? 0 : block2["offset"];
+          const prefix2 = block2["style"] === "ordered" ? `${offset + index + 1}. ` : "- ";
           return `${"    ".repeat(indent)}${prefix2}${richInline(element["elements"], users).replace(/\n/g, `
 ${"    ".repeat(indent)}${" ".repeat(prefix2.length)}`)}`;
         }).join("\n");
       case "section":
-        return [...block["text"] === void 0 ? [] : [render2(block["text"])], ...block["fields"] === void 0 ? [] : block["fields"].map(render2)].join("\n\n");
+        return [...block2["text"] === void 0 ? [] : [render2(block2["text"])], ...block2["fields"] === void 0 ? [] : block2["fields"].map(render2)].join("\n\n");
       case "mrkdwn":
-        return cleanText(block["text"]);
+        return cleanText(block2["text"]);
       case "plain_text":
-        return markdownText2(block["text"]);
+        return markdownText2(block2["text"]);
       case "header":
-        return `## ${render2(block["text"])}`;
+        return `## ${render2(block2["text"])}`;
       case "divider":
         return "---";
       case "context":
         return elements.map(render2).join(" \xB7 ");
       case "image":
-        return `![${markdownText2(block["alt_text"])}](<${block["image_url"]}>)`;
+        return `![${markdownText2(block2["alt_text"])}](<${block2["image_url"]}>)`;
       case "actions":
         return elements.map(render2).join(" \xB7 ");
       case "button":
-        return block["url"] === void 0 ? render2(block["text"]) : `[${render2(block["text"])}](<${block["url"]}>)`;
+        return block2["url"] === void 0 ? render2(block2["text"]) : `[${render2(block2["text"])}](<${block2["url"]}>)`;
       default:
-        throw new Error(`Unsupported Slack block: ${block["type"]}`);
+        throw new Error(`Unsupported Slack block: ${block2["type"]}`);
     }
   };
   return blocks.map(render2).join("\n\n");
@@ -23003,9 +23180,9 @@ var slackService = defineService({
     return Object.freeze({ service: "slack", identifier: `${parts.channel}:${threadTimestamp}`, type: "message-thread", channel_id: parts.channel, timestamp, thread_timestamp: threadTimestamp });
   },
   fetch: async (runtime2, url, source) => {
-    const session = await slackSession(runtime2);
-    const origin2 = new URL(url).hostname === "app.slack.com" ? session.origin : new URL(url).origin;
-    const { token, cookie } = session;
+    const session2 = await slackSession(runtime2);
+    const origin2 = new URL(url).hostname === "app.slack.com" ? session2.origin : new URL(url).origin;
+    const { token, cookie } = session2;
     const replies = [];
     let cursor;
     do {
@@ -23448,8 +23625,8 @@ var zoomProvider = Object.freeze({
 var serviceCatalog = createServiceRegistry().use(zoomProvider).use(notionProvider).use(slackProvider).use(chatgptProvider).use(googleDocsProvider).use(gmailProvider).use(asanaProvider).catalog();
 
 // src/extension.ts
-var execFileAsync2 = (0, import_node_util3.promisify)(import_node_child_process3.execFile);
-var authServices = ["ashby", "asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"];
+var execFileAsync2 = (0, import_node_util4.promisify)(import_node_child_process3.execFile);
+var authServices = ["ashby", "asana", "chatgpt", "codesignal", "gmail", "google-docs", "notion", "slack", "zoom"];
 var wireStatus;
 function operationPath(value, path) {
   if (value.startsWith("http://") || value.startsWith("https://")) return path;
@@ -23540,7 +23717,10 @@ async function wire(path) {
     now: capabilities.clock.now,
     open: capabilities.openFiles.open
   });
-  return withWireHooks(baseWire, { currentDirectory: projectDirectory(), home: environment(values2, "HOME"), environment: values2 });
+  return withWireHooks({ ...baseWire, view: (url) => {
+    const id = codeSignalInterviewId(url);
+    return id ? previewCodeSignal(capabilities, id) : baseWire.view(url);
+  } }, { currentDirectory: projectDirectory(), home: environment(values2, "HOME"), environment: values2 });
 }
 async function auth() {
   const values2 = await commandEnvironment(projectDirectory());
@@ -23728,6 +23908,7 @@ async function authLogin() {
     ashby: authClient.extractAshby,
     asana: authClient.extractAsana,
     chatgpt: authClient.extractChatgpt,
+    codesignal: authClient.extractCodeSignal,
     gmail: authClient.extractGmail,
     "google-docs": authClient.extractGoogleDocs,
     notion: authClient.extractNotion,

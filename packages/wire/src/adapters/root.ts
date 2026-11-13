@@ -12,7 +12,7 @@ export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
 export type WireRootOptions = Readonly<{ allowPaste: boolean; ashby?: (action: string, arg?: string) => Promise<string>; previewDrive?: (url: string) => Promise<string>; scrapeDrive?: (url?: string, deleteVerifiedPdfs?: boolean, deleteVerifiedDocx?: boolean) => Promise<string>; calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
 
-const authServices = ["ashby", "asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
+const authServices = ["ashby", "asana", "chatgpt", "codesignal", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
 const removedCliCommandNames = Object.freeze({
   create: "Use `wire attach <url>` or `wire <url>`.",
   fetch: "Use `wire download <url>`.",
@@ -211,7 +211,7 @@ function wireUserErrorMessage(message: string): boolean {
     || /^(Configured Wire registry is missing|Wire storage is busy|Wire switch destination already exists)/.test(message)
     || /^Wire history and tracked Markdown must be on the same filesystem/.test(message)
     || /^Login not saved$/.test(message)
-    || /authentication (is missing|is missing or expired|failed|expired).*Run `wire (ashby|asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.test(message)
+    || /authentication (is missing|is missing or expired|failed|expired).*Run `wire (ashby|asana|chatgpt|codesignal|gmail|google-docs|notion|slack|zoom) login`/i.test(message)
     || /^Asana API /.test(message)
     || /^(GET|POST|PUT|DELETE) \/.* failed: \d+ /.test(message)
     || /^(Invalid Asana project heading|Asana section appears|Asana milestone appears|Asana task appears|Asana subtask appears|Unsupported Asana Markdown|Duplicate Asana identity|Missing Asana project heading|Asana project identity changed|Unknown Asana identity|Conflicting Asana edits)/.test(message)
@@ -253,7 +253,7 @@ function wireUserErrorDisplayMessage(message: string): string {
   if (unsupportedSource !== null) return `unsupported source\nurl: ${lineText(unsupportedSource[1]!)}\nsupported: Asana, ChatGPT, Gmail, Google Docs/Sheets/Slides/Forms, Notion, Slack, Zoom`;
   const existingWorkspace = /^Wire workspace already initialized with (sqlite|files) registry at ([\s\S]+)\. Existing registries are not overwritten\.$/.exec(message);
   if (existingWorkspace !== null) return `workspace already initialized\nbackend: ${existingWorkspace[1]!}\nregistry: ${lineText(existingWorkspace[2]!)}\nkept: existing registry`;
-  const authentication = /authentication (is missing or expired|is missing|failed|expired).*Run `wire (ashby|asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.exec(message);
+  const authentication = /authentication (is missing or expired|is missing|failed|expired).*Run `wire (ashby|asana|chatgpt|codesignal|gmail|google-docs|notion|slack|zoom) login`/i.exec(message);
   if (authentication !== null) return `login required\nservice: ${serviceTitle(authentication[2] as AuthService)}\nrun: wire ${authentication[2]} login`;
   const asanaApi = /^Asana API ([^\s]+) failed: HTTP (\d+)(?: ([\s\S]+))?$/.exec(message);
   if (asanaApi !== null) return `api failed\nservice: Asana\nrequest: ${lineText(asanaApi[1]!)}\nstatus: HTTP ${asanaApi[2]!}${asanaApi[3] === undefined ? "" : `\ndetail: ${lineText(asanaApi[3]!)}`}`;
@@ -355,6 +355,7 @@ function serviceTitle(service: AuthService): string {
     ashby: "Ashby",
     asana: "Asana",
     chatgpt: "ChatGPT",
+    codesignal: "CodeSignal",
     gmail: "Gmail",
     "google-docs": "Google Docs/Sheets/Slides",
     notion: "Notion",
@@ -418,7 +419,7 @@ export const wirePresentation: WirePresentation = Object.freeze({
 function authGroup(service: AuthService, description: string, loginDescription: string, auth: Auth, readInput: TextInputReader | undefined, options: WireRootOptions): Group {
   const login = async (paste: boolean | undefined) => {
     if (paste === true && !options.allowPaste) throw new UserError("Cookie paste is CLI-only.");
-    return paste === true ? auth.pasteCookies(service, await readInput!()) : service === "ashby" ? auth.extractAshby() : service === "asana" ? auth.extractAsana() : service === "chatgpt" ? auth.extractChatgpt() : service === "gmail" ? auth.extractGmail() : service === "google-docs" ? auth.extractGoogleDocs() : service === "notion" ? auth.extractNotion() : service === "slack" ? auth.extractSlack() : auth.extractZoom();
+    return paste === true ? auth.pasteCookies(service, await readInput!()) : service === "ashby" ? auth.extractAshby() : service === "asana" ? auth.extractAsana() : service === "chatgpt" ? auth.extractChatgpt() : service === "codesignal" ? auth.extractCodeSignal() : service === "gmail" ? auth.extractGmail() : service === "google-docs" ? auth.extractGoogleDocs() : service === "notion" ? auth.extractNotion() : service === "slack" ? auth.extractSlack() : auth.extractZoom();
   };
   const title = serviceTitle(service);
   return defineGroup({ name: service, description, children: [
