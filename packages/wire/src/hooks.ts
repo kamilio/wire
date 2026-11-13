@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import type { Resource, Wire, WireResult } from "wire-core";
 import { configuredWireRoot, loadWireConfig, openWireRegistry, wireRelativePath } from "wire-core";
 import type { WireWatchSyncHook } from "wire-core/internal/operations";
-import { wireWatchHooks } from "wire-core/internal/operations";
+import { sourceLock, wireWatchHooks, withHistoryLock } from "wire-core/internal/operations";
 
 const execFileAsync = promisify(execFile);
 
@@ -106,21 +106,22 @@ function outputEnvironment(stdout: string): Record<string, string> {
   return values;
 }
 
-async function updateMovedResult(options: WireHookOptions, wireRoot: string, result: WireResult, movedPath: string): Promise<WireResult> {
+async function updateMovedResult(options: WireHookOptions, wireRoot: string, result: WireResult, movedPath: string, tracked: boolean): Promise<WireResult> {
   const workspace = dirname(wireRoot);
   const outputPath = isAbsolute(movedPath) ? movedPath : resolve(workspace, movedPath);
   const relativePath = wireRelativePath(outputPath, wireRoot);
   const primary = primaryFilesystemLink(result.resource);
-  const resource = {
-    ...result.resource,
-    filesystem_links: [
-      ...result.resource.filesystem_links.filter((link) => !(link.path === primary.path && link.role === "primary")),
-      { ...primary, path: relativePath },
-    ],
-  };
-  if (result.summary.action !== "detached") {
-    const registry = await openWireRegistry(wireRoot, options.home);
-    if ((await registry.listResources()).some((item) => item.id === result.resource.id)) await registry.put(resource);
+  const moveLink = (r: Resource): Resource => ({ ...r, filesystem_links: r.filesystem_links.map(link =>
+    link.role === "primary" && link.path === primary.path ? { ...link, path: relativePath } : link) });
+  let resource = moveLink(result.resource);
+  if (result.summary.action !== "detached" && tracked) {
+    const source = result.resource.identifiers.find(i => i.service + ":" + i.identifier === result.resource.id)!;
+    resource = await withHistoryLock(wireRoot, sourceLock({ ...source, type: result.resource.type }), async () => {
+      const registry = await openWireRegistry(wireRoot, options.home);
+      const latest = await registry.get(result.resource.id);
+      if (primaryFilesystemLink(latest).path !== primary.path) throw new Error("The registered path changed while the hook was running. Wire kept the newer path.");
+      return registry.put(moveLink(latest));
+    });
   }
   return { ...result, resource, path: outputPath, summary: { ...result.summary, local: outputPath } };
 }
@@ -139,7 +140,7 @@ async function runHookCommands(wireRoot: string, event: WireHookEvent, environme
   return current;
 }
 
-async function runResourceHooks(options: WireHookOptions, command: string, result: WireResult): Promise<HookState> {
+async function runResourceHooks(options: WireHookOptions, command: string, result: WireResult, tracked = true): Promise<HookState> {
   const wireRoot = await configuredWireRoot(result.path, options.home);
   if (wireRoot === null) return { result, environment: {} };
   let currentResult = result;
@@ -153,7 +154,7 @@ async function runResourceHooks(options: WireHookOptions, command: string, resul
     environment = { ...environment, ...output };
     const outputPath = output["WIRE_PATH"];
     if (outputPath !== undefined && resolve(dirname(wireRoot), outputPath) !== currentResult.path) {
-      currentResult = await updateMovedResult(options, wireRoot, currentResult, outputPath);
+      currentResult = await updateMovedResult(options, wireRoot, currentResult, outputPath, tracked);
       environment = { ...environment, ...resourceEnvironment(command, options.currentDirectory, wireRoot, currentResult) };
     }
   }
@@ -170,8 +171,8 @@ async function runSummaryHooks(options: WireHookOptions, event: WireHookEvent, c
   });
 }
 
-async function runSingleResultHooks(options: WireHookOptions, command: string, result: WireResult): Promise<WireResult> {
-  const state = result.summary.action === "failed" ? { result, environment: {} } : await runResourceHooks(options, command, result);
+async function runSingleResultHooks(options: WireHookOptions, command: string, result: WireResult, tracked = true): Promise<WireResult> {
+  const state = result.summary.action === "failed" ? { result, environment: {} } : await runResourceHooks(options, command, result, tracked);
   await runSummaryHooks(options, "post-command", command, state.result.path, [state.result], state.environment);
   return state.result;
 }
@@ -201,7 +202,7 @@ export function withWireHooks(wire: Wire, options: WireHookOptions): Wire {
     attach: async (url, path) => runSingleResultHooks(options, "attach", await wire.attach(url, path)),
     create: async (url, path) => runSingleResultHooks(options, "attach", await wire.create(url, path)),
     sync: async (value, path) => runSingleResultHooks(options, "sync", await wire.sync(value, path)),
-    downloadSource: async (url, path) => runSingleResultHooks(options, "download", await wire.downloadSource(url, path)),
+    downloadSource: async (url, path) => runSingleResultHooks(options, "download", await wire.downloadSource(url, path), false),
     download: async (value, path) => runSingleResultHooks(options, "download", await wire.download(value, path)),
     detach: async (value, path) => runSingleResultHooks(options, "detach", await wire.detach(value, path)),
     unlink: async (value, path) => runSingleResultHooks(options, "detach", await wire.unlink(value, path)),

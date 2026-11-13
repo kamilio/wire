@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { after, before, test } from "node:test";
 
@@ -135,6 +136,33 @@ printf "%s\\n%s\\n%s" "$WIRE_EVENT" "$WIRE_RESULT_COUNT" "$WIRE_PATH" > post-com
   assert.equal(resource.filesystem_links.find((attach) => attach.role === "primary").path, "docs/notion/First.md");
   assert.equal(await readFile(join(project, "hook-path.txt"), "utf8"), join(project, "docs/notion/First.md"));
   assert.equal(await readFile(join(project, "post-command.txt"), "utf8"), `post-command\n1\n${join(project, "docs/notion/First.md")}`);
+});
+
+test("a hook rename preserves newer registry data and cannot reverse a concurrent relink", async () => {
+  for (const relink of [false, true]) {
+    const project = join(testRoot, `post-hook-race-${relink}`);
+    await mkdir(project, { recursive: true });
+    await initializeWire(project, "files", "records");
+    const core = pathToFileURL(resolve(import.meta.dirname, "../dist/index.js")).href;
+    await writeExecutable(join(project, ".wire/hooks/post-resource"), `#!/usr/bin/env node
+(async () => {
+  const { openWireRegistry } = await import(${JSON.stringify(core)});
+  const { rename } = await import("node:fs/promises");
+  const registry = await openWireRegistry(process.cwd(), process.cwd());
+  const r = await registry.get(process.env.WIRE_RESOURCE_ID);
+  await registry.put({ ...r, data: [...r.data, {namespace:"custom",key:"advanced",value:true}],
+    filesystem_links: ${relink} ? r.filesystem_links.map(l=>({...l,path:"newer.md"})) : r.filesystem_links });
+  await rename(process.env.WIRE_PATH, "hook.md");
+  console.log("WIRE_PATH=hook.md");
+})().catch(e => { console.error(e); process.exitCode = 1; });
+`);
+    const result = createWire(project).attach("https://notion.test/page", project);
+    if (relink) await assert.rejects(result, /registered path changed while the hook was running/);
+    else await result;
+    const latest = await (await openWireRegistry(project, project)).get("notion:page");
+    assert.ok(latest.data.find(d => d.key === "advanced")?.value);
+    assert.equal(latest.filesystem_links.find(l => l.role === "primary").path, relink ? "newer.md" : "hook.md");
+  }
 });
 
 test("wire config env is available to automatically discovered CLI hooks", async () => {
