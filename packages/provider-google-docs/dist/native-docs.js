@@ -126,6 +126,26 @@ function spacedBlocks(md) {
     }
     return result;
 }
+// In Markdown the first numeric marker sets a list's starting number.
+// Following marker numbers can be rewritten by Docs when a sibling is added.
+function numberStarts(rows) {
+    const ordered = [], starts = [];
+    for (const row of rows) {
+        if (row === blank)
+            continue;
+        const marker = /^([ \t]*)([-*+]|(\d+)[.)]) +/.exec(row);
+        if (!marker) {
+            ordered.length = 0;
+            continue;
+        }
+        const indent = marker[1].replace(/\t/g, "  ").length, number = marker[3];
+        ordered.splice(indent + 1);
+        if (number && !ordered[indent])
+            starts.push(number);
+        ordered[indent] = !!number;
+    }
+    return starts;
+}
 export function nativeDocMarkdownEqual(left, right) {
     const normalized = (s) => spacedBlocks(s).map(l => {
         try {
@@ -135,7 +155,7 @@ export function nativeDocMarkdownEqual(left, right) {
             return l;
         }
     });
-    return JSON.stringify(normalized(left)) === JSON.stringify(normalized(right));
+    return JSON.stringify(numberStarts(spacedBlocks(left))) === JSON.stringify(numberStarts(spacedBlocks(right))) && JSON.stringify(normalized(left)) === JSON.stringify(normalized(right));
 }
 // Keep disjoint unchanged runs in place, including their native formatting
 // and anchored comments. Bounds apply only to the middle after trimming the
@@ -186,13 +206,18 @@ function characterMatches(a, b) {
 }
 function plan(tab, previous, desired, comments, allowDuplicatePosition) {
     const oldLayout = spacedBlocks(previous), newLayout = spacedBlocks(desired);
+    if (JSON.stringify(numberStarts(oldLayout)) !== JSON.stringify(numberStarts(newLayout)))
+        return unsafe("cannot reproduce a change in native list numbering");
     for (const c of docChanges(oldLayout, newLayout)) {
         const was = oldLayout.slice(c.start, c.end);
         if ((was.includes(blank) || c.replacement.includes(blank)) &&
             (was.length !== c.replacement.length || was.some((v, i) => (v === blank) !== (c.replacement[i] === blank))))
             return unsafe("editing blank paragraph spacing");
     }
-    const before = oldLayout.filter(l => l !== blank), after = newLayout.filter(l => l !== blank);
+    // Later numeric markers in the same Markdown list are not independent
+    // identities. Inserting an item can renumber every following sibling.
+    const rows = (layout) => layout.filter(l => l !== blank).map(l => l.replace(/^([ \t]*)\d+([.)] +)/, (_, indent, marker) => indent + "1" + marker));
+    const before = rows(oldLayout), after = rows(newLayout);
     let offset = 0;
     const changes = docChanges(before, after).map(c => {
         const next = c.start + offset;
@@ -276,6 +301,10 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
         if (headingChanged || hasBullet)
             requests.push({ updateParagraphStyle: { range: part, paragraphStyle: headingChanged ? { namedStyleType: block.heading } : {}, fields: headingChanged ? "namedStyleType,indentStart,indentFirstLine" : "indentStart,indentFirstLine" } });
         if (block.level !== null) {
+            // The API cannot set a paragraph's existing listId. Applying a number
+            // preset may silently start a new list even when Markdown looks right.
+            if (block.numbered)
+                return unsafe("cannot create a numbered level without a matching native list paragraph");
             // Docs subtracts the shallowest level in each create request. Use a
             // temporary root in this atomic batch, rather than re-listing a real
             // adjacent paragraph and changing its list ID or styling.
@@ -285,7 +314,7 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
             const prefix = relative ? "x\n" + "\t".repeat(relative) : "";
             if (prefix)
                 requests.push({ insertText: { location: location(start), text: prefix } });
-            requests.push({ createParagraphBullets: { range: range(start, start + prefix.length + 1), bulletPreset: block.numbered ? "NUMBERED_DECIMAL_ALPHA_ROMAN" : "BULLET_DISC_CIRCLE_SQUARE" } });
+            requests.push({ createParagraphBullets: { range: range(start, start + prefix.length + 1), bulletPreset: "BULLET_DISC_CIRCLE_SQUARE" } });
             if (prefix)
                 requests.push({ deleteContentRange: { range: range(start, start + 2) } });
         }
@@ -300,6 +329,8 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
             return unsafe("cannot determine previous list format");
         if (!!levels[0]?.glyphType !== b.numbered)
             return 0;
+        if (levels.some((l, i) => l.glyphSymbol !== ["●", "○", "■"][i % 3] || (l.glyphFormat && l.glyphFormat !== "%" + i)))
+            return unsafe("cannot reproduce the existing native list preset");
         return bullet.nestingLevel ?? 0;
     };
     function editable(target, destructive) {
@@ -322,6 +353,8 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
             const o = old[0], b = added[0];
             editable(o, false);
             const structure = b.heading !== o.block.heading || b.level !== o.block.level || b.numbered !== o.block.numbered;
+            if (structure && o.block.numbered)
+                return unsafe("recreating an existing numbered paragraph could restart its list");
             const from = characters(o.block), to = characters(b), keep = characterMatches(from, to);
             let ai = 0, bi = 0;
             const edits = [];
@@ -408,26 +441,46 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
         const left = c.start > 0 ? locate(c.start - 1) : undefined;
         if (left && right && left.end !== right.start)
             return unsafe("native content between insertion anchors");
+        const sameLevel = (n) => {
+            const bullet = n?.e.paragraph?.bullet;
+            if (!bullet || !n || !added.every(b => b.level === n.block.level && b.numbered === n.block.numbered && b.heading === n.block.heading))
+                return false;
+            const level = tab.documentTab.lists?.[bullet.listId]?.listProperties.nestingLevels[bullet.nestingLevel ?? 0];
+            if (!level)
+                return unsafe("cannot determine native list preset");
+            return n.block.numbered ? /^(DECIMAL|ZERO_DECIMAL|ALPHA|UPPER_ALPHA|ROMAN|UPPER_ROMAN)$/.test(level.glyphType ?? "") : !!level.glyphSymbol;
+        };
+        const inheritLeft = sameLevel(left), inheritRight = sameLevel(right);
+        if (inheritLeft && inheritRight && left.e.paragraph.bullet.listId !== right.e.paragraph.bullet.listId)
+            return unsafe("insertion is between two different native lists");
+        const inherit = inheritRight || inheritLeft;
+        if (!inherit && added.some(b => b.numbered))
+            return unsafe("cannot insert numbered items without a matching native list paragraph");
+        if (!inherit && left?.e.paragraph?.bullet && left.e.paragraph.bullet.listId === right?.e.paragraph?.bullet?.listId && left.block.numbered)
+            return unsafe("insertion could split a numbered list");
         const append = !right && !!left;
         if (append && left.end !== last?.endIndex || !left && right && right.start !== 1)
             return unsafe("native content beyond insertion anchor");
         if (!right && !left && !(last?.startIndex === 1 && last?.paragraph?.elements[0]?.textRun?.content === "\n"))
             return unsafe("no native insertion anchor");
-        const neighbor = right ?? left;
+        // Inserting a newline inside an existing item gives the new paragraph the
+        // exact same list ID, level, glyph preset and counter. No list API call.
+        const splitLeft = append || !inheritRight && inheritLeft;
+        const neighbor = splitLeft ? left : right;
         if (neighbor) {
             editable(neighbor, false);
-            if (right?.e.paragraph?.paragraphStyle?.headingId)
+            if (!splitLeft && right?.e.paragraph?.paragraphStyle?.headingId)
                 return unsafe("splitting a heading may move its anchor");
         }
-        const at = right?.start ?? (left ? left.end - 1 : 1);
+        const at = splitLeft ? left.end - 1 : right?.start ?? 1;
         guardText(at, at);
         const text = added.map(b => b.text).join("\n");
-        requests.push({ insertText: { location: location(at), text: append ? "\n" + text : right ? text + "\n" : text } });
-        let pos = at + Number(append);
+        requests.push({ insertText: { location: location(at), text: splitLeft ? "\n" + text : right ? text + "\n" : text } });
+        let pos = at + Number(splitLeft);
         let previousAdded;
         for (const b of added) {
-            const preceding = previousAdded ? previousAdded.numbered === b.numbered ? previousAdded.level ?? 0 : 0 : precedingLevel(append ? left.end : pos, b);
-            setParagraph(b, pos, !!neighbor?.e.paragraph?.bullet, true, preceding, (neighbor?.block.heading ?? "NORMAL_TEXT") !== b.heading);
+            const preceding = inherit ? 0 : previousAdded ? previousAdded.numbered === b.numbered ? previousAdded.level ?? 0 : 0 : precedingLevel(append ? left.end : pos, b);
+            setParagraph(b, pos, !!neighbor?.e.paragraph?.bullet, !inherit, preceding, (neighbor?.block.heading ?? "NORMAL_TEXT") !== b.heading);
             previousAdded = b;
             style(b, pos, true);
             pos += b.text.length + 1;

@@ -191,3 +191,22 @@ test("edit the selected repeated bullet only when the entire tab proves its posi
   await assert.rejects(refuse.write(compact,compact.replace("* Label","End").replace(/End$/,"* Label")),/ambiguous/);
   assert.equal(refuse.posts.length,0);
 });
+
+test("numbered siblings inherit native glyphs and counters; uncertain continuity never writes",async()=>{
+  for(const glyphType of ["DECIMAL","UPPER_ALPHA"]) {
+    const l={listProperties:{nestingLevels:[{glyphType,glyphFormat:"%0."}]}};
+    const row=(text,id="l")=>({text,bullet:{listId:id}});
+    const opts={lists:{l,m:l}};
+    const old="1. First\n2. Last", next="1. First\n2. New\n3. Last";
+    const f=fixture([row("First"),row("Last")],opts);
+    await f.write(old,next);
+    assert.deepEqual(f.posts[0].requests.filter(r=>r.insertText).map(r=>r.insertText.text),["New\n"]);
+    assert.ok(f.posts[0].requests.every(r=>r.insertText||r.updateTextStyle));
+    const ambiguous=fixture([row("First"),row("Last","m")],opts);
+    await assert.rejects(ambiguous.write(old,next),/different native lists/);
+    await assert.rejects(ambiguous.write(old,"4. First\n5. Last"),/numbering/);
+    await assert.rejects(ambiguous.write(old,"1. First\n  1. Child\n2. Last"),/number/);
+    assert.equal(ambiguous.posts.length,0);
+    assert.equal(nativeDocMarkdownEqual(old,"4. First\n5. Last"),false);
+  }
+});
