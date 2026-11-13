@@ -18488,9 +18488,25 @@ function mergeDocBlocks(base, local, remote, sameRendering = (a, b2) => a === b2
 }
 
 // ../provider-google-docs/src/google-read.ts
+var transient = /* @__PURE__ */ new Set(["ECONNRESET", "EPIPE", "ETIMEDOUT", "EAI_AGAIN", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT"]);
+var permanent = /* @__PURE__ */ new Set(["ENOTFOUND", "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "ERR_TLS_CERT_ALTNAME_INVALID", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"]);
 async function googleRead(runtime2, url, init) {
   for (let attempt = 0; ; attempt++) {
-    const response = await runtime2.http.request(url, init);
+    let response;
+    try {
+      response = await runtime2.http.request(url, init);
+    } catch (error) {
+      const cause = error instanceof TypeError && error.name === "TypeError" ? error.cause : void 0;
+      const code = cause instanceof Error && "code" in cause ? cause.code : void 0;
+      if (typeof code !== "string" || !transient.has(code)) {
+        if (error instanceof Error && error.name === "AbortError" || code === "ABORT_ERR") throw new Error("Google Docs read cancelled.");
+        if (typeof code === "string" && permanent.has(code)) throw new Error(`Google Docs read failed before a response (${code}).`);
+        throw new Error("Google Docs read failed before a response.");
+      }
+      if (attempt >= 3) throw new Error(`Google Docs read failed before a response (${code}).`);
+      await new Promise((resolve5) => setTimeout(resolve5, 1e3 * 2 ** attempt));
+      continue;
+    }
     if (![429, 500, 502, 503, 504].includes(response.status)) return response;
     const header = response.headers.get("retry-after")?.trim();
     const seconds = header && /^\d+$/.test(header) ? Number(header) : void 0;

@@ -1889,6 +1889,42 @@ test("Google Docs export recovers from HTTP 500 and stops after three retries", 
   assert.equal(calls, 4);
 });
 
+test("Docs cookie exports retry a reset and share one budget with HTTP responses", async () => {
+  const url = "https://docs.google.com/document/d/doc/edit";
+  const reset = new TypeError("fetch failed", { cause: Object.assign(new Error("private signed URL"), { code: "ECONNRESET" }) });
+  let calls = 0;
+  const read = handler => fetchSource(runtime(async (input, init) => {
+    assert.equal(init.method ?? "GET", "GET");
+    assert.equal(new URL(input).pathname, "/document/d/doc/export");
+    assert.ok(init.headers.Cookie || init.headers.cookie);
+    return handler(++calls);
+  }), url, serviceCatalog);
+  const doc = await read(n => { if (n === 1) throw reset; return exportResponse("Doc", "md", "ok"); });
+  assert.equal(doc.markdown, "ok"); assert.equal(calls, 2);
+  calls = 0;
+  await assert.rejects(read(n => {
+    if (n === 1 || n === 4) throw reset;
+    return new Response(null, { status: n === 2 ? 503 : 429, headers: { "retry-after": "0" } });
+  }), { message: "Google Docs read failed before a response (ECONNRESET)." });
+  assert.equal(calls, 4);
+});
+
+test("Docs cookie exports do not retry cancellation, permanent or unclassified transport failures", async () => {
+  const failure = code => new TypeError("private", { cause: Object.assign(new Error("private"), { code }) });
+  for (const [error, message] of [
+    [new DOMException("private", "AbortError"), "Google Docs read cancelled."],
+    [failure("ABORT_ERR"), "Google Docs read cancelled."],
+    [failure("ENOTFOUND"), "Google Docs read failed before a response (ENOTFOUND)."],
+    [failure("CERT_HAS_EXPIRED"), "Google Docs read failed before a response (CERT_HAS_EXPIRED)."],
+    [failure("private code"), "Google Docs read failed before a response."],
+    [new TypeError("private"), "Google Docs read failed before a response."]
+  ]) {
+    let reads = 0;
+    await assert.rejects(fetchSource(runtime(async () => { reads++; throw error; }), "https://docs.google.com/document/d/doc/edit", serviceCatalog), { message });
+    assert.equal(reads, 1);
+  }
+});
+
 function docsDriveRuntime(handler) {
   const rt = runtime(handler);
   return { ...rt, configuration: { getOptional: key => key === "GOOGLE_FORMS_TOKEN_FILE" ? "/grant" : undefined }, filesystem: {
