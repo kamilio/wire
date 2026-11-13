@@ -7,7 +7,7 @@ export const notionService = defineService({
     parse: (url) => Object.freeze({ service: "notion", identifier: notionPageId.exec(url.href)[0].replaceAll("-", "").toLowerCase(), type: "document" }),
     fetch: fetchNotionDocument,
     download: downloadNotionDirectory,
-    synchronize: (runtime, url, source, base, markdown, markdownPath) => synchronizeNotionDocument(runtime, url, source, base, markdown, markdownPath),
+    synchronize: synchronizeNotionDocument,
     upload: uploadNotionDocument,
 });
 //# sourceMappingURL=notion.js.map

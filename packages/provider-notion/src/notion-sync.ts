@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { posix } from "node:path";
 
-import type { DownloadedDocument, DownloadWriter, FetchedDocument, JsonObject, JsonValue, Source, UploadedDocument } from "wire-core";
-import { markdownFilename, stableJsonCompact, stableJsonPretty } from "wire-core";
+import type { DownloadedDocument, DownloadWriter, FetchedDocument, JsonObject, JsonValue, Source, SynchronizedDocument, UploadedDocument } from "wire-core";
+import { WireMergeConflict, markdownFilename, stableJsonCompact, stableJsonPretty } from "wire-core";
 import type { RuntimeCapabilities } from "wire-core";
 
 export type NotionRichText = JsonValue[][];
@@ -1182,12 +1182,20 @@ function splitTitle(markdown: string): Readonly<{ title: string; body: string }>
   return { title: "", body: markdown };
 }
 
-export async function synchronizeNotionDocument(runtime: RuntimeCapabilities, url: string, source: Source, base: JsonValue, markdown: string, _markdownPath: string): Promise<FetchedDocument> {
+export async function synchronizeNotionDocument(runtime: RuntimeCapabilities, url: string, source: Source, base: JsonValue, markdown: string, _markdownPath: string, observeRemote?: (remote: FetchedDocument) => void, requireConditionalWrite = false): Promise<SynchronizedDocument> {
   const remote = await fetchTree(runtime, url, source);
+  const save = async (operations: readonly NotionOperation[]) => {
+    if (operations.length === 0) return;
+    // saveTransactionsFanout cannot check the tree revision at commit time.
+    if (requireConditionalWrite) throw new Error("Notion cannot condition a save on the revision read. Local draft preserved; apply the edit in Notion.");
+    await notionPost(runtime, "saveTransactionsFanout", remote.cookie, { requestId: randomUUID(), transactions: [{ id: randomUUID(), spaceId: remote.spaceId, operations }] }, remote.headers);
+  };
   const baseObject = object(base);
   const mentions = baseUserMentions(baseObject);
   const emailMentions = { ...(baseObject["email_mentions"] as EmailMentions | undefined) };
-  const currentMarkdown = renderNotionTreeToMarkdown(remote.tree, mentions, emailMentions);
+  const observed = notionDocument(remote.tree.id, remote.tree, mentions, { ...emailMentions }, remote.comments);
+  observeRemote?.(observed);
+  const currentMarkdown = withoutComments(observed.markdown);
   const baseMarkdown = baseObject["markdown"] === undefined ? undefined : withoutComments(baseObject["markdown"] as string);
   let split = splitTitle(withoutComments(markdown));
   const currentSplit = splitTitle(currentMarkdown);
@@ -1198,7 +1206,7 @@ export async function synchronizeNotionDocument(runtime: RuntimeCapabilities, ur
     const remoteTitleChanged = baseSplit.title !== currentSplit.title;
     const localBodyChanged = baseSplit.body !== split.body;
     const remoteBodyChanged = baseSplit.body !== currentSplit.body;
-    if (localTitleChanged && remoteTitleChanged && split.title !== "" && split.title !== currentSplit.title || localBodyChanged && remoteBodyChanged && split.body !== currentSplit.body) throw new Error("Markdown and Notion changed since last sync");
+    if (localTitleChanged && remoteTitleChanged && split.title !== "" && split.title !== currentSplit.title || localBodyChanged && remoteBodyChanged && split.body !== currentSplit.body) throw new WireMergeConflict("Markdown and Notion changed since last sync");
     if ((localTitleChanged || localBodyChanged) && (remoteTitleChanged || remoteBodyChanged)) {
       split = { title: localTitleChanged ? split.title : currentSplit.title, body: localBodyChanged ? split.body : currentSplit.body };
       fieldMerged = true;
@@ -1209,22 +1217,22 @@ export async function synchronizeNotionDocument(runtime: RuntimeCapabilities, ur
     if (baseSplit !== undefined) {
       const localTitleChanged = baseSplit.title !== split.title;
       const remoteTitleChanged = baseSplit.title !== currentSplit.title;
-      if (!localTitleChanged && remoteTitleChanged) return notionDocument(remote.tree.id, remote.tree, mentions, emailMentions, remote.comments);
-      if (localTitleChanged && remoteTitleChanged && split.title !== currentSplit.title) throw new Error("Markdown and Notion changed since last sync");
-      if (localTitleChanged && remoteTitleChanged) return notionDocument(remote.tree.id, remote.tree, mentions, emailMentions, remote.comments);
+      if (!localTitleChanged && remoteTitleChanged) return { ...observed, wroteRemote: false };
+      if (localTitleChanged && remoteTitleChanged && split.title !== currentSplit.title) throw new WireMergeConflict("Markdown and Notion changed since last sync");
+      if (localTitleChanged && remoteTitleChanged) return { ...observed, wroteRemote: false };
     }
     const titleRich = split.title === "" ? object(remote.tree.block["properties"]!)["title"]! as NotionRichText : titleRichText(split.title);
     const titleChanged = split.title !== "" && compact(object(remote.tree.block["properties"]!)["title"]!) !== compact(titleRich);
-    if (titleChanged) await notionPost(runtime, "saveTransactionsFanout", remote.cookie, { requestId: randomUUID(), transactions: [{ id: randomUUID(), spaceId: remote.spaceId, operations: [{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: titleRich } } }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime.clock.now().getTime() }] }] }, remote.headers);
+    if (titleChanged) await save([{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: titleRich } } }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime.clock.now().getTime() }]);
     const outputTree: NotionTree = { ...remote.tree, block: { ...remote.tree.block, properties: { ...object(remote.tree.block["properties"]!), title: titleRich } } };
-    return notionDocument(remote.tree.id, outputTree, mentions, emailMentions, remote.comments);
+    return { ...notionDocument(remote.tree.id, outputTree, mentions, emailMentions, remote.comments), wroteRemote: titleChanged };
   }
   if (baseMarkdown !== undefined) {
     const localChanged = baseMarkdown !== targetMarkdown;
     const remoteChanged = baseMarkdown !== currentMarkdown;
-    if (!localChanged && remoteChanged) return notionDocument(remote.tree.id, remote.tree, mentions, emailMentions, remote.comments);
-    if (localChanged && remoteChanged && targetMarkdown !== currentMarkdown && !fieldMerged) throw new Error("Markdown and Notion changed since last sync");
-    if (localChanged && remoteChanged && targetMarkdown === currentMarkdown) return notionDocument(remote.tree.id, remote.tree, mentions, emailMentions, remote.comments);
+    if (!localChanged && remoteChanged) return { ...observed, wroteRemote: false };
+    if (localChanged && remoteChanged && targetMarkdown !== currentMarkdown && !fieldMerged) throw new WireMergeConflict("Markdown and Notion changed since last sync");
+    if (localChanged && remoteChanged && targetMarkdown === currentMarkdown) return { ...observed, wroteRemote: false };
   }
   const localBody = mentions === undefined ? split.body : hydrateUserMentions(split.body, mentions);
   const localBlocks = parseNotionMarkdown(localBody);
@@ -1234,7 +1242,7 @@ export async function synchronizeNotionDocument(runtime: RuntimeCapabilities, ur
   const operations = [...diffResult.operations];
   const titleRich = split.title === "" ? object(remote.tree.block["properties"]!)["title"]! as NotionRichText : titleRichText(split.title);
   if (split.title !== "" && compact(object(remote.tree.block["properties"]!)["title"]!) !== compact(titleRich)) operations.unshift({ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: titleRich } } });
-  if (operations.length > 0) await notionPost(runtime, "saveTransactionsFanout", remote.cookie, { requestId: randomUUID(), transactions: [{ id: randomUUID(), spaceId: remote.spaceId, operations }] }, remote.headers);
+  await save(operations);
   const outputTree: NotionTree = { id: remote.tree.id, block: { ...remote.tree.block, properties: { ...object(remote.tree.block["properties"]!), title: titleRich } }, children: localTree(localBlocks).map((node, index) => outputNode(node, remote.tree.children[index], remote.tree.id, remote, ambient.currentTime)) };
-  return notionDocument(remote.tree.id, outputTree, mentions, emailMentions, remote.comments);
+  return { ...notionDocument(remote.tree.id, outputTree, mentions, emailMentions, remote.comments), wroteRemote: operations.length > 0 };
 }

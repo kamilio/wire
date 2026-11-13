@@ -732,7 +732,7 @@ export async function googleDocListMarkdown(markdown, wordExport) {
         return text && outer.has(text) && !other.has(text) ? line.slice(2) : line;
     }).join("\n");
 }
-async function fetchGoogleDocument(runtime, source, previous, reuseNative) {
+async function fetchGoogleDocument(runtime, source, previous, reuseNative, verifyRevision = false) {
     const id = source["document_id"] ?? source.identifier;
     const key = resourceKey(source);
     const gid = source["sheet_gid"];
@@ -835,19 +835,31 @@ async function fetchGoogleDocument(runtime, source, previous, reuseNative) {
     // Bind the Markdown and original images to one revision before using them as a sync base.
     const exported = markdown;
     markdown = await docImages(markdown, archive);
-    if (markdown !== exported && readRevision) {
+    if ((verifyRevision || markdown !== exported) && readRevision) {
         const end = await (await read("https://docs.googleapis.com/v1/documents/" + encodeURIComponent(id) + "?fields=revisionId")).json();
         if (end.revisionId !== readRevision)
-            throw new Error("Google Docs changed during image export; local copy preserved. Sync again.");
+            throw new StaleDocRevision(markdown !== exported
+                ? "Google Docs changed during image export; local copy preserved. Sync again."
+                : "Google Docs changed during Markdown export; local copy preserved. Sync again.");
     }
-    // No extra request for ordinary notes or for an idle verified revision.
     // Fetch the native formats only for a newly observed bounded duplicate.
     const duplicateIdentity = readRevision ? await identityFor(markdown, readRevision) : undefined;
     return { title, markdown, ...(readRevision ? { readRevision } : {}), data: { document_id: id, title, output_path: null, sheet_gid: null, markdown, rows: null, ...(duplicateIdentity ? { duplicate_identity: duplicateIdentity, verified_revision: readRevision } : {}), ...(markdown.includes("data:image/") ? { original_images: true } : {}), ...(readRevision ? { position_revision: readRevision } : {}), ...(legacyImages === exported && readRevision ? { verified_revision: readRevision } : {}), ...(tab === null ? {} : { document_tab: tab }) } };
 }
-async function synchronizeGoogleDocument(runtime, url, source, base, markdown, retryStaleRevision = true) {
+async function synchronizeGoogleDocument(runtime, url, source, base, markdown, observeRemote, requireConditionalWrite = false, retryStaleRevision = true) {
+    const verifyRevision = observeRemote !== undefined || requireConditionalWrite;
     let nativeDocument;
-    const remote = await fetchGoogleDocument(runtime, source, base, doc => { nativeDocument = doc; });
+    const retry = () => synchronizeGoogleDocument(runtime, url, source, base, markdown, observeRemote, requireConditionalWrite, false);
+    let remote;
+    try {
+        remote = await fetchGoogleDocument(runtime, source, base, doc => { nativeDocument = doc; }, verifyRevision);
+    }
+    catch (error) {
+        if (retryStaleRevision && error instanceof StaleDocRevision && verifyRevision)
+            return retry();
+        throw error;
+    }
+    observeRemote?.(remote);
     if (source.type === "presentation") {
         const baseMarkdown = objectValue(base)["markdown"];
         if (typeof baseMarkdown !== "string")
@@ -885,6 +897,8 @@ async function synchronizeGoogleDocument(runtime, url, source, base, markdown, r
         const formula = cells.find((cell) => formulaLikeCell(cell.value));
         if (formula !== undefined)
             throw new Error(`Google Sheets sync cannot upload formula-like cell text at row ${formula.row + 1}, column ${formula.column + 1}\nPrefix it with an apostrophe or rewrite it as plain text before syncing.`);
+        if (requireConditionalWrite)
+            throw new Error("Google Sheets cannot condition a save on the revision read. Local draft preserved; apply the edit in Google Sheets.");
         await uploadSheetRows(runtime, source["document_id"] ?? source.identifier, source["sheet_gid"], resourceKey(source), cells);
         const uploaded = await fetchGoogleDocument(runtime, source);
         if (!rowsEqual(stringRows(objectValue(uploaded.data)["rows"]), localRows))
@@ -910,17 +924,23 @@ async function synchronizeGoogleDocument(runtime, url, source, base, markdown, r
     let wroteRemote = false, writtenRevision;
     let native;
     try {
-        native = await tryUploadDocBlocks(runtime, id, key, tab, remote.markdown, merged, async (revision) => remote.readRevision === revision ? remote.markdown : (await fetchGoogleDocument(runtime, source)).markdown, revision => { wroteRemote = true; writtenRevision = revision; }, typeof positionRevision === "string" ? positionRevision : undefined, duplicateContext(baseMarkdown, markdown, snapshot["position_revision"], snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab ? snapshot["duplicate_identity"] : undefined), nativeDocument);
+        native = await tryUploadDocBlocks(runtime, id, key, tab, remote.markdown, merged, async (revision) => {
+            if (remote.readRevision === revision)
+                return remote.markdown;
+            if (remote.readRevision || requireConditionalWrite)
+                throw new StaleDocRevision("Google Docs changed before writing; sync again.");
+            return (await fetchGoogleDocument(runtime, source)).markdown;
+        }, revision => { wroteRemote = true; writtenRevision = revision; }, typeof positionRevision === "string" ? positionRevision : undefined, duplicateContext(baseMarkdown, markdown, snapshot["position_revision"], snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab ? snapshot["duplicate_identity"] : undefined), nativeDocument);
     }
     catch (error) {
         // Re-read and merge the original draft; never replay old offsets or an uncertain write.
         if (retryStaleRevision && error instanceof StaleDocRevision)
-            return synchronizeGoogleDocument(runtime, url, source, base, markdown, false);
+            return retry();
         throw error;
     }
     if (!native)
         throw new Error("Google Docs uploads require an OAuth token with drive, drive.file, or both documents and drive.readonly scopes. Set GOOGLE_DOCS_TOKEN_FILE or GOOGLE_FORMS_TOKEN_FILE. Browser login supports downloads only.");
-    const uploaded = await fetchGoogleDocument(runtime, source, {});
+    const uploaded = await fetchGoogleDocument(runtime, source, {}, undefined, verifyRevision);
     if (!nativeDocMarkdownEqual(uploaded.markdown, merged))
         throw new Error("Google Docs save verification failed");
     if (writtenRevision && writtenRevision === uploaded.readRevision) {
@@ -950,6 +970,6 @@ export const googleDocsService = defineService({
         return Object.freeze({ service: "google-docs", identifier: documentId, type: "document", ...resource_key });
     },
     fetch: (runtime, _url, source) => fetchGoogleDocument(runtime, source),
-    synchronize: (runtime, url, source, base, markdown) => synchronizeGoogleDocument(runtime, url, source, base, markdown),
+    synchronize: (runtime, url, source, base, markdown, _path, observeRemote, requireConditionalWrite) => synchronizeGoogleDocument(runtime, url, source, base, markdown, observeRemote, requireConditionalWrite),
 });
 //# sourceMappingURL=google-docs.js.map

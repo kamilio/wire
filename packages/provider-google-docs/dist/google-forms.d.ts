@@ -24,7 +24,11 @@ export declare const googleFormsService: Readonly<{
         service: string;
         identifier: string;
         type: import("wire-core").ResourceType;
-    }>, base: JsonValue, markdown: string, markdownPath: string): Promise<import("wire-core").SynchronizedDocument>;
+    }>, base: JsonValue, markdown: string, markdownPath: string, observeRemote?: (remote: Readonly<{
+        title: string;
+        markdown: string;
+        data: JsonValue;
+    }>) => void, requireConditionalWrite?: boolean): Promise<import("wire-core").SynchronizedDocument>;
     upload?(input: RuntimeCapabilities, markdown: string, markdownPath: string): Promise<import("wire-core").UploadedDocument>;
 }>;
 //# sourceMappingURL=google-forms.d.ts.map

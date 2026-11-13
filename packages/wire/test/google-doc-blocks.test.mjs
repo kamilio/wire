@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { WireMergeConflict } from "wire-core";
 import { nativeDocMarkdownEqual } from "../../provider-google-docs/dist/native-docs.js";
 import { docBlocks, docChanges, mergeDocBlocks } from "../../provider-google-docs/dist/doc-blocks.js";
 
@@ -24,9 +25,9 @@ test("overlapping changes, including competing inserts and ambiguous repeated de
     ["A\nNew B\nC\n", "A\nOther B\nC\n"],
     ["A\nC\n", "A\nOther B\nC\n"],
     ["A\nX\nB\nC\n", "A\nY\nB\nC\n"],
-  ]) assert.throws(() => mergeDocBlocks(base, local, remote), /changed remotely and locally/);
+  ]) assert.throws(() => mergeDocBlocks(base, local, remote), WireMergeConflict);
   assert.throws(() => mergeDocBlocks("A\nsame\nsame\nZ\n", "A\nchanged\nsame\nZ\n", "A\nsame\nZ\n"), /changed remotely and locally/);
-  assert.throws(() => mergeDocBlocks(base, "A\nNew B\nC\n", "A\nB\nB\nC\n"), /changed remotely and locally/);
+  assert.throws(() => mergeDocBlocks(base, "A\nNew B\nC\n", "A\nB\nB\nC\n"), err => !(err instanceof WireMergeConflict) && /changed remotely and locally/.test(err.message));
   assert.equal(mergeDocBlocks(base, "A\nX\nB\nNew C\n", "A\nX\nB\nC\n"), "A\nX\nB\nNew C\n");
 });
 

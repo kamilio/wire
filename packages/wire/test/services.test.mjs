@@ -1,6 +1,7 @@
 import { zip } from "./support/zip.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { WireMergeConflict } from "wire-core";
 import { createCookiesCapability, fetchSource, listAsanaProjects, listAsanaTasks, lookupAsanaUsers, markdownFilename, parseSourceUrl, synchronizeSource } from "../dist/index.js";
 import { serviceCatalog, zoomProvider } from "../dist/index.js";
 
@@ -1119,6 +1120,19 @@ test("google sheets synchronization uploads local-only table edits", async () =>
   assert.deepEqual(requests.map((request) => request.url.pathname), ["/spreadsheets/d/sheet/export", "/spreadsheets/d/sheet/edit", "/spreadsheets/u/0/d/sheet/save", "/spreadsheets/d/sheet/export"]);
 });
 
+test("strict Google Sheets pushes refuse to send an edit without a revision bound to the CSV export", async () => {
+  const rt = runtime(async input => {
+    assert.equal(new URL(input).pathname, "/spreadsheets/d/sheet/export");
+    return exportResponse("Sheet", "csv", "id,name\n1,old\n");
+  });
+  const url = "https://docs.google.com/spreadsheets/d/sheet/edit#gid=7";
+  const base = await fetchSource(rt, url, serviceCatalog);
+  const observed = [];
+  await assert.rejects(synchronizeSource(rt, url, serviceCatalog, base.data, base.markdown.replace("old", "new"), "sheet.md",
+    doc => observed.push(doc), true), /Google Sheets cannot condition a save/);
+  assert.deepEqual(observed, [base]);
+});
+
 test("google sheets synchronization uploads local-only fenced CSV edits", async () => {
   const requests = [];
   let csv = ",Date\nVendor,Old\n";
@@ -1983,13 +1997,16 @@ test("only a verified Docs batch revision can skip later exports; native revisio
 
 test("Docs replans once after a known stale revision and never replays an uncertain write", async () => {
   const mismatch = {error:{code:400,status:"INVALID_ARGUMENT",message:"The required revision ID does not match the latest revision."}};
-  for (const reason of ["before-post", "rejected", "overlap", "busy", "unrelated-400", "wrong-revision-400", "lost-ack", "verification"]) {
+  for (const reason of ["during-export", "before-post", "rejected", "overlap", "busy", "unrelated-400", "wrong-revision-400", "lost-ack", "verification"]) {
     let lines = ["First", "Second"], rev = 1, nativeReads = 0;
-    const batches = [];
+    const batches = [], observed = [];
     const base = lines.join("\n\n"), draft = "First\n\nEdited";
     const rt = docsDriveRuntime(async (input, init) => {
       const u = new URL(input);
-      if (u.pathname.endsWith("/export")) return new Response(lines.join("\n\n"));
+      if (u.pathname.endsWith("/export")) {
+        if (reason === "during-export" && rev === 1) { lines[0] = "Changed during export"; rev++; }
+        return new Response(lines.join("\n\n"));
+      }
       if (u.pathname.endsWith("/comments")) return response({comments:[]});
       if (u.pathname.endsWith(":batchUpdate")) {
         const batch = JSON.parse(init.body);
@@ -2029,18 +2046,28 @@ test("Docs replans once after a known stale revision and never replays an uncert
       });
       return response({documentId:"doc",revisionId:String(rev),tabs:[{tabProperties:{tabId:"t.0"},documentTab:{body:{content}}}]});
     });
-    const sync = synchronizeSource(rt,"https://docs.google.com/document/d/doc/edit",serviceCatalog,{markdown:base},draft,"local.md");
-    if (reason === "rejected" || reason === "before-post") {
+    const sync = synchronizeSource(rt,"https://docs.google.com/document/d/doc/edit",serviceCatalog,{markdown:base},draft,"local.md",doc => observed.push(doc),true);
+    if (["during-export", "rejected", "before-post"].includes(reason)) {
       const result = await sync;
       assert.equal(result.wroteRemote, true);
       assert.equal(result.markdown, lines.join("\n\n"));
       assert.match(lines[0],/^Changed/);
-      assert.equal(nativeReads,2);
+      assert.equal(nativeReads,reason === "during-export" ? 1 : 2);
+      assert.deepEqual(observed.map(doc => doc.data.position_revision), reason === "during-export" ? ["2"] : ["1", "2"]);
+      assert.equal(observed.at(-1).markdown, lines[0] + "\n\nSecond");
       assert.deepEqual(batches.map(b => b.writeControl.requiredRevisionId), reason === "rejected" ? ["1","2"] : ["2"]);
     } else {
       const errors = {overlap:/changed remotely and locally/,busy:/rejected the required revision/, "unrelated-400":/HTTP 400/, "wrong-revision-400":/HTTP 400/,
         "lost-ack":/Disconnected after Google committed/, verification:/save verification failed/};
-      await assert.rejects(sync,errors[reason]);
+      await assert.rejects(sync,error => {
+        assert.match(error.message, errors[reason]);
+        assert.equal(error instanceof WireMergeConflict, reason === "overlap");
+        return true;
+      });
+      if (reason === "overlap") {
+        assert.deepEqual(observed.map(doc => doc.markdown), [base, lines.join("\n\n")]);
+        assert.equal(observed[1].data.position_revision, "2");
+      }
       assert.equal(batches.length, reason === "busy" ? 2 : 1);
       assert.equal(nativeReads, reason === "busy" ? 2 : 1);
       if (reason === "overlap") assert.equal(lines[1],"Changed elsewhere 2");

@@ -1,3 +1,5 @@
+import { WireMergeConflict } from "wire-core";
+
 // Google Markdown exports give paragraphs no persistent IDs. Match the common
 // paragraphs in order; keep tables and fenced code as indivisible blocks.
 export function docBlocks(markdown: string): string[] {
@@ -84,8 +86,12 @@ export function boundedDeletion(base: readonly string[], side: readonly string[]
   return count(side) === count(base)-1;
 }
 
+function conflictMessage(location = ""): string {
+  return `Google Docs changed remotely and locally.${location} Resolve the conflict in Google Docs or the local Markdown file before syncing again.`;
+}
+
 function conflict(location = ""): never {
-  throw new Error(`Google Docs changed remotely and locally.${location} Resolve the conflict in Google Docs or the local Markdown file before syncing again.`);
+  throw new WireMergeConflict(conflictMessage(location));
 }
 
 export function mergeDocBlocks(base: string, local: string, remote: string, sameRendering: (local: string, remote: string) => boolean = (a, b) => a === b): string {
@@ -113,7 +119,7 @@ export function mergeDocBlocks(base: string, local: string, remote: string, same
       const repeated = [...blocks.slice(change.start, change.end), ...change.replacement].some(block =>
         block.trim() && (positions.get(block) === -1 || (positions.has(block) && sidePositions.get(block) === -1)));
       if (repeated && !(change.end === change.start + 1 && !change.replacement.length &&
-          boundedDeletion(blocks, side, side === localBlocks ? remoteBlocks : localBlocks, change.start))) conflict();
+          boundedDeletion(blocks, side, side === localBlocks ? remoteBlocks : localBlocks, change.start))) throw new Error(conflictMessage());
     }
   }
   const all = [...localChanges, ...remoteChanges].sort((a, b) => a.start - b.start || a.end - b.end);

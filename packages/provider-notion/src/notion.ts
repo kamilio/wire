@@ -10,6 +10,6 @@ export const notionService = defineService<RuntimeCapabilities>({
   parse: (url) => Object.freeze({ service: "notion", identifier: notionPageId.exec(url.href)![0]!.replaceAll("-", "").toLowerCase(), type: "document" }),
   fetch: fetchNotionDocument,
   download: downloadNotionDirectory,
-  synchronize: (runtime, url, source, base, markdown, markdownPath) => synchronizeNotionDocument(runtime, url, source, base, markdown, markdownPath),
+  synchronize: synchronizeNotionDocument,
   upload: uploadNotionDocument,
 });

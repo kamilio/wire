@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { WireMergeConflict } from "wire-core";
 
 import {
   buildNotionCreateOperations,
@@ -690,10 +691,49 @@ test("notion fetch and sync read current records instead of stale page chunks", 
 test("notion sync refuses conflicting body edits before writing anything", async () => {
   const page = remoteTree("User's latest body", "Page");
   const submitted = [];
-  await assert.rejects(synchronizeNotionDocument(notionRuntime(page, submitted), "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", notionSource, { markdown: "# Page\n\nOriginal body" }, "# Page\n\nLocal edit", "/workspace/page.md"), /Markdown and Notion changed since last sync/);
+  const observed = [];
+  await assert.rejects(synchronizeNotionDocument(notionRuntime(page, submitted), "https://www.notion.so/Page-34e199a9a61f8012acf4f79101bae370", notionSource, { markdown: "# Page\n\nOriginal body" }, "# Page\n\nLocal edit", "/workspace/page.md", doc => observed.push(doc)), WireMergeConflict);
+  assert.deepEqual(observed.map(doc => doc.markdown), ["# Page\n\nUser's latest body"]);
+  assert.equal(observed[0].data.blocks[1].id, page.children[0].id);
   assert.equal(submitted.length, 0);
 });
 
+
+test("Notion strict pushes cannot overwrite a same-block edit made after the read", async () => {
+  for (const requireConditionalWrite of [true, false]) {
+    const page = remoteTree("Original", "Page");
+    const submitted = [], runtime = notionRuntime(page, submitted);
+    const request = runtime.http.request;
+    let online = "Original";
+    const childId = page.children[0].id;
+    runtime.http.request = async (url, init) => {
+      const response = await request(url, init);
+      if (String(url).endsWith("/getRecordValues") && JSON.parse(init.body).requests[0].id === childId) {
+        const { results } = await response.json();
+        results[0].value.properties.title = [[online]];
+        return Response.json({ results });
+      }
+      if (String(url).endsWith("/saveTransactionsFanout")) {
+        const write = submitted[0].find(op => op.pointer.id === childId && op.path.join("/") === "properties/title");
+        online = write.args.primitiveOp.args[0][0];
+      }
+      return response;
+    };
+    const sync = synchronizeNotionDocument(runtime, "https://www.notion.so/" + notionSource.identifier, notionSource,
+      { markdown: "# Page\n\nOriginal" }, "# Page\n\nLocal", "page.md", doc => {
+        assert.equal(doc.markdown, "# Page\n\nOriginal");
+        online = "Concurrent edit";
+      }, requireConditionalWrite);
+    if (requireConditionalWrite) {
+      await assert.rejects(sync, /Notion cannot condition a save/);
+      assert.equal(online, "Concurrent edit");
+      assert.equal(submitted.length, 0);
+    } else {
+      assert.equal((await sync).wroteRemote, true);
+      assert.equal(online, "Local"); // Legacy save has no revision precondition.
+    }
+  }
+});
 
 test("Notion email mentions become native users, preserve formatting, and survive a second sync", async () => {
   const page = remoteTree("Old body", "Root");
@@ -805,7 +845,10 @@ test("notion comments include paginated threads and replies without becoming pag
   assert.equal(fetched.data.markdown, fetched.markdown);
   assert.deepEqual(fetched.data.blocks.map((block) => block.type), ["page", "text"]);
   const oldMarkdown = fetched.markdown.replace("Latest reply", "Older reply");
-  const refreshed = await synchronizeNotionDocument(runtime, url, notionSource, { markdown: oldMarkdown }, oldMarkdown, "/workspace/page.md");
+  const observed = [];
+  const refreshed = await synchronizeNotionDocument(runtime, url, notionSource, { markdown: oldMarkdown }, oldMarkdown, "/workspace/page.md", doc => observed.push(doc), true);
+  assert.equal(refreshed.wroteRemote, false);
+  assert.equal(observed[0].data.markdown, fetched.markdown);
   assert.equal(refreshed.markdown, fetched.markdown);
   assert.deepEqual(submitted, []);
   const upgraded = await synchronizeNotionDocument(runtime, url, notionSource, { markdown: "# Root\n\nOriginal body" }, "# Root\n\nOriginal body", "/workspace/page.md");

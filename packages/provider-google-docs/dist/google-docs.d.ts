@@ -32,7 +32,11 @@ export declare const googleDocsService: Readonly<{
         service: string;
         identifier: string;
         type: import("wire-core").ResourceType;
-    }>, base: JsonValue, markdown: string, markdownPath: string): Promise<SynchronizedDocument>;
+    }>, base: JsonValue, markdown: string, markdownPath: string, observeRemote?: (remote: Readonly<{
+        title: string;
+        markdown: string;
+        data: JsonValue;
+    }>) => void, requireConditionalWrite?: boolean): Promise<SynchronizedDocument>;
     upload?(input: RuntimeCapabilities, markdown: string, markdownPath: string): Promise<import("wire-core").UploadedDocument>;
 }>;
 //# sourceMappingURL=google-docs.d.ts.map
