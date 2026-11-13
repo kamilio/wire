@@ -2,7 +2,7 @@ export type { DownloadedDocument, DownloadWriter, FetchedDocument, FilesystemLin
 export type { ClockCapability, ConfigurationCapability, Cookie, CookiesCapability, FilesystemCapability, GoogleTokenDocument, GoogleTokensCapability, HttpCapability, InitializedWire, OpenFilesCapability, ProcessCapability, ProcessResult, RuntimeCapabilities, SecretsCapability, SwitchedWireBackend, WatchCapability, WatchHandle, WireBackend, WireConfig, WireWatchConfig, WireWatchMode, WireWorkspace } from "../../../packages/wire-core/src/ports.js";
 export { stableJsonCompact, stableJsonPretty } from "../../../packages/wire-core/src/core/json.js";
 export { normalizeResource, resourceId } from "../../../packages/wire-core/src/core/resource.js";
-export { createServiceRegistry, defineService, defineServiceCatalog, fetchSource, parseSourceUrl, synchronizeSource, uploadSource } from "../../../packages/wire-core/src/core/source.js";
+export { WireMergeConflict, createServiceRegistry, defineService, defineServiceCatalog, fetchSource, parseSourceUrl, synchronizeSource, uploadSource } from "../../../packages/wire-core/src/core/source.js";
 export type { ServiceProvider, ServiceRegistry } from "../../../packages/wire-core/src/core/source.js";
 export { extractRelationships, formatAsanaTask, gmailMessageBody, markdownFilename, slackText, slackTitle } from "../../../packages/wire-core/src/core/transform.js";
 export { createCookiesCapability, detectCookieFormat, parseCookieHeader, parseJsonCookies, parseNetscapeCookies, parsePastedCookieMetadata, parsePastedCookies, repositoryCookiesFile, serializeNetscapeCookies } from "../../../packages/wire-core/src/runtime/cookies.js";

@@ -93,15 +93,30 @@ test("workspace adapter attaches, downloads, syncs, and detaches through shared 
       await mkdir(project, { recursive: true });
       await initializeWire(project, backend, registryPath);
       assert.equal((await loadWireConfig(join(project, ".wire"))).backend, backend);
-      let revision = 0;
+      let revision = 0, uploads = 0, googleText = "Before";
+      const googleDoc = () => ({ title: "Editor Receipt", markdown: googleText, data: { markdown: googleText } });
       const catalog = defineServiceCatalog([defineService({
         name: "notion",
         matches: (url) => url.hostname === "notion.test",
         parse: (url) => ({ service: "notion", identifier: url.pathname.slice(1), type: "document" }),
+        upload: async () => { uploads++; throw new Error("unexpected Notion upload"); },
         fetch: async () => {
           revision += 1;
           return { title: "Attached Page", markdown: \`# Revision \${revision}\\n\`, data: { revision } };
         }
+      }), defineService({
+        name: "google-docs",
+        matches: (url) => url.hostname === "docs.test",
+        parse: (url) => ({ service: "google-docs", identifier: url.pathname.slice(1), type: "document" }),
+        fetch: async () => googleDoc(),
+        synchronize: async (_runtime, _url, _source, base, markdown, _path, observe, strict) => {
+          assert.equal(strict, true);
+          assert.deepEqual(base, { markdown: "Before" });
+          assert.equal(markdown, "After");
+          await observe(googleDoc());
+          googleText = markdown;
+          return { ...googleDoc(), wroteRemote: true };
+        },
       })]);
       const wire = composeWire({
         home: project,
@@ -135,6 +150,17 @@ test("workspace adapter attaches, downloads, syncs, and detaches through shared 
       const detached = await wire.detach(created.path, project);
       assert.equal(detached.summary.action, "detached");
       assert.deepEqual(await wire.listResources(project), []);
+
+      const file = (await wire.attach("https://docs.test/editor", project, true)).path;
+      const buffer = await readFile(file, "utf8");
+      assert.match(buffer, /<!-- wire-editor-basis:/);
+      await writeFile(file, buffer.replace("Before", "After"));
+      assert.equal((await wire.sync(file, project)).summary.action, "uploaded");
+      assert.equal(googleText, "After");
+      const copy = join(project, "copy.md");
+      await writeFile(copy, buffer);
+      await assert.rejects(wire.sync(copy, project), /receipt/);
+      assert.equal(uploads, 0);
     }
   `);
   const bundle = join(outRoot, "harness.mjs");

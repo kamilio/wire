@@ -344,8 +344,8 @@ var require_errors = __commonJS({
       code: {
         enumerable: true,
         get: function() {
-          var code = DOMExceptionNames.indexOf(this.name);
-          if (isValidDomExceptionCode(code)) return code;
+          var code3 = DOMExceptionNames.indexOf(this.name);
+          if (isValidDomExceptionCode(code3)) return code3;
           return 0;
         }
       }
@@ -658,32 +658,32 @@ var require_dom = __commonJS({
     function validateAndExtract(namespace, qualifiedName) {
       validateQualifiedName(qualifiedName);
       namespace = namespace || null;
-      var prefix = null;
+      var prefix2 = null;
       var localName = qualifiedName;
       if (qualifiedName.indexOf(":") >= 0) {
         var splitResult = qualifiedName.split(":");
-        prefix = splitResult[0];
+        prefix2 = splitResult[0];
         localName = splitResult[1];
       }
-      if (prefix !== null && namespace === null) {
+      if (prefix2 !== null && namespace === null) {
         throw new DOMException(DOMException.NAMESPACE_ERR, "prefix is non-null and namespace is null");
       }
-      if (prefix === "xml" && namespace !== conventions.NAMESPACE.XML) {
+      if (prefix2 === "xml" && namespace !== conventions.NAMESPACE.XML) {
         throw new DOMException(DOMException.NAMESPACE_ERR, 'prefix is "xml" and namespace is not the XML namespace');
       }
-      if ((prefix === "xmlns" || qualifiedName === "xmlns") && namespace !== conventions.NAMESPACE.XMLNS) {
+      if ((prefix2 === "xmlns" || qualifiedName === "xmlns") && namespace !== conventions.NAMESPACE.XMLNS) {
         throw new DOMException(
           DOMException.NAMESPACE_ERR,
           'either qualifiedName or prefix is "xmlns" and namespace is not the XMLNS namespace'
         );
       }
-      if (namespace === conventions.NAMESPACE.XMLNS && prefix !== "xmlns" && qualifiedName !== "xmlns") {
+      if (namespace === conventions.NAMESPACE.XMLNS && prefix2 !== "xmlns" && qualifiedName !== "xmlns") {
         throw new DOMException(
           DOMException.NAMESPACE_ERR,
           'namespace is the XMLNS namespace and neither qualifiedName nor prefix is "xmlns"'
         );
       }
-      return [namespace, prefix, localName];
+      return [namespace, prefix2, localName];
     }
     function copy(src, dest) {
       for (var p in src) {
@@ -1752,13 +1752,13 @@ var require_dom = __commonJS({
        * @see https://www.w3.org/TR/DOM-Level-3-Core/core.html#Node3-lookupNamespaceURI
        * @prettierignore
        */
-      lookupNamespaceURI: function(prefix) {
+      lookupNamespaceURI: function(prefix2) {
         var el = this;
         while (el) {
           var map = el._nsMap;
           if (map) {
-            if (hasOwn(map, prefix)) {
-              return map[prefix];
+            if (hasOwn(map, prefix2)) {
+              return map[prefix2];
             }
           }
           el = el.nodeType == ATTRIBUTE_NODE ? el.ownerDocument : el.parentNode;
@@ -1787,8 +1787,8 @@ var require_dom = __commonJS({
        * @prettierignore
        */
       isDefaultNamespace: function(namespaceURI) {
-        var prefix = this.lookupPrefix(namespaceURI);
-        return prefix == null;
+        var prefix2 = this.lookupPrefix(namespaceURI);
+        return prefix2 == null;
       },
       /**
        * Compares the reference node with a node with regard to their position in the document and
@@ -2798,11 +2798,11 @@ var require_dom = __commonJS({
       }
       var buf = [];
       var refNode = this.nodeType === DOCUMENT_NODE && this.documentElement || this;
-      var prefix = refNode.prefix;
+      var prefix2 = refNode.prefix;
       var uri = refNode.namespaceURI;
-      if (uri && prefix == null) {
-        var prefix = refNode.lookupPrefix(uri);
-        if (prefix == null) {
+      if (uri && prefix2 == null) {
+        var prefix2 = refNode.lookupPrefix(uri);
+        if (prefix2 == null) {
           var visibleNamespaces = [
             { namespace: uri, prefix: null }
             //{namespace:uri,prefix:''}
@@ -2813,18 +2813,18 @@ var require_dom = __commonJS({
       return buf.join("");
     }
     function needNamespaceDefine(node, isHTML, visibleNamespaces) {
-      var prefix = node.prefix || "";
+      var prefix2 = node.prefix || "";
       var uri = node.namespaceURI;
       if (!uri) {
         return false;
       }
-      if (prefix === "xml" && uri === NAMESPACE.XML || uri === NAMESPACE.XMLNS) {
+      if (prefix2 === "xml" && uri === NAMESPACE.XML || uri === NAMESPACE.XMLNS) {
         return false;
       }
       var i = visibleNamespaces.length;
       while (i--) {
         var ns = visibleNamespaces[i];
-        if (ns.prefix === prefix) {
+        if (ns.prefix === prefix2) {
           return ns.namespace !== uri;
         }
       }
@@ -5454,13 +5454,13 @@ var require_sax = __commonJS({
       if (source.indexOf(g2.UNICODE_REPLACEMENT_CHARACTER) >= 0) {
         errorHandler.warning("Unicode replacement character detected, source encoding issues?");
       }
-      function fixedFromCharCode(code) {
-        if (code > 65535) {
-          code -= 65536;
-          var surrogate1 = 55296 + (code >> 10), surrogate2 = 56320 + (code & 1023);
+      function fixedFromCharCode(code3) {
+        if (code3 > 65535) {
+          code3 -= 65536;
+          var surrogate1 = 55296 + (code3 >> 10), surrogate2 = 56320 + (code3 & 1023);
           return String.fromCharCode(surrogate1, surrogate2);
         } else {
-          return String.fromCharCode(code);
+          return String.fromCharCode(code3);
         }
       }
       function entityReplacer(a2) {
@@ -5576,9 +5576,9 @@ var require_sax = __commonJS({
               var localNSMap = config2.localNSMap;
               domBuilder.endElement(config2.uri, config2.localName, currentTagName);
               if (localNSMap) {
-                for (var prefix in localNSMap) {
-                  if (hasOwn(localNSMap, prefix)) {
-                    domBuilder.endPrefixMapping(prefix);
+                for (var prefix2 in localNSMap) {
+                  if (hasOwn(localNSMap, prefix2)) {
+                    domBuilder.endPrefixMapping(prefix2);
                   }
                 }
               }
@@ -5840,12 +5840,12 @@ var require_sax = __commonJS({
         var value = a.value;
         var nsp = qName.indexOf(":");
         if (nsp > 0) {
-          var prefix = a.prefix = qName.slice(0, nsp);
+          var prefix2 = a.prefix = qName.slice(0, nsp);
           var localName = qName.slice(nsp + 1);
-          var nsPrefix = prefix === "xmlns" && localName;
+          var nsPrefix = prefix2 === "xmlns" && localName;
         } else {
           localName = qName;
-          prefix = null;
+          prefix2 = null;
           nsPrefix = qName === "xmlns" && "";
         }
         a.localName = localName;
@@ -5873,20 +5873,20 @@ var require_sax = __commonJS({
       }
       var nsp = tagName.indexOf(":");
       if (nsp > 0) {
-        prefix = el.prefix = tagName.slice(0, nsp);
+        prefix2 = el.prefix = tagName.slice(0, nsp);
         localName = el.localName = tagName.slice(nsp + 1);
       } else {
-        prefix = null;
+        prefix2 = null;
         localName = el.localName = tagName;
       }
-      var ns = el.uri = currentNSMap[prefix || ""];
+      var ns = el.uri = currentNSMap[prefix2 || ""];
       domBuilder.startElement(ns, localName, tagName, el);
       if (el.closed) {
         domBuilder.endElement(ns, localName, tagName);
         if (localNSMap) {
-          for (prefix in localNSMap) {
-            if (hasOwn(localNSMap, prefix)) {
-              domBuilder.endPrefixMapping(prefix);
+          for (prefix2 in localNSMap) {
+            if (hasOwn(localNSMap, prefix2)) {
+              domBuilder.endPrefixMapping(prefix2);
             }
           }
         }
@@ -6318,9 +6318,9 @@ var require_dom_parser = __commonJS({
       endElement: function(namespaceURI, localName, qName) {
         this.currentElement = this.currentElement.parentNode;
       },
-      startPrefixMapping: function(prefix, uri) {
+      startPrefixMapping: function(prefix2, uri) {
       },
-      endPrefixMapping: function(prefix) {
+      endPrefixMapping: function(prefix2) {
       },
       processingInstruction: function(target, data) {
         var ins = this.doc.createProcessingInstruction(target, data);
@@ -6791,8 +6791,8 @@ var require_directives = __commonJS({
               if (parts.length < 2)
                 return false;
             }
-            const [handle, prefix] = parts;
-            this.tags[handle] = prefix;
+            const [handle, prefix2] = parts;
+            this.tags[handle] = prefix2;
             return true;
           }
           case "%YAML": {
@@ -6842,10 +6842,10 @@ var require_directives = __commonJS({
         const [, handle, suffix] = source.match(/^(.*!)([^!]*)$/s);
         if (!suffix)
           onError(`The ${source} tag has no suffix`);
-        const prefix = this.tags[handle];
-        if (prefix) {
+        const prefix2 = this.tags[handle];
+        if (prefix2) {
           try {
-            return prefix + decodeURIComponent(suffix);
+            return prefix2 + decodeURIComponent(suffix);
           } catch (error) {
             onError(String(error));
             return null;
@@ -6861,9 +6861,9 @@ var require_directives = __commonJS({
        * taking into account current tag prefixes and defaults.
        */
       tagString(tag) {
-        for (const [handle, prefix] of Object.entries(this.tags)) {
-          if (tag.startsWith(prefix))
-            return handle + escapeTagName(tag.substring(prefix.length));
+        for (const [handle, prefix2] of Object.entries(this.tags)) {
+          if (tag.startsWith(prefix2))
+            return handle + escapeTagName(tag.substring(prefix2.length));
         }
         return tag[0] === "!" ? tag : `!<${tag}>`;
       }
@@ -6880,11 +6880,11 @@ var require_directives = __commonJS({
           tagNames = Object.keys(tags);
         } else
           tagNames = [];
-        for (const [handle, prefix] of tagEntries) {
-          if (handle === "!!" && prefix === "tag:yaml.org,2002:")
+        for (const [handle, prefix2] of tagEntries) {
+          if (handle === "!!" && prefix2 === "tag:yaml.org,2002:")
             continue;
-          if (!doc || tagNames.some((tn) => tn.startsWith(prefix)))
-            lines.push(`%TAG ${handle} ${prefix}`);
+          if (!doc || tagNames.some((tn) => tn.startsWith(prefix2)))
+            lines.push(`%TAG ${handle} ${prefix2}`);
         }
         return lines.join("\n");
       }
@@ -6919,14 +6919,14 @@ var require_anchors = __commonJS({
       });
       return anchors;
     }
-    function findNewAnchor(prefix, exclude) {
+    function findNewAnchor(prefix2, exclude) {
       for (let i = 1; true; ++i) {
-        const name = `${prefix}${i}`;
+        const name = `${prefix2}${i}`;
         if (!exclude.has(name))
           return name;
       }
     }
-    function createNodeAnchors(doc, prefix) {
+    function createNodeAnchors(doc, prefix2) {
       const aliasObjects = [];
       const sourceObjects = /* @__PURE__ */ new Map();
       let prevAnchors = null;
@@ -6934,7 +6934,7 @@ var require_anchors = __commonJS({
         onAnchor: (source) => {
           aliasObjects.push(source);
           prevAnchors ?? (prevAnchors = anchorNames(doc));
-          const anchor = findNewAnchor(prefix, prevAnchors);
+          const anchor = findNewAnchor(prefix2, prevAnchors);
           prevAnchors.add(anchor);
           return anchor;
         },
@@ -7634,28 +7634,28 @@ var require_stringifyString = __commonJS({
       return true;
     }
     function doubleQuotedString(value, ctx) {
-      const json = JSON.stringify(value);
+      const json2 = JSON.stringify(value);
       if (ctx.options.doubleQuotedAsJSON)
-        return json;
+        return json2;
       const { implicitKey } = ctx;
       const minMultiLineLength = ctx.options.doubleQuotedMinMultiLineLength;
       const indent = ctx.indent || (containsDocumentMarker(value) ? "  " : "");
       let str = "";
       let start = 0;
-      for (let i = 0, ch = json[i]; ch; ch = json[++i]) {
-        if (ch === " " && json[i + 1] === "\\" && json[i + 2] === "n") {
-          str += json.slice(start, i) + "\\ ";
+      for (let i = 0, ch = json2[i]; ch; ch = json2[++i]) {
+        if (ch === " " && json2[i + 1] === "\\" && json2[i + 2] === "n") {
+          str += json2.slice(start, i) + "\\ ";
           i += 1;
           start = i;
           ch = "\\";
         }
         if (ch === "\\")
-          switch (json[i + 1]) {
+          switch (json2[i + 1]) {
             case "u":
               {
-                str += json.slice(start, i);
-                const code = json.substr(i + 2, 4);
-                switch (code) {
+                str += json2.slice(start, i);
+                const code3 = json2.substr(i + 2, 4);
+                switch (code3) {
                   case "0000":
                     str += "\\0";
                     break;
@@ -7681,26 +7681,26 @@ var require_stringifyString = __commonJS({
                     str += "\\P";
                     break;
                   default:
-                    if (code.substr(0, 2) === "00")
-                      str += "\\x" + code.substr(2);
+                    if (code3.substr(0, 2) === "00")
+                      str += "\\x" + code3.substr(2);
                     else
-                      str += json.substr(i, 6);
+                      str += json2.substr(i, 6);
                 }
                 i += 5;
                 start = i + 1;
               }
               break;
             case "n":
-              if (implicitKey || json[i + 2] === '"' || json.length < minMultiLineLength) {
+              if (implicitKey || json2[i + 2] === '"' || json2.length < minMultiLineLength) {
                 i += 1;
               } else {
-                str += json.slice(start, i) + "\n\n";
-                while (json[i + 2] === "\\" && json[i + 3] === "n" && json[i + 4] !== '"') {
+                str += json2.slice(start, i) + "\n\n";
+                while (json2[i + 2] === "\\" && json2[i + 3] === "n" && json2[i + 4] !== '"') {
                   str += "\n";
                   i += 2;
                 }
                 str += indent;
-                if (json[i + 2] === " ")
+                if (json2[i + 2] === " ")
                   str += "\\";
                 i += 1;
                 start = i + 1;
@@ -7710,7 +7710,7 @@ var require_stringifyString = __commonJS({
               i += 1;
           }
       }
-      str = start ? str + json.slice(start) : json;
+      str = start ? str + json2.slice(start) : json2;
       return implicitKey ? str : foldFlowLines.foldFlowLines(str, indent, foldFlowLines.FOLD_QUOTED, getFoldOptions(ctx, false));
     }
     function singleQuotedString(value, ctx) {
@@ -8925,10 +8925,10 @@ var require_int = __commonJS({
     var stringifyNumber = require_stringifyNumber();
     var intIdentify = (value) => typeof value === "bigint" || Number.isInteger(value);
     var intResolve = (str, offset, radix, { intAsBigInt }) => intAsBigInt ? BigInt(str) : parseInt(str.substring(offset), radix);
-    function intStringify(node, radix, prefix) {
+    function intStringify(node, radix, prefix2) {
       const { value } = node;
       if (intIdentify(value) && value >= 0)
-        return prefix + value.toString(radix);
+        return prefix2 + value.toString(radix);
       return stringifyNumber.stringifyNumber(node);
     }
     var intOct = {
@@ -9390,11 +9390,11 @@ var require_int2 = __commonJS({
       const n = parseInt(str, radix);
       return sign === "-" ? -1 * n : n;
     }
-    function intStringify(node, radix, prefix) {
+    function intStringify(node, radix, prefix2) {
       const { value } = node;
       if (intIdentify(value)) {
         const str = value.toString(radix);
-        return value < 0 ? "-" + prefix + str.substr(1) : prefix + str;
+        return value < 0 ? "-" + prefix2 + str.substr(1) : prefix2 + str;
       }
       return stringifyNumber.stringifyNumber(node);
     }
@@ -10132,11 +10132,11 @@ var require_Document = __commonJS({
           throw new Error(`With a null YAML version, the { schema: Schema } option is required`);
       }
       // json & jsonArg are only used from toJSON()
-      toJS({ json, jsonArg, mapAsMap, maxAliasCount, onAnchor, reviver } = {}) {
+      toJS({ json: json2, jsonArg, mapAsMap, maxAliasCount, onAnchor, reviver } = {}) {
         const ctx = {
           anchors: /* @__PURE__ */ new Map(),
           doc: this,
-          keep: !json,
+          keep: !json2,
           mapAsMap: mapAsMap === true,
           mapKeyWarned: false,
           maxAliasCount: typeof maxAliasCount === "number" ? maxAliasCount : 100
@@ -10181,22 +10181,22 @@ var require_errors2 = __commonJS({
   "../../node_modules/toolcraft/node_modules/yaml/dist/errors.js"(exports2) {
     "use strict";
     var YAMLError = class extends Error {
-      constructor(name, pos, code, message) {
+      constructor(name, pos, code3, message) {
         super();
         this.name = name;
-        this.code = code;
+        this.code = code3;
         this.message = message;
         this.pos = pos;
       }
     };
     var YAMLParseError = class extends YAMLError {
-      constructor(pos, code, message) {
-        super("YAMLParseError", pos, code, message);
+      constructor(pos, code3, message) {
+        super("YAMLParseError", pos, code3, message);
       }
     };
     var YAMLWarning = class extends YAMLError {
-      constructor(pos, code, message) {
-        super("YAMLWarning", pos, code, message);
+      constructor(pos, code3, message) {
+        super("YAMLWarning", pos, code3, message);
       }
     };
     var prettifyError = (src, lc) => (error) => {
@@ -11105,7 +11105,7 @@ var require_resolve_flow_scalar = __commonJS({
       const { offset, type, source, end } = scalar;
       let _type;
       let value;
-      const _onError = (rel, code, msg) => onError(offset + rel, code, msg);
+      const _onError = (rel, code3, msg) => onError(offset + rel, code3, msg);
       switch (type) {
         case "scalar":
           _type = Scalar.Scalar.PLAIN;
@@ -11302,9 +11302,9 @@ var require_resolve_flow_scalar = __commonJS({
     function parseCharCode(source, offset, length, onError) {
       const cc = source.substr(offset, length);
       const ok = cc.length === length && /^[0-9a-fA-F]+$/.test(cc);
-      const code = ok ? parseInt(cc, 16) : NaN;
+      const code3 = ok ? parseInt(cc, 16) : NaN;
       try {
-        return String.fromCodePoint(code);
+        return String.fromCodePoint(code3);
       } catch {
         const raw = source.substr(offset - 2, length + 2);
         onError(offset - 2, "BAD_DQ_ESCAPE", `Invalid escape sequence ${raw}`);
@@ -11626,12 +11626,12 @@ var require_composer = __commonJS({
         this.prelude = [];
         this.errors = [];
         this.warnings = [];
-        this.onError = (source, code, message, warning) => {
+        this.onError = (source, code3, message, warning) => {
           const pos = getErrorPos(source);
           if (warning)
-            this.warnings.push(new errors.YAMLWarning(pos, code, message));
+            this.warnings.push(new errors.YAMLWarning(pos, code3, message));
           else
-            this.errors.push(new errors.YAMLParseError(pos, code, message));
+            this.errors.push(new errors.YAMLParseError(pos, code3, message));
         };
         this.directives = new directives.Directives({ version: options.version || "1.2" });
         this.options = options;
@@ -11793,12 +11793,12 @@ var require_cst_scalar = __commonJS({
     var stringifyString = require_stringifyString();
     function resolveAsScalar(token, strict = true, onError) {
       if (token) {
-        const _onError = (pos, code, message) => {
+        const _onError = (pos, code3, message) => {
           const offset = typeof pos === "number" ? pos : Array.isArray(pos) ? pos[0] : pos.offset;
           if (onError)
-            onError(offset, code, message);
+            onError(offset, code3, message);
           else
-            throw new errors.YAMLParseError([offset, offset + 1], code, message);
+            throw new errors.YAMLParseError([offset, offset + 1], code3, message);
         };
         switch (token.type) {
           case "scalar":
@@ -13844,9 +13844,9 @@ __export(extension_exports, {
 });
 module.exports = __toCommonJS(extension_exports);
 var import_node_child_process3 = require("node:child_process");
-var import_node_fs4 = require("node:fs");
-var import_promises8 = require("node:fs/promises");
-var import_node_path7 = require("node:path");
+var import_node_fs5 = require("node:fs");
+var import_promises10 = require("node:fs/promises");
+var import_node_path9 = require("node:path");
 var import_node_util3 = require("node:util");
 var vscode = __toESM(require("vscode"));
 
@@ -13959,7 +13959,7 @@ function normalizeResource(resource) {
     ),
     urls: Object.freeze([...resource.urls].sort(compareStrings2)),
     filesystem_links: Object.freeze(
-      resource.filesystem_links.map((link2) => Object.freeze({ path: link2.path, role: link2.role, data: cloneObject(link2.data) })).sort((left, right) => compareStrings2(left.path, right.path) || compareStrings2(left.role, right.role))
+      resource.filesystem_links.map((link4) => Object.freeze({ path: link4.path, role: link4.role, data: cloneObject(link4.data) })).sort((left, right) => compareStrings2(left.path, right.path) || compareStrings2(left.role, right.role))
     ),
     data: Object.freeze(
       resource.data.map((item) => Object.freeze({ namespace: item.namespace, key: item.key, value: cloneValue(item.value) })).sort((left, right) => compareStrings2(left.namespace, right.namespace) || compareStrings2(left.key, right.key))
@@ -13970,6 +13970,15 @@ function normalizeResource(resource) {
       ).sort((left, right) => compareStrings2(left.type, right.type) || compareStrings2(left.target_id, right.target_id))
     )
   });
+}
+
+// ../wire-core/src/core/editor-receipts.ts
+var receiptEnvelope = /<!--[ \t]*wire-editor-basis\b/gi;
+var hasEditorReceipt = (text3) => text3.search(receiptEnvelope) >= 0;
+var invalidReceipt = () => new Error("Invalid Wire editor receipt. The file was kept. Restore its original receipt or reconcile a plain copy before syncing.");
+function plainMarkdown(text3) {
+  if (hasEditorReceipt(text3)) throw invalidReceipt();
+  return text3;
 }
 
 // ../wire-core/src/core/source.ts
@@ -14004,17 +14013,25 @@ function fetchSource(input, value, catalog) {
   const service = serviceForUrl(url, catalog);
   return service.fetch(input, value, service.parse(url));
 }
-function synchronizeSource(input, value, catalog, base, markdown, markdownPath) {
+function synchronizeSource(input, value, catalog, base, markdown, markdownPath, observeRemote, requireConditionalWrite) {
+  plainMarkdown(markdown);
   const url = new URL(value);
   const service = serviceForUrl(url, catalog);
   const source = service.parse(url);
-  return service.synchronize === void 0 ? service.fetch(input, value, source) : service.synchronize(input, value, source, base, markdown, markdownPath);
+  return service.synchronize === void 0 ? service.fetch(input, value, source) : service.synchronize(input, value, source, base, markdown, markdownPath, observeRemote, requireConditionalWrite);
 }
 function uploadSource(input, catalog, markdown, markdownPath) {
+  plainMarkdown(markdown);
+  const header = /^(?:\uFEFF)?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(markdown)?.[1];
+  if (header && /^google_doc:/m.test(header) && /^google_drive_folder:/m.test(header)) {
+    throw new Error("This file is already bound to Google Drive. Use its existing sync owner.");
+  }
   const service = catalog.find((item) => item.name === "notion" && item.upload !== void 0);
   if (service === void 0 || service.upload === void 0) throw new Error("No Notion upload service configured");
   return service.upload(input, markdown, markdownPath);
 }
+var WireMergeConflict = class extends Error {
+};
 
 // ../wire-core/src/core/transform.ts
 function markdownFilename(title2) {
@@ -14285,31 +14302,31 @@ var ChromeConnection = class {
     });
   }
   opened() {
-    return new Promise((resolve5, reject) => {
-      this.socket.addEventListener("open", () => resolve5(), { once: true });
+    return new Promise((resolve7, reject) => {
+      this.socket.addEventListener("open", () => resolve7(), { once: true });
       this.socket.addEventListener("error", (event) => reject(event), { once: true });
     });
   }
   request(method, params = {}) {
     const id = this.nextId;
     this.nextId += 1;
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve7, reject) => {
       if (this.closed) {
         reject(new Error("Chrome window closed before login completed"));
         return;
       }
-      this.pending.set(id, { resolve: resolve5, reject });
+      this.pending.set(id, { resolve: resolve7, reject });
       this.socket.send(JSON.stringify({ id, method, params }));
     });
   }
   event(method) {
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve7, reject) => {
       if (this.closed) {
         reject(new Error("Chrome window closed before login completed"));
         return;
       }
       const events = this.events.get(method) ?? [];
-      events.push({ resolve: resolve5, reject });
+      events.push({ resolve: resolve7, reject });
       this.events.set(method, events);
     });
   }
@@ -14318,19 +14335,19 @@ var ChromeConnection = class {
   }
 };
 function devtoolsUrl(stderr2) {
-  return new Promise((resolve5, reject) => {
+  return new Promise((resolve7, reject) => {
     let contents = "";
     stderr2.setEncoding("utf8");
     stderr2.on("data", (chunk) => {
       contents += chunk;
       const match = /DevTools listening on (ws:\/\/[^\s]+)/.exec(contents);
-      if (match !== null) resolve5(match[1]);
+      if (match !== null) resolve7(match[1]);
     });
     stderr2.on("end", () => reject(new Error(contents === "" ? "Chrome exited before DevTools started. A Wire Chrome window is already open from a previous login; close it and retry." : contents)));
   });
 }
 async function closeChrome(chrome, connection, pageConnection) {
-  const closed = new Promise((resolve5) => chrome.once("exit", resolve5));
+  const closed = new Promise((resolve7) => chrome.once("exit", resolve7));
   if (pageConnection !== void 0) pageConnection.close();
   connection.close();
   process.kill(-chrome.pid, "SIGTERM");
@@ -14364,7 +14381,7 @@ async function confirmSaveLogin() {
   return /^(y|yes)$/i.test(answer.trim());
 }
 function sleep(milliseconds) {
-  return new Promise((resolve5) => setTimeout(resolve5, milliseconds));
+  return new Promise((resolve7) => setTimeout(resolve7, milliseconds));
 }
 async function headlessChromeConnection(environment2) {
   const chrome = (0, import_node_child_process.spawn)(chromeExecutable, [`--user-data-dir=${chromeUserDataDir(environment2)}`, "--remote-debugging-port=0", "--headless=new", "--no-first-run", "--no-default-browser-check", "about:blank"], { detached: true, stdio: ["ignore", "ignore", "pipe"] });
@@ -14408,7 +14425,7 @@ Log in to ${extraction.service} in the opened Chrome window, then quit Chrome (C
     process.kill(-chrome.pid, "SIGTERM");
   };
   process.on("SIGINT", interrupt);
-  await new Promise((resolve5) => chrome.once("exit", resolve5));
+  await new Promise((resolve7) => chrome.once("exit", resolve7));
   process.off("SIGINT", interrupt);
   await sleep(500);
   const harvest = await headlessChromeConnection(environment2);
@@ -14433,8 +14450,8 @@ async function extractChromeCookies(environment2, extraction) {
   let interruptResult;
   let interruptResolve = () => {
   };
-  const interruptPromise = new Promise((resolve5) => {
-    interruptResolve = resolve5;
+  const interruptPromise = new Promise((resolve7) => {
+    interruptResolve = resolve7;
   });
   let captureCookies;
   const captureInterrupt = async () => {
@@ -14584,7 +14601,7 @@ function compareStrings3(left, right) {
 function storageResource(resource) {
   return normalizeResource({
     ...resource,
-    filesystem_links: resource.filesystem_links.map((link2) => ({ ...link2, path: link2.path.replaceAll(import_node_path.sep, "/") }))
+    filesystem_links: resource.filesystem_links.map((link4) => ({ ...link4, path: link4.path.replaceAll(import_node_path.sep, "/") }))
   });
 }
 function fileResourceName(resourceId3) {
@@ -14600,7 +14617,7 @@ function assertUnique(values2) {
 function assertUniqueFileResource(resource) {
   assertUnique(resource.identifiers.map((identifier2) => JSON.stringify([identifier2.service, identifier2.identifier])));
   assertUnique(resource.urls);
-  assertUnique(resource.filesystem_links.map((link2) => JSON.stringify([link2.path, link2.role])));
+  assertUnique(resource.filesystem_links.map((link4) => JSON.stringify([link4.path, link4.role])));
   assertUnique(resource.data.map((item) => JSON.stringify([item.namespace, item.key])));
   assertUnique(resource.relationships.map((relationship) => JSON.stringify([resource.id, relationship.target_id, relationship.type])));
 }
@@ -14693,7 +14710,7 @@ var SqliteRegistry = class {
     const insertUrl = database.prepare("INSERT INTO resource_urls (resource_id, url) VALUES (?, ?)");
     for (const url of normalized.urls) insertUrl.run(normalized.id, url);
     const insertLink = database.prepare("INSERT INTO filesystem_links (resource_id, path, role, data_json) VALUES (?, ?, ?, ?)");
-    for (const link2 of normalized.filesystem_links) insertLink.run(normalized.id, link2.path, link2.role, stableJsonCompact(link2.data));
+    for (const link4 of normalized.filesystem_links) insertLink.run(normalized.id, link4.path, link4.role, stableJsonCompact(link4.data));
     const insertData = database.prepare("INSERT INTO resource_data (resource_id, namespace, key, value_json) VALUES (?, ?, ?, ?)");
     for (const item of normalized.data) insertData.run(normalized.id, item.namespace, item.key, stableJsonCompact(item.value));
     const insertRelationship = database.prepare("INSERT INTO resource_relationships (source_id, target_id, type, data_json) VALUES (?, ?, ?, ?)");
@@ -14794,7 +14811,7 @@ var SqliteRegistry = class {
       type: row.type,
       identifiers: identifiers.map((identifier2) => ({ service: identifier2.service, identifier: identifier2.identifier })),
       urls: urls.map((item) => item.url),
-      filesystem_links: links.map((link2) => ({ path: link2.path, role: link2.role, data: JSON.parse(link2.data_json) })),
+      filesystem_links: links.map((link4) => ({ path: link4.path, role: link4.role, data: JSON.parse(link4.data_json) })),
       data: data.map((item) => ({ namespace: item.namespace, key: item.key, value: JSON.parse(item.value_json) })),
       relationships: relationships.map((relationship) => ({ target_id: relationship.target_id, type: relationship.type, data: JSON.parse(relationship.data_json) }))
     };
@@ -14825,10 +14842,26 @@ var FileRegistry = class {
     }
     const tempPath = (0, import_node_path.join)(this.path, (0, import_node_crypto.randomUUID)());
     const handle = await (0, import_promises3.open)(tempPath, "wx", 384);
-    await handle.writeFile(`${stableJsonPretty(normalized)}
+    try {
+      try {
+        await handle.writeFile(`${stableJsonPretty(normalized)}
 `, "utf8");
-    await handle.close();
-    await (0, import_promises3.rename)(tempPath, this.resourcePath(normalized.id));
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await (0, import_promises3.rename)(tempPath, this.resourcePath(normalized.id));
+      const directory = await (0, import_promises3.open)(this.path, "r");
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
+    } finally {
+      await (0, import_promises3.unlink)(tempPath).catch((error) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+    }
     return normalized;
   }
   async rekey(previous, identifier2) {
@@ -14870,7 +14903,7 @@ var FileRegistry = class {
   }
   async findByPath(path) {
     const normalizedPath = path.replaceAll(import_node_path.sep, "/");
-    return (await this.listResources()).filter((resource) => resource.filesystem_links.some((link2) => link2.path === normalizedPath));
+    return (await this.listResources()).filter((resource) => resource.filesystem_links.some((link4) => link4.path === normalizedPath));
   }
   async listResources() {
     const filenames = (await (0, import_promises3.readdir)(this.path)).filter((filename) => (0, import_node_path.extname)(filename) === ".json").sort(compareStrings3);
@@ -14906,6 +14939,10 @@ function canonicalPath(path) {
   if ((0, import_node_fs2.existsSync)(resolved)) return (0, import_node_fs2.realpathSync)(resolved);
   return (0, import_node_path2.join)(canonicalPath((0, import_node_path2.dirname)(resolved)), (0, import_node_path2.basename)(resolved));
 }
+function protectHistory(root, path) {
+  const history = canonicalPath((0, import_node_path2.join)(root, "history")), registry = canonicalPath(path);
+  if (registry === history || registry.startsWith(history + import_node_path2.sep) || history.startsWith(registry + import_node_path2.sep)) throw new Error("The Wire registry must not overlap private document history.");
+}
 async function discoverWireRoot(path, home) {
   const homePath = canonicalPath(home);
   let currentPath = canonicalPath(path);
@@ -14933,6 +14970,7 @@ async function openWireRegistry(path, home) {
   const wireRoot2 = await discoverWireRoot(path, home);
   const config2 = await loadWireConfig(wireRoot2);
   const registryPath = (0, import_node_path2.join)(wireRoot2, config2.path);
+  protectHistory(wireRoot2, registryPath);
   if (config2.backend === "sqlite") return new SqliteRegistry(registryPath);
   if (config2.backend === "files") return new FileRegistry(registryPath);
   throw new Error(config2.backend);
@@ -14940,6 +14978,7 @@ async function openWireRegistry(path, home) {
 async function initializeWire(path, backend, registryPath) {
   const wireRoot2 = (0, import_node_path2.join)(canonicalPath(path), ".wire");
   await (0, import_promises4.mkdir)(wireRoot2, { recursive: true });
+  protectHistory(wireRoot2, (0, import_node_path2.join)(wireRoot2, registryPath));
   const configPath = (0, import_node_path2.join)(wireRoot2, "config.json");
   if ((0, import_node_fs2.existsSync)(configPath) && (0, import_node_fs2.statSync)(configPath).isFile()) {
     const existing = await loadWireConfig(wireRoot2);
@@ -14957,8 +14996,405 @@ async function initializeWire(path, backend, registryPath) {
 }
 
 // ../wire-core/src/operations.ts
-var import_node_crypto2 = require("node:crypto");
+var import_node_crypto5 = require("node:crypto");
+var import_node_path4 = require("node:path");
+
+// ../wire-core/src/storage/history.ts
+var import_node_crypto4 = require("node:crypto");
+var import_node_fs3 = require("node:fs");
+var import_node_os = require("node:os");
 var import_node_path3 = require("node:path");
+var import_promises5 = require("node:fs/promises");
+
+// ../wire-core/src/storage/editor-receipts.ts
+var import_node_crypto2 = require("node:crypto");
+var prefix = "wire-editor-basis:";
+function editorView(raw, receipts) {
+  if (!receipts) return { markdown: plainMarkdown(raw), shown: null, base: null };
+  const mark = /\n<!-- wire-editor-basis:v1:([a-f0-9]{48}) -->/.exec(raw);
+  if (!mark || raw.match(receiptEnvelope)?.length !== 1) throw invalidReceipt();
+  const record = receipts[mark[1]];
+  if (!record || record.crlf !== (raw[mark.index - 1] === "\r")) throw invalidReceipt();
+  const suffix = raw.slice(mark.index + mark[0].length);
+  if (suffix && !/^(?:\r\n|\n)/.test(suffix)) throw invalidReceipt();
+  return { markdown: raw.slice(0, mark.index - Number(record.crlf)) + suffix, shown: record.shown, base: record.base };
+}
+function editorFile(text3, receipts, shown, base) {
+  plainMarkdown(text3);
+  const crlf = text3.endsWith("\r") || text3.includes("\r\n");
+  const existing = Object.entries(receipts).find(([, r]) => r.shown === shown && r.base === base && r.crlf === crlf);
+  const key2 = existing?.[0] ?? (0, import_node_crypto2.randomBytes)(24).toString("hex");
+  receipts[key2] = { shown, base, crlf };
+  return text3 + (crlf ? "\r\n" : "\n") + "<!-- " + prefix + "v1:" + key2 + " -->";
+}
+
+// ../wire-core/src/storage/history-integrity.ts
+var import_node_crypto3 = require("node:crypto");
+var digest = /^[a-f0-9]{64}$/;
+var transactionId = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+function validateRefs(refs) {
+  const corrupt = () => {
+    throw new Error("Corrupt Wire history references. Restore the private history from a backup before syncing.");
+  };
+  const known = /* @__PURE__ */ new Set();
+  if (!refs || !Array.isArray(refs.revisions)) return corrupt();
+  for (const r of refs.revisions) {
+    if (!r || !digest.test(r.blob) || !Array.isArray(r.parents) || r.parents.some((p) => !known.has(p)) || known.has(r.id)) return corrupt();
+    if ((0, import_node_crypto3.createHash)("sha256").update(JSON.stringify([r.kind, r.blob, r.parents])).digest("hex") !== r.id) return corrupt();
+    known.add(r.id);
+  }
+  for (const ref of [refs.base, refs.remote, refs.draft, refs.resolutionParent, refs.editorDraft]) if (ref != null && !known.has(ref)) return corrupt();
+  for (const receipts of [refs.editorReceipts, refs.retiredEditorReceipts]) if (receipts !== void 0) {
+    if (!receipts || typeof receipts !== "object" || Array.isArray(receipts)) return corrupt();
+    for (const [key2, record] of Object.entries(receipts)) {
+      if (!/^[a-f0-9]{48}$/.test(key2) || !record || typeof record.crlf !== "boolean" || !known.has(record.shown) || !known.has(record.base)) return corrupt();
+    }
+  }
+  if (refs.conflict && ![refs.conflict.base, refs.conflict.local, refs.conflict.remote].every((ref) => known.has(ref))) return corrupt();
+}
+
+// ../wire-core/src/storage/history.ts
+var hash = (value) => (0, import_node_crypto4.createHash)("sha256").update(value).digest("hex");
+var code = (error) => error.code;
+var missing = (error) => code(error) === "ENOENT";
+async function exists(path) {
+  return (0, import_promises5.lstat)(path).then(() => true, (e) => {
+    if (missing(e)) return false;
+    throw e;
+  });
+}
+async function privateDirectory(path) {
+  try {
+    await (0, import_promises5.mkdir)(path, { mode: 448 });
+  } catch (e) {
+    if (code(e) !== "EEXIST") throw e;
+  }
+  const info = await (0, import_promises5.lstat)(path);
+  if (!info.isDirectory() || (info.mode & 63) !== 0) throw new Error("Unsafe Wire history directory: " + path);
+}
+async function syncDir(path) {
+  const fd = await (0, import_promises5.open)(path, "r");
+  try {
+    await fd.sync();
+  } finally {
+    await fd.close();
+  }
+}
+async function write(path, value, mode = 384) {
+  const fd = await (0, import_promises5.open)(path, "wx", mode);
+  try {
+    await fd.writeFile(value);
+    await fd.sync();
+  } finally {
+    await fd.close();
+  }
+}
+async function json(path, value) {
+  const tmp = (0, import_node_path3.join)((0, import_node_path3.dirname)(path), (0, import_node_crypto4.randomUUID)());
+  try {
+    await write(tmp, JSON.stringify(value));
+    await (0, import_promises5.rename)(tmp, path);
+    await syncDir((0, import_node_path3.dirname)(path));
+  } finally {
+    await (0, import_promises5.rm)(tmp, { force: true });
+  }
+}
+async function working(path) {
+  let fd;
+  try {
+    fd = await (0, import_promises5.open)(path, import_node_fs3.constants.O_RDONLY | import_node_fs3.constants.O_NOFOLLOW | import_node_fs3.constants.O_NONBLOCK);
+  } catch (e) {
+    if (missing(e)) return null;
+    throw e;
+  }
+  try {
+    if (!(await fd.stat()).isFile()) throw new Error("Expected a regular Markdown file: " + path);
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await fd.readFile());
+  } finally {
+    await fd.close();
+  }
+}
+var empty = () => ({ base: null, draft: null, remote: null, conflict: null, strict: false, revisions: [], resolution: null, resolutionParent: null });
+async function withHistoryLock(root, key2, run) {
+  const dir = (0, import_node_path3.join)(root, "history");
+  await privateDirectory(dir);
+  const own = (0, import_node_os.hostname)() + ":" + process.pid + ":" + (0, import_node_crypto4.randomUUID)();
+  const lock = (0, import_node_path3.join)(dir, "lock-" + hash(key2));
+  for (let n = 0; ; n++) {
+    const path = lock + (n ? "." + n : "");
+    try {
+      await (0, import_promises5.symlink)(own, path);
+    } catch (e) {
+      if (code(e) !== "EEXIST") throw e;
+      let owner;
+      try {
+        owner = await (0, import_promises5.readlink)(path);
+      } catch (r) {
+        if (missing(r)) {
+          n--;
+          continue;
+        }
+        throw r;
+      }
+      const [host, pid] = owner.split(":");
+      if (host === (0, import_node_os.hostname)() && /^\d+$/.test(pid ?? "")) {
+        try {
+          process.kill(Number(pid), 0);
+        } catch (k2) {
+          if (code(k2) === "ESRCH") {
+            if (await (0, import_promises5.readlink)(path).catch(() => "") === owner) continue;
+            n--;
+            continue;
+          }
+        }
+      }
+      throw new Error("Another Wire operation owns this document. Retry when it finishes.");
+    }
+    try {
+      return await run();
+    } finally {
+      await (0, import_promises5.unlink)(path);
+    }
+  }
+}
+var DocumentHistory = class _DocumentHistory {
+  constructor(root, id, now) {
+    this.id = id;
+    this.now = now;
+    this.dir = (0, import_node_path3.join)(root, "history", hash(id));
+  }
+  dir;
+  refs = empty();
+  static async load(root, id, now) {
+    const history = new _DocumentHistory(root, id, now);
+    await privateDirectory((0, import_node_path3.join)(root, "history"));
+    await privateDirectory(history.dir);
+    const raw = await working((0, import_node_path3.join)(history.dir, "refs.json"));
+    if (raw !== null) {
+      history.refs = JSON.parse(raw);
+      validateRefs(history.refs);
+    }
+    return history;
+  }
+  async save() {
+    await json((0, import_node_path3.join)(this.dir, "refs.json"), this.refs);
+  }
+  async revision(kind, markdown, parents) {
+    plainMarkdown(markdown);
+    const blob = hash(markdown), ancestry = [...new Set(parents.filter((p) => p !== null))];
+    if (ancestry.length === 1 && this.refs.revisions.find((r) => r.id === ancestry[0])?.blob === blob) return ancestry[0];
+    const id = hash(JSON.stringify([kind, blob, ancestry]));
+    if (!this.refs.revisions.some((r) => r.id === id)) {
+      const path = (0, import_node_path3.join)(this.dir, blob + ".md");
+      if (!await exists(path)) {
+        const tmp = (0, import_node_path3.join)(this.dir, (0, import_node_crypto4.randomUUID)());
+        try {
+          await write(tmp, markdown);
+          await (0, import_promises5.rename)(tmp, path);
+        } finally {
+          await (0, import_promises5.rm)(tmp, { force: true });
+        }
+      }
+      this.refs.revisions.push({ id, kind, at: this.now().toISOString(), blob, parents: ancestry });
+    }
+    return id;
+  }
+  token(raw = null) {
+    return hash(stableJsonCompact([this.refs, raw]));
+  }
+  view(raw) {
+    const view = editorView(raw, this.refs.editorReceipts);
+    for (const ref of [view.shown, view.base]) if (ref && !this.refs.revisions.some((r) => r.id === ref)) throw new Error("Orphaned Wire editor receipt. The file was kept.");
+    return view;
+  }
+  async text(ref) {
+    const r = this.refs.revisions.find((r2) => r2.id === ref);
+    if (!r) throw new Error("Unknown document revision: " + ref);
+    const value = await working((0, import_node_path3.join)(this.dir, r.blob + ".md"));
+    if (value === null || hash(value) !== r.blob) throw new Error("Corrupt Wire history snapshot: " + ref);
+    return value;
+  }
+  async log() {
+    const known = new Set(this.refs.revisions.map((r) => r.blob));
+    const count = this.refs.revisions.length;
+    for (const name of await (0, import_promises5.readdir)(this.dir)) {
+      if (!name.endsWith(".old") || !transactionId.test(name.slice(0, -4))) continue;
+      const path = (0, import_node_path3.join)(this.dir, name);
+      let view;
+      try {
+        const raw = await working(path);
+        if (raw === null) continue;
+        view = editorView(raw, hasEditorReceipt(raw) ? { ...this.refs.retiredEditorReceipts, ...this.refs.editorReceipts } : void 0);
+        if (view.shown && !this.refs.revisions.some((r) => r.id === view.shown)) throw new Error("Orphaned receipt");
+      } catch (cause) {
+        throw new Error("A retained editor save is unreadable. Inspect the private copy: " + path, { cause });
+      }
+      const blob = hash(view.markdown);
+      if (!known.has(blob)) {
+        await this.revision("recovered", view.markdown, [view.shown]);
+        known.add(blob);
+      }
+    }
+    if (count !== this.refs.revisions.length) await this.save();
+    return this.refs.revisions.map(({ blob: _2, ...entry }) => entry).reverse();
+  }
+  async seed(markdown) {
+    if (this.refs.base === null && markdown !== null) {
+      this.refs.base = this.refs.remote = await this.revision("attach", markdown, []);
+      await this.save();
+    }
+  }
+  async captureLocal(markdown, parent = this.refs.draft ?? this.refs.base) {
+    this.refs.draft = await this.revision("local", markdown, [parent]);
+    await this.save();
+    return this.refs.draft;
+  }
+  async observe(remote) {
+    this.refs.remote = await this.revision("remote", remote.markdown, [this.refs.remote ?? this.refs.base]);
+    return this.refs.remote;
+  }
+  async status(path) {
+    const base = this.refs.base;
+    const raw = await working(path);
+    return { path, base, modified: base === null || raw === null || this.view(raw).markdown !== await this.text(base), conflict: this.refs.conflict };
+  }
+  // Private write-ahead intent spans the worktree, registry, and revision pointers.
+  // Moving the actual old inode out first lets us verify what we displaced. link()
+  // publishes only into a vacant name; it cannot overwrite a concurrent editor save.
+  async publish(path, expected, next, refs, resource, put, acknowledged = false) {
+    const token = (0, import_node_crypto4.randomUUID)();
+    const pending = { path, expected, next, refs, resource, token, acknowledged };
+    await json((0, import_node_path3.join)(this.dir, "pending.json"), pending);
+    await this.finish(pending, put);
+  }
+  async detach(path, expected, next, refs, detached, remove) {
+    const intent = { path, expected, next, refs, detached, resource: null, token: (0, import_node_crypto4.randomUUID)(), acknowledged: false };
+    await json((0, import_node_path3.join)(this.dir, "pending.json"), intent);
+    await this.finish(intent, void 0, remove);
+  }
+  async recover(path, put, remove) {
+    const file = (0, import_node_path3.join)(this.dir, "pending.json");
+    const raw = await working(file);
+    if (raw === null) return;
+    const pending = JSON.parse(raw);
+    if (!transactionId.test(pending.token) || typeof pending.next !== "string" || pending.expected !== null && typeof pending.expected !== "string" || typeof pending.acknowledged !== "boolean") throw new Error("Corrupt Wire publication journal.");
+    validateRefs(pending.refs);
+    if (path !== void 0 && (0, import_node_path3.resolve)(path) !== pending.path) throw new Error("Wire publication pending at another path: " + pending.path);
+    if (pending.detached && (pending.detached.id !== this.id || pending.resource || pending.acknowledged || !remove)) throw new Error("Corrupt Wire detach journal.");
+    await this.finish(pending, put, remove);
+    return pending.detached;
+  }
+  async finish(p, put, remove) {
+    const pending = (0, import_node_path3.join)(this.dir, "pending.json"), stage = (0, import_node_path3.join)(this.dir, p.token + ".new"), old = (0, import_node_path3.join)(this.dir, p.token + ".old"), delivered = (0, import_node_path3.join)(this.dir, p.token + ".ok");
+    const cleanup = async () => {
+      await (0, import_promises5.unlink)(pending);
+      await syncDir(this.dir);
+      await (0, import_promises5.rm)(stage, { force: true });
+      await (0, import_promises5.rm)(delivered, { force: true });
+    };
+    const retry = async () => {
+      if (await exists(old)) {
+        try {
+          await (0, import_promises5.link)(old, p.path);
+        } catch (e) {
+          if (code(e) !== "EEXIST") throw e;
+        }
+        if ((await (0, import_promises5.lstat)(old)).isFile()) {
+          const saved = await working(old).catch((e) => {
+            if (e instanceof TypeError) return null;
+            throw e;
+          });
+          if (saved !== null && saved !== p.expected) {
+            let view;
+            try {
+              view = this.view(saved);
+            } catch {
+            }
+            if (view) await this.captureLocal(view.markdown, view.shown ?? void 0);
+          }
+        }
+      }
+      await cleanup();
+      throw new Error("Local file changed during sync: " + (0, import_node_path3.basename)(p.path) + ". Local changes were preserved. Run wire sync again.");
+    };
+    if (!p.acknowledged && !await exists(delivered)) {
+      let current = await working(p.path);
+      if (p.expected === null && current !== null) {
+        if (!await exists(stage)) return retry();
+        const staged = await (0, import_promises5.stat)(stage), installed = await (0, import_promises5.stat)(p.path);
+        if (staged.dev !== installed.dev || staged.ino !== installed.ino) return retry();
+      }
+      if (current !== p.next) {
+        if (!await exists(stage)) {
+          const mode = current === null ? 384 : (await (0, import_promises5.stat)(p.path)).mode & 511;
+          const tmp = (0, import_node_path3.join)(this.dir, (0, import_node_crypto4.randomUUID)());
+          try {
+            await write(tmp, p.next, mode);
+            await (0, import_promises5.rename)(tmp, stage);
+            await syncDir(this.dir);
+          } finally {
+            await (0, import_promises5.rm)(tmp, { force: true });
+          }
+        } else if (await working(stage) !== p.next) {
+          throw new Error("Corrupt prepared Markdown. No file was published.");
+        }
+        if (p.expected !== null && !await exists(old)) {
+          if (current !== p.expected) return retry();
+          try {
+            (0, import_node_fs3.renameSync)(p.path, old);
+          } catch (e) {
+            if (missing(e)) return retry();
+            throw e;
+          }
+          if (!(0, import_node_fs3.lstatSync)(old).isFile() || !(0, import_node_fs3.readFileSync)(old).equals(Buffer.from(p.expected))) return retry();
+          try {
+            (0, import_node_fs3.linkSync)(stage, p.path);
+          } catch (e) {
+            if (code(e) === "EEXIST") return retry();
+            throw e;
+          }
+        } else {
+          if (await exists(old) && await working(old) !== p.expected) return retry();
+          current = await working(p.path);
+          if (current !== null && current !== p.next) return retry();
+          if (current === null) {
+            try {
+              await (0, import_promises5.link)(stage, p.path);
+            } catch (e) {
+              if (code(e) === "EEXIST") return retry();
+              throw e;
+            }
+          }
+        }
+      }
+      await syncDir((0, import_node_path3.dirname)(p.path));
+      await write(delivered, "");
+      await syncDir(this.dir);
+    }
+    if (p.resource) await put(p.resource);
+    this.refs = p.refs;
+    await this.save();
+    if (p.detached) await remove(p.detached);
+    await cleanup();
+  }
+};
+
+// ../wire-core/src/core/owner.ts
+function assertWireOwner(resources, source, service) {
+  const docs = source.service === "google-docs" && source.type === "document";
+  const doc = source["document_id"] ?? source.identifier;
+  for (const resource of resources) {
+    const related = resource.identifiers.filter((id) => id.service === source.service && (id.identifier === source.identifier || docs && resource.type === "document" && id.identifier.split("#tab=")[0] === doc));
+    if (!related.length) continue;
+    const snapshot = resource.data.find((item) => item.namespace === source.service && item.key === "snapshot")?.value;
+    const owner = snapshot && typeof snapshot === "object" && "wire_owner" in snapshot ? snapshot.wire_owner : void 0;
+    if (owner !== service.owner || owner !== void 0 && !related.every((id) => id.identifier === source.identifier)) {
+      throw new Error("Document already has a different sync owner. Use its existing registration.");
+    }
+  }
+}
+
+// ../wire-core/src/operations.ts
 var wireWatchHooks = Symbol("wireWatchHooks");
 async function wireRoot(dependencies, path) {
   const configured = await dependencies.workspace.configuredRoot(path, dependencies.home);
@@ -14973,18 +15409,18 @@ function watchConfig(config2) {
   };
 }
 function primaryLink(resource) {
-  return resource.filesystem_links.find((link2) => link2.role === "primary");
+  return resource.filesystem_links.find((link4) => link4.role === "primary");
 }
 function collisionFilename(title2, service, identifier2) {
   const base = markdownFilename(title2).slice(0, -3);
   const suffix = `${service}-${identifier2}`.replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^-+|-+$/g, "");
-  const compact2 = suffix.length <= 48 ? suffix : `${suffix.slice(0, 32).replace(/[-_.]+$/g, "")}-${(0, import_node_crypto2.createHash)("sha256").update(suffix).digest("hex").slice(0, 10)}`;
+  const compact2 = suffix.length <= 48 ? suffix : `${suffix.slice(0, 32).replace(/[-_.]+$/g, "")}-${(0, import_node_crypto5.createHash)("sha256").update(suffix).digest("hex").slice(0, 10)}`;
   return `${base}-${compact2}.md`;
 }
 async function availableMarkdownPath(directory, title2, service, identifier2, occupied) {
-  const cleanPath = (0, import_node_path3.join)((0, import_node_path3.resolve)(directory), markdownFilename(title2));
+  const cleanPath = (0, import_node_path4.join)((0, import_node_path4.resolve)(directory), markdownFilename(title2));
   if (!await occupied(cleanPath)) return cleanPath;
-  const fallback = (0, import_node_path3.join)((0, import_node_path3.resolve)(directory), collisionFilename(title2, service, identifier2));
+  const fallback = (0, import_node_path4.join)((0, import_node_path4.resolve)(directory), collisionFilename(title2, service, identifier2));
   let candidate = fallback;
   let number = 2;
   while (await occupied(candidate)) candidate = `${fallback.slice(0, -3)}-${number++}.md`;
@@ -15068,41 +15504,72 @@ function errorMessage(error) {
   if (typeof error === "object" && error !== null) return JSON.stringify(error);
   return String(error);
 }
+var sourceLock = (source) => source.service === "google-docs" && source.type === "document" ? "google-docs:" + String(source["document_id"] ?? source.identifier.split("#tab=")[0]) : resourceId(source);
 function composeWire(dependencies) {
-  const store = async (url, path, fetched, previousMarkdown, action, fixedOutputPath, summaryMarkdown, summaryAfterMarkdown) => {
+  const durable = (registry) => registry instanceof FileRegistry || registry instanceof SqliteRegistry;
+  const locked = async (root, registry, key2, fn) => durable(registry) ? withHistoryLock(root, key2, fn) : fn();
+  const owner = async (registry, source, url) => assertWireOwner(await registry.listResources(), source, dependencies.catalog.find((s) => s.matches(new URL(url))));
+  const historyFor = async (root, registry, source) => durable(registry) ? DocumentHistory.load(root, resourceId(source), dependencies.now) : null;
+  const removeDetached = (registry) => async (before) => {
+    const current = (await registry.listResources()).find((r) => r.id === before.id);
+    if (!current) return;
+    if (stableJsonCompact(current) !== stableJsonCompact(before)) throw new Error("Registration changed during detach. The newer registration was kept.");
+    await registry.delete(before.id);
+  };
+  const restore = async (root, registry, source, path) => {
+    const history = await historyFor(root, registry, source);
+    await history?.recover(path, (r) => registry.put(r), removeDetached(registry));
+    return history;
+  };
+  const checkReceiptLink = (resource, h) => {
+    if (resource && primaryLink(resource).data["editor_receipts"] === true !== !!h?.refs.editorReceipts) throw new Error("Missing Wire editor receipt history or link registration. Restore the link and its private history before syncing.");
+  };
+  const store = async (url, path, fetched, previousMarkdown, action, fixedOutputPath, summaryMarkdown, summaryAfterMarkdown, history, enableReceipts = false, expectedRaw) => {
     const source = parseSourceUrl(url, dependencies.catalog);
     const root = await wireRoot(dependencies, path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const current = findResource(await registry.listResources(), source, dependencies.catalog);
     if (current && legacyDefaultTab(current, dependencies.catalog)) throw new Error(`Sync ${primaryLink(current).path} first to migrate its default-tab registration.`);
     let outputPath;
-    if (current !== null) outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(current).path);
+    if (current !== null) outputPath = (0, import_node_path4.join)((0, import_node_path4.dirname)(root), primaryLink(current).path);
     else if (fixedOutputPath !== void 0) outputPath = fixedOutputPath;
     else {
       outputPath = await availableMarkdownPath(path, fetched.title, source.service, source.identifier, async (candidate) => await dependencies.filesystem.exists(candidate) || (await registry.findByPath(dependencies.workspace.relativePath(candidate, root))).length > 0);
     }
     const relativePath = dependencies.workspace.relativePath(outputPath, root);
-    const onDisk = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
+    checkReceiptLink(current, history);
+    plainMarkdown(fetched.markdown);
+    const raw = history ? await working(outputPath) : await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
+    const view2 = raw === null ? null : history ? history.view(raw) : editorView(raw);
+    const onDisk = view2?.markdown ?? null;
+    if (expectedRaw !== void 0 && raw !== expectedRaw && (enableReceipts || history?.refs.editorReceipts)) throw new Error("Local file changed during sync; run wire sync again.");
+    if (!current && fixedOutputPath === void 0 && onDisk !== null) throw new Error("Another file appeared at the proposed attachment path; retry attach.");
     const previous = (previousMarkdown === void 0 ? onDisk : previousMarkdown) ?? "";
     const concurrentEdit = previousMarkdown !== void 0 && onDisk !== previousMarkdown && onDisk !== fetched.markdown;
     const retry = `Local file changed during sync: ${relativePath}. Local changes were preserved. Run wire sync again.`;
-    if (concurrentEdit && current !== null && fetched.markdown !== previousMarkdown) throw new Error(retry);
+    if (concurrentEdit && current !== null && fetched.markdown !== previousMarkdown) {
+      if (history) {
+        await history.observe(fetched);
+        await history.save();
+      }
+      throw new Error(retry);
+    }
     if (action === "attached" && current !== null) {
       const snapshot = current.data.find((item) => item.namespace === source.service && item.key === "snapshot").value;
-      const baseMarkdown = markdownSnapshot(syncBase(source.service, snapshot, current.data));
+      const baseMarkdown = markdownSnapshot(syncBase(source.service, snapshot, current.data)) ?? (history?.refs.base ? await history.text(history.refs.base) : null);
       if (baseMarkdown !== null && previous !== baseMarkdown) throw new Error(`Local edits exist for ${primaryLink(current).path}. Run \`wire sync ${primaryLink(current).path}\` before attaching this URL again.`);
     }
-    if (!concurrentEdit && onDisk !== fetched.markdown) await dependencies.filesystem.writeText(outputPath, fetched.markdown);
     const id = resourceId(source);
-    const primary = current?.filesystem_links.find((link2) => link2.path === relativePath && link2.role === "primary");
+    const primary = current?.filesystem_links.find((link5) => link5.path === relativePath && link5.role === "primary");
+    const link4 = { path: relativePath, role: "primary", data: { format: "markdown", ...primary?.data, ...enableReceipts ? { editor_receipts: true } : {} } };
     const resource = {
       id,
       type: source.type,
       identifiers: [{ service: source.service, identifier: source.identifier }],
       urls: [url],
-      filesystem_links: current === null ? [{ path: relativePath, role: "primary", data: { format: "markdown" } }] : [
-        ...current.filesystem_links.filter((link2) => !(link2.path === relativePath && link2.role === "primary")),
-        primary ?? { path: relativePath, role: "primary", data: { format: "markdown" } }
+      filesystem_links: current === null ? [link4] : [
+        ...current.filesystem_links.filter((link5) => !(link5.path === relativePath && link5.role === "primary")),
+        link4
       ],
       data: [
         ...current?.data.filter((item) => item.namespace !== "wire" && !(item.namespace === source.service && item.key === "snapshot")) ?? [],
@@ -15112,25 +15579,82 @@ function composeWire(dependencies) {
       ],
       relationships: extractRelationships(fetched.markdown, id, dependencies.catalog)
     };
-    const stored = await registry.put(resource);
+    let stored;
+    if (history) {
+      if (history.refs.conflict) throw new Error("Unresolved Wire conflict. Review the saved revisions and use wire resolve.");
+      const currentBase = history.refs.base;
+      if (onDisk !== null && currentBase !== null && onDisk !== await history.text(currentBase) && (previousMarkdown === void 0 || previousMarkdown === onDisk)) await history.captureLocal(onDisk, view2?.shown ?? void 0);
+      const draft = history.refs.draft;
+      let next;
+      if (currentBase === null) {
+        const input = previousMarkdown === void 0 || previousMarkdown === null || previousMarkdown === fetched.markdown ? null : await history.revision("local", previousMarkdown, []);
+        next = await history.revision("attach", fetched.markdown, [input]);
+      } else if (draft !== null && draft !== currentBase && action !== "downloaded") {
+        const remote = history.refs.remote;
+        const merged = remote !== null && (remote !== currentBase || view2?.base != null && view2.base !== currentBase);
+        next = await history.revision(merged ? "merge" : "local", fetched.markdown, merged ? [draft, remote] : [draft]);
+      } else next = await history.observe(fetched);
+      const refs = { ...history.refs, base: next, remote: next, draft: null, strict: false, resolution: null, resolutionParent: null, conflict: null };
+      delete refs.editorDraft;
+      if (concurrentEdit && previousMarkdown === fetched.markdown) {
+        await history.publish(outputPath, onDisk ?? "", onDisk ?? "", refs, resource, (r) => registry.put(r), true);
+        stored = await registry.get(resource.id);
+      } else if (concurrentEdit) {
+        if (current !== null) throw new Error(retry);
+        refs.base = previousMarkdown == null ? next : await history.revision("local", previousMarkdown, []);
+        refs.resolution = fetched;
+        refs.resolutionParent = next;
+        await history.publish(outputPath, onDisk ?? "", onDisk ?? "", refs, resource, (r) => registry.put(r), true);
+        stored = await registry.get(resource.id);
+      } else {
+        if (enableReceipts || refs.editorReceipts) refs.editorReceipts = { ...refs.editorReceipts };
+        const materialized = refs.editorReceipts ? editorFile(fetched.markdown, refs.editorReceipts, next, next) : fetched.markdown;
+        await history.publish(outputPath, raw, materialized, refs, resource, (r) => registry.put(r));
+        stored = await registry.get(resource.id);
+      }
+    } else {
+      if (!concurrentEdit && onDisk !== fetched.markdown) await dependencies.filesystem.writeText(outputPath, fetched.markdown);
+      stored = await registry.put(resource);
+    }
     if (concurrentEdit) throw new Error(retry);
     const changes = changeSummary(summaryMarkdown ?? previous, summaryAfterMarkdown);
     const resolvedAction = action === "attached" && current !== null && previous !== "" ? changes.added === 0 && changes.modified === 0 && changes.removed === 0 ? "synced" : "downloaded" : action;
     return { resource: stored, path: outputPath, markdown: fetched.markdown, summary: { action: resolvedAction, ...changes, remote: url, local: outputPath } };
   };
-  const attach = async (url, path) => {
-    const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
-    return store(url, path, fetched, void 0, "attached", void 0, void 0, fetched.markdown);
+  const attach = async (url, path, editorReceipts = false) => {
+    return attachAt(url, path, void 0, editorReceipts);
+  };
+  const attachAt = async (url, path, fixed, editorReceipts = false) => {
+    const root = await wireRoot(dependencies, path), registry = await dependencies.workspace.openRegistry(root, dependencies.home);
+    const source = parseSourceUrl(url, dependencies.catalog);
+    return locked(root, registry, sourceLock(source), async () => {
+      await owner(registry, source, url);
+      const h = await restore(root, registry, source);
+      const current = findResource(await registry.listResources(), source, dependencies.catalog);
+      checkReceiptLink(current, h);
+      if (editorReceipts && (!h || source.service !== "google-docs" || source.type !== "document" || dependencies.catalog.find((s) => s.matches(new URL(url)))?.owner !== void 0)) throw new Error("Editor receipts require a generic Google Docs Markdown link with durable history.");
+      if (current && fixed !== void 0 && (0, import_node_path4.join)((0, import_node_path4.dirname)(root), primaryLink(current).path) !== fixed) throw new Error("This URL is already attached at another path.");
+      if (fixed !== void 0 && (await registry.findByPath(dependencies.workspace.relativePath(fixed, root))).some((r) => r.id !== resourceId(source))) throw new Error("This file already has another registration.");
+      if (h && current) await h.seed(markdownSnapshot(current.data.find((i) => i.namespace === source.service && i.key === "snapshot")?.value ?? null));
+      if (h?.refs.conflict) throw new Error("Unresolved Wire conflict. Use wire resolve.");
+      if (h?.refs.strict) throw new Error("Sync the pending Wire draft before attaching again.");
+      const trackedPath = current ? (0, import_node_path4.join)((0, import_node_path4.dirname)(root), primaryLink(current).path) : fixed;
+      const raw = trackedPath && h ? await working(trackedPath) : void 0;
+      const existing = raw == null ? raw : h.view(raw).markdown;
+      const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
+      if (fixed !== void 0 && (h ? existing : await dependencies.filesystem.readText(fixed)) !== fetched.markdown) throw new Error("Cannot adopt: the existing file differs from the remote document.");
+      return store(url, path, fetched, fixed === void 0 ? void 0 : fetched.markdown, "attached", fixed, void 0, fetched.markdown, h, editorReceipts, raw);
+    });
   };
   const create = attach;
   const view = (url) => fetchSource(dependencies.fetchInput, url, dependencies.catalog);
   const downloadSource = async (url, path) => {
     const source = parseSourceUrl(url, dependencies.catalog);
-    const directory = (0, import_node_path3.resolve)(path);
+    const directory = (0, import_node_path4.resolve)(path);
     const downloadPath = (path2) => {
-      const target = (0, import_node_path3.resolve)(directory, path2);
-      const child = (0, import_node_path3.relative)(directory, target);
-      if ((0, import_node_path3.isAbsolute)(path2) || path2.includes("\\") || child === "" || child === ".." || child.startsWith(`..${import_node_path3.sep}`)) throw new Error(`Unsafe download path: ${path2}`);
+      const target = (0, import_node_path4.resolve)(directory, path2);
+      const child = (0, import_node_path4.relative)(directory, target);
+      if ((0, import_node_path4.isAbsolute)(path2) || path2.includes("\\") || child === "" || child === ".." || child.startsWith(`..${import_node_path4.sep}`)) throw new Error(`Unsafe download path: ${path2}`);
       return target;
     };
     const service = dependencies.catalog.find((item) => item.matches(new URL(url)));
@@ -15165,7 +15689,7 @@ function composeWire(dependencies) {
       type: source.type,
       identifiers: [{ service: source.service, identifier: source.identifier }],
       urls: [url],
-      filesystem_links: [{ path: (0, import_node_path3.relative)(directory, outputPath), role: "primary", data: { format: "markdown" } }],
+      filesystem_links: [{ path: (0, import_node_path4.relative)(directory, outputPath), role: "primary", data: { format: "markdown" } }],
       data: [
         { namespace: "wire", key: "title", value: fetched.title },
         { namespace: "wire", key: "synced_at", value: dependencies.now().toISOString() },
@@ -15183,7 +15707,7 @@ function composeWire(dependencies) {
       if (resource === null) throw new Error(`Resource URL not found: ${value}`);
       return resource;
     }
-    const candidatePath = (0, import_node_path3.resolve)(path, value);
+    const candidatePath = (0, import_node_path4.resolve)(path, value);
     const relativePath = dependencies.workspace.relativePath(candidatePath, root);
     const resources = await registry.findByPath(relativePath);
     if (resources.length > 0 || await dependencies.filesystem.exists(candidatePath)) {
@@ -15198,33 +15722,45 @@ function composeWire(dependencies) {
     if (pathLikeResourceValue(value)) throw new Error(`Resource path not found: ${value}`);
     return registry.get(value);
   };
-  const sync = async (value, path) => {
-    const candidatePath = (0, import_node_path3.resolve)(path, value);
+  const syncInner = async (value, path) => {
+    const candidatePath = (0, import_node_path4.resolve)(path, value);
     const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const relativePath = dependencies.workspace.relativePath(candidatePath, root);
     const pathResources = await registry.findByPath(relativePath);
     if (pathResources.length === 0 && await dependencies.filesystem.exists(candidatePath)) {
-      const markdown2 = await dependencies.filesystem.readText(candidatePath);
-      const uploaded2 = await uploadSource(dependencies.fetchInput, dependencies.catalog, markdown2, candidatePath);
-      return store(uploaded2.url, (0, import_node_path3.dirname)(candidatePath), uploaded2, markdown2, "uploaded", candidatePath, void 0, uploaded2.markdown);
+      const markdown2 = durable(registry) ? await working(candidatePath) : await dependencies.filesystem.readText(candidatePath);
+      if (markdown2 === null) throw new Error("Cannot upload a missing Markdown file.");
+      const uploaded2 = await uploadSource(dependencies.fetchInput, dependencies.catalog, plainMarkdown(markdown2), candidatePath);
+      const source2 = parseSourceUrl(uploaded2.url, dependencies.catalog);
+      return locked(root, registry, sourceLock(source2), async () => store(uploaded2.url, (0, import_node_path4.dirname)(candidatePath), uploaded2, markdown2, "uploaded", candidatePath, void 0, uploaded2.markdown, await restore(root, registry, source2)));
     }
-    const resource = await resolveResource(registry, value, root, path);
-    const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
-    const outputDirectory = (0, import_node_path3.dirname)(outputPath);
+    let resource = await resolveResource(registry, value, root, path);
+    const outputPath = (0, import_node_path4.join)((0, import_node_path4.dirname)(root), primaryLink(resource).path);
+    const outputDirectory = (0, import_node_path4.dirname)(outputPath);
     const source = legacyDefaultTab(resource, dependencies.catalog) ?? parseSourceUrl(resource.urls[0], dependencies.catalog);
+    await owner(registry, source, resource.urls[0]);
+    const history = await restore(root, registry, source, outputPath);
+    resource = await registry.get(resource.id);
+    if (history?.refs.conflict) throw new Error("Unresolved Wire conflict. Inspect wire conflicts and use wire resolve.");
     const snapshot = resource.data.find((item) => item.namespace === source.service && item.key === "snapshot")?.value;
     if (snapshot === void 0) throw new Error(`Missing saved snapshot for ${primaryLink(resource).path}. Keep the local file and download a separate copy to reconcile before syncing.`);
     if (!await dependencies.filesystem.exists(outputPath)) throw new Error(`Linked file missing: ${primaryLink(resource).path} - restore it or run wire detach`);
-    const markdown = await dependencies.filesystem.readText(outputPath);
-    const base = syncBase(source.service, snapshot, resource.data);
-    const baseMarkdown = markdownSnapshot(base);
+    checkReceiptLink(resource, history);
+    const raw = history ? await working(outputPath) : await dependencies.filesystem.readText(outputPath);
+    if (raw === null) throw new Error("Linked file missing: " + outputPath);
+    const view2 = history ? history.view(raw) : editorView(raw);
+    const markdown = view2.markdown;
+    if (view2.shown && history?.refs.editorDraft && view2.shown !== history.refs.editorDraft) throw new Error("An older editor buffer replaced a pending Wire draft. Both versions were kept; reconcile them before syncing.");
+    const base = view2.base && history && view2.base !== history.refs.base && view2.base !== history.refs.resolutionParent ? { markdown: await history.text(view2.base) } : history?.refs.resolution && (!view2.base || view2.base === history.refs.resolutionParent) ? storedSnapshot(history.refs.resolution) : syncBase(source.service, snapshot, resource.data);
+    if (history) await history.seed(markdownSnapshot(snapshot));
+    const baseMarkdown = markdownSnapshot(base) ?? (history?.refs.base ? await history.text(history.refs.base) : null);
     const localChanged = baseMarkdown !== null && markdown !== baseMarkdown;
-    if (localChanged && !serviceCanSynchronize(resource.urls[0], dependencies.catalog)) throw new Error(`${source.service} is download-only and the local file has edits. Run \`wire download ${primaryLink(resource).path}\` to discard them.`);
+    if (localChanged && !history?.refs.strict && !serviceCanSynchronize(resource.urls[0], dependencies.catalog)) throw new Error(`${source.service} is download-only and the local file has edits. Run \`wire download ${primaryLink(resource).path}\` to discard them.`);
     if (source.service === "google-docs" && source["document_tab"] === "t.0") {
       const registered = findResource(await registry.listResources(), source, dependencies.catalog);
       if (registered && legacyDefaultTab(registered, dependencies.catalog)) {
-        if (registered.urls.length !== 1 || registered.identifiers.length !== 1 || registered.identifiers[0].identifier !== source["document_id"] || registered.filesystem_links.filter((link2) => link2.role === "primary").length !== 1 || !registry.rekey) {
+        if (registered.urls.length !== 1 || registered.identifiers.length !== 1 || registered.identifiers[0].identifier !== source["document_id"] || registered.filesystem_links.filter((link4) => link4.role === "primary").length !== 1 || !registry.rekey) {
           throw new Error(`Cannot migrate the ambiguous default-tab registration ${registered.id}. Back up the linked files and check the URLs, primary paths, and registry backend before syncing. No files were changed.`);
         }
         if (baseMarkdown === null || markdown !== baseMarkdown) {
@@ -15233,46 +15769,128 @@ function composeWire(dependencies) {
         await registry.rekey(registered, { service: source.service, identifier: source.identifier });
       }
     }
-    const fetched = await synchronizeSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog, base, markdown, outputPath);
+    if (history && (localChanged || history.refs.draft !== null)) await history.captureLocal(markdown, view2.shown ?? void 0);
+    const strict = (history?.refs.strict === true || view2.base !== null) && localChanged;
+    if (history && strict && source.service !== "notion" && !(source.service === "google-docs" && source.type === "document")) {
+      const remote = await fetchSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog);
+      await history.observe(remote);
+      await history.save();
+      if (remote.markdown !== markdown) throw new Error("This provider cannot conditionally publish a Wire draft. The local revision was kept. Apply it in the provider, then sync to verify.");
+      return store(resource.urls[0], outputDirectory, remote, markdown, "synced", void 0, void 0, remote.markdown, history);
+    }
+    const observed = {};
+    let observations = Promise.resolve();
+    const fork = view2.base ?? (history?.refs.resolution ? history.refs.resolutionParent : history?.refs.base);
+    let fetched;
+    try {
+      fetched = await synchronizeSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog, base, markdown, outputPath, (remote) => {
+        plainMarkdown(remote.markdown);
+        observed.remote = remote;
+        observations = observations.then(async () => {
+          if (history) {
+            await history.observe(remote);
+            await history.save();
+          }
+        });
+        return observations;
+      }, strict);
+      await observations;
+    } catch (error) {
+      await observations;
+      if (history && error instanceof WireMergeConflict && observed.remote && history.refs.draft && history.refs.remote) {
+        if (fork) {
+          history.refs.conflict = { base: fork, local: history.refs.draft, remote: history.refs.remote };
+          history.refs.resolution = observed.remote;
+          history.refs.resolutionParent = history.refs.remote;
+          await history.save();
+          throw new Error("Unresolved Wire conflict. " + error.message + " Inspect wire conflicts and use wire resolve.", { cause: error });
+        }
+      }
+      throw error;
+    }
+    if (history && !observed.remote && fetched.markdown !== markdown) {
+      await history.observe(fetched);
+      await history.save();
+    }
     const uploaded = fetched.wroteRemote ?? (localChanged && fetched.markdown !== baseMarkdown);
     const action = uploaded ? "uploaded" : fetched.markdown === markdown || localChanged && fetched.markdown === baseMarkdown ? "synced" : "downloaded";
-    return store(resource.urls[0], outputDirectory, fetched, markdown, action, void 0, action === "uploaded" && baseMarkdown !== null ? baseMarkdown : void 0, action === "uploaded" ? markdown : fetched.markdown);
+    return store(resource.urls[0], outputDirectory, fetched, markdown, action, void 0, action === "uploaded" && baseMarkdown !== null ? baseMarkdown : void 0, action === "uploaded" ? markdown : fetched.markdown, history, false, raw);
   };
-  const download = async (value, path) => {
-    const candidatePath = (0, import_node_path3.resolve)(path, value);
+  const underResourceLock = async (value, path, fn) => {
+    const candidate = (0, import_node_path4.resolve)(path, value);
+    const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidate) ? candidate : path), registry = await dependencies.workspace.openRegistry(root, dependencies.home);
+    const ids = await registry.findByPath(dependencies.workspace.relativePath(candidate, root));
+    const key2 = !ids.length && await dependencies.filesystem.exists(candidate) ? "path:" + dependencies.workspace.relativePath(candidate, root) : sourceLock(parseSourceUrl((await resolveResource(registry, value, root, path)).urls[0], dependencies.catalog));
+    return locked(root, registry, key2, fn);
+  };
+  const sync = (v2, p) => underResourceLock(v2, p, () => syncInner(v2, p));
+  const downloadInner = async (value, path) => {
+    const candidatePath = (0, import_node_path4.resolve)(path, value);
     const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
-    const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
-    const markdown = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
+    const outputPath = (0, import_node_path4.join)((0, import_node_path4.dirname)(root), primaryLink(resource).path);
+    const source = parseSourceUrl(resource.urls[0], dependencies.catalog);
+    await owner(registry, source, resource.urls[0]);
+    const h = await restore(root, registry, source, outputPath);
+    await h?.seed(markdownSnapshot(resource.data.find((i) => i.namespace === source.service && i.key === "snapshot")?.value ?? null));
+    if (h?.refs.conflict) throw new Error("Unresolved Wire conflict. Use wire resolve.");
+    checkReceiptLink(resource, h);
+    const raw = h ? await working(outputPath) : await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
+    const markdown = raw === null ? null : (h ? h.view(raw) : editorView(raw)).markdown;
+    if (h?.refs.strict && h.refs.draft) throw new Error("Sync the pending Wire draft before downloading over it.");
     const fetched = await fetchSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog);
-    return store(resource.urls[0], (0, import_node_path3.dirname)(outputPath), fetched, markdown, "downloaded", void 0, void 0, fetched.markdown);
+    return store(resource.urls[0], (0, import_node_path4.dirname)(outputPath), fetched, markdown, "downloaded", void 0, void 0, fetched.markdown, h, false, raw);
   };
-  const detach = async (value, path) => {
-    const candidatePath = (0, import_node_path3.resolve)(path, value);
+  const download = (v2, p) => underResourceLock(v2, p, () => downloadInner(v2, p));
+  const detachInner = async (value, path) => {
+    const candidatePath = (0, import_node_path4.resolve)(path, value);
     const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
-    const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
-    const previous = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
+    const outputPath = (0, import_node_path4.join)((0, import_node_path4.dirname)(root), primaryLink(resource).path);
+    const source = parseSourceUrl(resource.urls[0], dependencies.catalog);
+    await owner(registry, source, resource.urls[0]);
+    const h = await historyFor(root, registry, source);
+    const recovered = await h?.recover(outputPath, (r) => registry.put(r), removeDetached(registry));
+    if (recovered) {
+      const markdown = await h.text(h.refs.base);
+      return { resource: recovered, path: outputPath, markdown, summary: { action: "detached", added: 0, modified: 0, removed: 0, remote: recovered.urls[0], local: outputPath } };
+    }
+    checkReceiptLink(resource, h);
+    const initialRaw = h ? await working(outputPath) : await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
+    const previousView = initialRaw === null ? null : h ? h.view(initialRaw) : editorView(initialRaw);
+    const previous = previousView?.markdown ?? "";
+    if (h?.refs.conflict || h?.refs.strict) throw new Error("Resolve and sync the Wire draft before detaching.");
     const fetched = await fetchSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog);
-    await dependencies.filesystem.writeText(outputPath, fetched.markdown);
-    await registry.delete(resource.id);
+    if (h) {
+      const onDisk = await working(outputPath);
+      if (onDisk !== initialRaw) throw new Error("Local file changed during detach; retry.");
+      if (previousView) await h.captureLocal(previousView.markdown, previousView.shown ?? void 0);
+      const next = await h.observe(fetched);
+      const { editorReceipts, ...plainRefs } = h.refs;
+      if (editorReceipts) plainRefs.retiredEditorReceipts = { ...plainRefs.retiredEditorReceipts, ...editorReceipts };
+      await h.detach(outputPath, onDisk, fetched.markdown, { ...plainRefs, base: next, remote: next, draft: null }, resource, removeDetached(registry));
+    } else {
+      await dependencies.filesystem.writeText(outputPath, fetched.markdown);
+      await registry.delete(resource.id);
+    }
     return { resource, path: outputPath, markdown: fetched.markdown, summary: { action: "detached", ...changeSummary(previous, fetched.markdown), remote: resource.urls[0], local: outputPath } };
   };
-  const unlink2 = detach;
+  const detach = (v2, p) => underResourceLock(v2, p, () => detachInner(v2, p));
+  const unlink4 = detach;
   const runWatchHooks = async (hooks, command, result) => {
     let current = result;
     for (const hook of hooks) current = await hook(command, current);
     return current;
   };
   const watchWithHooks = async (value, path, hooks) => {
-    const candidatePath = (0, import_node_path3.resolve)(path, value);
+    const candidatePath = (0, import_node_path4.resolve)(path, value);
     const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const config2 = watchConfig(await dependencies.workspace.loadConfig(root));
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
-    const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
+    const outputPath = (0, import_node_path4.join)((0, import_node_path4.dirname)(root), primaryLink(resource).path);
     const initial = await dependencies.filesystem.exists(outputPath) ? null : await runWatchHooks(hooks, "download", await download(value, path));
     let lastSyncedMarkdown = initial === null ? await dependencies.filesystem.readText(outputPath) : initial.markdown;
     let debounce;
@@ -15296,6 +15914,12 @@ function composeWire(dependencies) {
             if (!checkRemote && await dependencies.filesystem.readText(outputPath) === lastSyncedMarkdown) continue;
             const result = config2.mode === "download" ? await runWatchHooks(hooks, "download", await download(value, path)) : await runWatchHooks(hooks, "sync", await sync(value, path));
             lastSyncedMarkdown = result.markdown;
+            if (primaryLink(result.resource).data["editor_receipts"] === true) {
+              const h = await historyFor(root, registry, parseSourceUrl(result.resource.urls[0], dependencies.catalog));
+              if (h?.refs.editorReceipts && h.refs.base && await h.text(h.refs.base) === result.markdown) {
+                lastSyncedMarkdown = editorFile(result.markdown, h.refs.editorReceipts, h.refs.base, h.refs.base);
+              }
+            }
           } catch (error) {
             console.warn(`Wire watch: ${errorMessage(error)}`);
           }
@@ -15332,7 +15956,7 @@ function composeWire(dependencies) {
   };
   const watch = (value, path) => watchWithHooks(value, path, []);
   const openResource2 = async (value, path) => {
-    const candidatePath = (0, import_node_path3.resolve)(path, value);
+    const candidatePath = (0, import_node_path4.resolve)(path, value);
     const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
@@ -15343,13 +15967,13 @@ function composeWire(dependencies) {
     const root = await wireRoot(dependencies, path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const scope = dependencies.workspace.relativePath(path, root);
-    if (relativePathEscapes(scope)) throw new Error(`Sync scope is outside the Wire workspace: root ${(0, import_node_path3.dirname)(root)}, path ${path}`);
+    if (relativePathEscapes(scope)) throw new Error(`Sync scope is outside the Wire workspace: root ${(0, import_node_path4.dirname)(root)}, path ${path}`);
     const results = [];
     for (const resource of await registry.listResources()) {
-      const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
+      const outputPath = (0, import_node_path4.join)((0, import_node_path4.dirname)(root), primaryLink(resource).path);
       if (relativePathContains(scope, primaryLink(resource).path)) {
         try {
-          results.push(await sync(resource.id, (0, import_node_path3.dirname)(outputPath)));
+          results.push(await sync(resource.id, (0, import_node_path4.dirname)(outputPath)));
         } catch (error) {
           results.push({ resource, path: outputPath, markdown: "", summary: { action: "failed", added: 0, modified: 0, removed: 0, remote: resource.urls[0], local: outputPath, error: errorMessage(error) } });
         }
@@ -15362,20 +15986,88 @@ function composeWire(dependencies) {
     return (await dependencies.workspace.openRegistry(root, dependencies.home)).listResources();
   };
   const showResource = async (value, path) => {
-    const candidatePath = (0, import_node_path3.resolve)(path, value);
+    const candidatePath = (0, import_node_path4.resolve)(path, value);
     const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     return resolveResource(registry, value, root, path);
   };
+  const withDocument = async (v2, p, run) => underResourceLock(v2, p, async () => {
+    const candidate = (0, import_node_path4.resolve)(p, v2), root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidate) ? candidate : p);
+    const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
+    let r = await resolveResource(registry, v2, root, p);
+    const path = (0, import_node_path4.join)((0, import_node_path4.dirname)(root), primaryLink(r).path);
+    const source = parseSourceUrl(r.urls[0], dependencies.catalog);
+    const h = await restore(root, registry, source, path);
+    if (!h) throw new Error("This registry does not provide durable document history.");
+    r = await registry.get(r.id);
+    checkReceiptLink(r, h);
+    await h.seed(markdownSnapshot(r.data.find((i) => i.namespace === source.service && i.key === "snapshot")?.value ?? null));
+    return run(h, path, registry, r);
+  });
+  const historyStatus = (v2, p) => withDocument(v2, p, (h, path) => h.status(path));
+  const historyLog = (v2, p) => withDocument(v2, p, (h) => h.log());
+  const historyDiff = (v2, p, from = "base", to = "working") => withDocument(v2, p, async (h, path) => {
+    const raw = await working(path);
+    const current = raw === null ? null : h.view(raw).markdown;
+    const text3 = async (ref) => {
+      if (ref === "working") {
+        if (current === null) throw new Error("Linked Markdown is missing.");
+        return current;
+      }
+      const id = ref === "base" ? h.refs.conflict?.base ?? h.refs.base : ref === "remote" ? h.refs.remote : ref === "local" ? h.refs.conflict?.local ?? h.refs.draft ?? h.refs.base : ref;
+      if (!id) throw new Error("No saved " + ref + " revision.");
+      return h.text(id);
+    };
+    return { from, to, before: await text3(from), after: await text3(to), token: h.token(raw) };
+  });
+  const checkpoint = (v2, p, expected, markdown, token) => withDocument(v2, p, async (h, path, reg) => {
+    const raw = await working(path);
+    const view2 = raw === null ? null : h.view(raw);
+    if (!view2 || view2.markdown !== expected || token !== h.token(raw)) throw new Error("Stale shell edit. The document changed; rerun the command.");
+    if (expected !== markdown) {
+      if (view2.shown && h.refs.editorDraft && view2.shown !== h.refs.editorDraft) throw new Error("An older editor buffer replaced a pending Wire draft. Both versions were kept; reconcile them before editing.");
+      plainMarkdown(markdown);
+      const prior = await h.captureLocal(expected, view2.shown ?? void 0);
+      const draft = await h.revision("local", markdown, [prior]);
+      const refs = { ...h.refs, draft, strict: true, ...view2.base ? { editorDraft: draft } : {} };
+      if (refs.editorReceipts) refs.editorReceipts = { ...refs.editorReceipts };
+      const next = refs.editorReceipts && view2.base ? editorFile(markdown, refs.editorReceipts, draft, view2.base) : markdown;
+      await h.publish(path, raw, next, refs, null, (r) => reg.put(r));
+    }
+    return h.status(path);
+  });
+  const resolveConflict = (v2, p, choice) => withDocument(v2, p, async (h, path, reg) => {
+    const conflict2 = h.refs.conflict;
+    if (!conflict2 || !h.refs.resolution) throw new Error("No saved conflict for this document.");
+    const raw = await working(path);
+    const current = raw === null ? null : h.view(raw).markdown;
+    if (current === null) throw new Error("Linked Markdown is missing.");
+    const local = await h.text(conflict2.local), remote = await h.text(conflict2.remote);
+    if (choice !== "working" && current !== local) throw new Error("Working file changed since the conflict. Choose working to retain those edits.");
+    if (!["working", "local", "remote"].includes(choice)) throw new Error("Choose local, remote or working.");
+    const next = choice === "working" ? current : choice === "local" ? local : remote;
+    const draft = await h.revision("resolve", next, [conflict2.local, conflict2.remote]);
+    const refs = { ...h.refs, draft, strict: true, conflict: null, ...h.refs.editorReceipts ? { editorDraft: draft } : {} };
+    if (refs.editorReceipts) refs.editorReceipts = { ...refs.editorReceipts };
+    const materialized = refs.editorReceipts ? editorFile(next, refs.editorReceipts, draft, conflict2.remote) : next;
+    await h.publish(path, raw, materialized, refs, null, (r) => reg.put(r));
+    return h.status(path);
+  });
   return Object.freeze({
     attach,
+    adopt: (url, path, editorReceipts = false) => attachAt(url, (0, import_node_path4.dirname)((0, import_node_path4.resolve)(path)), (0, import_node_path4.resolve)(path), editorReceipts),
+    historyStatus,
+    historyDiff,
+    historyLog,
+    checkpoint,
+    resolveConflict,
     create,
     view,
     downloadSource,
     sync,
     download,
     detach,
-    unlink: unlink2,
+    unlink: unlink4,
     watch,
     openResource: openResource2,
     syncAll,
@@ -15384,7 +16076,7 @@ function composeWire(dependencies) {
     init: dependencies.workspace.initialize,
     switchBackend: async (path) => {
       const root = await wireRoot(dependencies, path);
-      return dependencies.workspace.switchBackend((0, import_node_path3.dirname)(root), dependencies.home);
+      return dependencies.workspace.switchBackend((0, import_node_path4.dirname)(root), dependencies.home);
     },
     [wireWatchHooks]: watchWithHooks
   });
@@ -15475,9 +16167,9 @@ function zoomCookieKey(cookie) {
 function zoomCookieJar(cookies) {
   return new Map(cookies.map((cookie) => [zoomCookieKey(cookie), cookie]));
 }
-function zoomDomainMatches(cookie, hostname) {
+function zoomDomainMatches(cookie, hostname3) {
   const domain = cookie.domain.startsWith(".") ? cookie.domain.slice(1) : cookie.domain;
-  return hostname === domain || cookie.includeSubdomains && hostname.endsWith(`.${domain}`);
+  return hostname3 === domain || cookie.includeSubdomains && hostname3.endsWith(`.${domain}`);
 }
 function zoomPathMatches(cookiePath2, requestPath) {
   return requestPath === cookiePath2 || requestPath.startsWith(cookiePath2.endsWith("/") ? cookiePath2 : `${cookiePath2}/`);
@@ -15679,38 +16371,114 @@ function composeAuth(runtime2, environment2, extractCookies) {
 
 // ../wire/src/hooks.ts
 var import_node_child_process2 = require("node:child_process");
-var import_node_fs3 = require("node:fs");
-var import_promises5 = require("node:fs/promises");
-var import_node_path4 = require("node:path");
+var import_node_fs4 = require("node:fs");
+var import_promises7 = require("node:fs/promises");
+var import_node_path6 = require("node:path");
 var import_node_util = require("node:util");
+
+// ../wire-core/dist/storage/registry.js
+var import_node_module2 = require("node:module");
+
+// ../wire-core/dist/core/resource.js
+function resourceId2(source) {
+  return `${source.service}:${source.identifier}`;
+}
+
+// ../wire-core/dist/storage/registry.js
+var require3 = (0, import_node_module2.createRequire)("/wire-core/storage/registry.js");
+
+// ../wire-core/dist/storage/history.js
+var import_node_crypto6 = require("node:crypto");
+var import_node_os2 = require("node:os");
+var import_node_path5 = require("node:path");
+var import_promises6 = require("node:fs/promises");
+var hash2 = (value) => (0, import_node_crypto6.createHash)("sha256").update(value).digest("hex");
+var code2 = (error) => error.code;
+var missing2 = (error) => code2(error) === "ENOENT";
+async function privateDirectory2(path) {
+  try {
+    await (0, import_promises6.mkdir)(path, { mode: 448 });
+  } catch (e) {
+    if (code2(e) !== "EEXIST")
+      throw e;
+  }
+  const info = await (0, import_promises6.lstat)(path);
+  if (!info.isDirectory() || (info.mode & 63) !== 0)
+    throw new Error("Unsafe Wire history directory: " + path);
+}
+async function withHistoryLock2(root, key2, run) {
+  const dir = (0, import_node_path5.join)(root, "history");
+  await privateDirectory2(dir);
+  const own = (0, import_node_os2.hostname)() + ":" + process.pid + ":" + (0, import_node_crypto6.randomUUID)();
+  const lock = (0, import_node_path5.join)(dir, "lock-" + hash2(key2));
+  for (let n = 0; ; n++) {
+    const path = lock + (n ? "." + n : "");
+    try {
+      await (0, import_promises6.symlink)(own, path);
+    } catch (e) {
+      if (code2(e) !== "EEXIST")
+        throw e;
+      let owner;
+      try {
+        owner = await (0, import_promises6.readlink)(path);
+      } catch (r) {
+        if (missing2(r)) {
+          n--;
+          continue;
+        }
+        throw r;
+      }
+      const [host, pid] = owner.split(":");
+      if (host === (0, import_node_os2.hostname)() && /^\d+$/.test(pid ?? "")) {
+        try {
+          process.kill(Number(pid), 0);
+        } catch (k2) {
+          if (code2(k2) === "ESRCH") {
+            if (await (0, import_promises6.readlink)(path).catch(() => "") === owner)
+              continue;
+            n--;
+            continue;
+          }
+        }
+      }
+      throw new Error("Another Wire operation owns this document. Retry when it finishes.");
+    }
+    try {
+      return await run();
+    } finally {
+      await (0, import_promises6.unlink)(path);
+    }
+  }
+}
 
 // ../wire-core/dist/core/transform.js
 var htmlEntities2 = Object.freeze({ "AElig": "\xC6", "AElig;": "\xC6", "AMP": "&", "AMP;": "&", "Aacute": "\xC1", "Aacute;": "\xC1", "Abreve;": "\u0102", "Acirc": "\xC2", "Acirc;": "\xC2", "Acy;": "\u0410", "Afr;": "\u{1D504}", "Agrave": "\xC0", "Agrave;": "\xC0", "Alpha;": "\u0391", "Amacr;": "\u0100", "And;": "\u2A53", "Aogon;": "\u0104", "Aopf;": "\u{1D538}", "ApplyFunction;": "\u2061", "Aring": "\xC5", "Aring;": "\xC5", "Ascr;": "\u{1D49C}", "Assign;": "\u2254", "Atilde": "\xC3", "Atilde;": "\xC3", "Auml": "\xC4", "Auml;": "\xC4", "Backslash;": "\u2216", "Barv;": "\u2AE7", "Barwed;": "\u2306", "Bcy;": "\u0411", "Because;": "\u2235", "Bernoullis;": "\u212C", "Beta;": "\u0392", "Bfr;": "\u{1D505}", "Bopf;": "\u{1D539}", "Breve;": "\u02D8", "Bscr;": "\u212C", "Bumpeq;": "\u224E", "CHcy;": "\u0427", "COPY": "\xA9", "COPY;": "\xA9", "Cacute;": "\u0106", "Cap;": "\u22D2", "CapitalDifferentialD;": "\u2145", "Cayleys;": "\u212D", "Ccaron;": "\u010C", "Ccedil": "\xC7", "Ccedil;": "\xC7", "Ccirc;": "\u0108", "Cconint;": "\u2230", "Cdot;": "\u010A", "Cedilla;": "\xB8", "CenterDot;": "\xB7", "Cfr;": "\u212D", "Chi;": "\u03A7", "CircleDot;": "\u2299", "CircleMinus;": "\u2296", "CirclePlus;": "\u2295", "CircleTimes;": "\u2297", "ClockwiseContourIntegral;": "\u2232", "CloseCurlyDoubleQuote;": "\u201D", "CloseCurlyQuote;": "\u2019", "Colon;": "\u2237", "Colone;": "\u2A74", "Congruent;": "\u2261", "Conint;": "\u222F", "ContourIntegral;": "\u222E", "Copf;": "\u2102", "Coproduct;": "\u2210", "CounterClockwiseContourIntegral;": "\u2233", "Cross;": "\u2A2F", "Cscr;": "\u{1D49E}", "Cup;": "\u22D3", "CupCap;": "\u224D", "DD;": "\u2145", "DDotrahd;": "\u2911", "DJcy;": "\u0402", "DScy;": "\u0405", "DZcy;": "\u040F", "Dagger;": "\u2021", "Darr;": "\u21A1", "Dashv;": "\u2AE4", "Dcaron;": "\u010E", "Dcy;": "\u0414", "Del;": "\u2207", "Delta;": "\u0394", "Dfr;": "\u{1D507}", "DiacriticalAcute;": "\xB4", "DiacriticalDot;": "\u02D9", "DiacriticalDoubleAcute;": "\u02DD", "DiacriticalGrave;": "`", "DiacriticalTilde;": "\u02DC", "Diamond;": "\u22C4", "DifferentialD;": "\u2146", "Dopf;": "\u{1D53B}", "Dot;": "\xA8", "DotDot;": "\u20DC", "DotEqual;": "\u2250", "DoubleContourIntegral;": "\u222F", "DoubleDot;": "\xA8", "DoubleDownArrow;": "\u21D3", "DoubleLeftArrow;": "\u21D0", "DoubleLeftRightArrow;": "\u21D4", "DoubleLeftTee;": "\u2AE4", "DoubleLongLeftArrow;": "\u27F8", "DoubleLongLeftRightArrow;": "\u27FA", "DoubleLongRightArrow;": "\u27F9", "DoubleRightArrow;": "\u21D2", "DoubleRightTee;": "\u22A8", "DoubleUpArrow;": "\u21D1", "DoubleUpDownArrow;": "\u21D5", "DoubleVerticalBar;": "\u2225", "DownArrow;": "\u2193", "DownArrowBar;": "\u2913", "DownArrowUpArrow;": "\u21F5", "DownBreve;": "\u0311", "DownLeftRightVector;": "\u2950", "DownLeftTeeVector;": "\u295E", "DownLeftVector;": "\u21BD", "DownLeftVectorBar;": "\u2956", "DownRightTeeVector;": "\u295F", "DownRightVector;": "\u21C1", "DownRightVectorBar;": "\u2957", "DownTee;": "\u22A4", "DownTeeArrow;": "\u21A7", "Downarrow;": "\u21D3", "Dscr;": "\u{1D49F}", "Dstrok;": "\u0110", "ENG;": "\u014A", "ETH": "\xD0", "ETH;": "\xD0", "Eacute": "\xC9", "Eacute;": "\xC9", "Ecaron;": "\u011A", "Ecirc": "\xCA", "Ecirc;": "\xCA", "Ecy;": "\u042D", "Edot;": "\u0116", "Efr;": "\u{1D508}", "Egrave": "\xC8", "Egrave;": "\xC8", "Element;": "\u2208", "Emacr;": "\u0112", "EmptySmallSquare;": "\u25FB", "EmptyVerySmallSquare;": "\u25AB", "Eogon;": "\u0118", "Eopf;": "\u{1D53C}", "Epsilon;": "\u0395", "Equal;": "\u2A75", "EqualTilde;": "\u2242", "Equilibrium;": "\u21CC", "Escr;": "\u2130", "Esim;": "\u2A73", "Eta;": "\u0397", "Euml": "\xCB", "Euml;": "\xCB", "Exists;": "\u2203", "ExponentialE;": "\u2147", "Fcy;": "\u0424", "Ffr;": "\u{1D509}", "FilledSmallSquare;": "\u25FC", "FilledVerySmallSquare;": "\u25AA", "Fopf;": "\u{1D53D}", "ForAll;": "\u2200", "Fouriertrf;": "\u2131", "Fscr;": "\u2131", "GJcy;": "\u0403", "GT": ">", "GT;": ">", "Gamma;": "\u0393", "Gammad;": "\u03DC", "Gbreve;": "\u011E", "Gcedil;": "\u0122", "Gcirc;": "\u011C", "Gcy;": "\u0413", "Gdot;": "\u0120", "Gfr;": "\u{1D50A}", "Gg;": "\u22D9", "Gopf;": "\u{1D53E}", "GreaterEqual;": "\u2265", "GreaterEqualLess;": "\u22DB", "GreaterFullEqual;": "\u2267", "GreaterGreater;": "\u2AA2", "GreaterLess;": "\u2277", "GreaterSlantEqual;": "\u2A7E", "GreaterTilde;": "\u2273", "Gscr;": "\u{1D4A2}", "Gt;": "\u226B", "HARDcy;": "\u042A", "Hacek;": "\u02C7", "Hat;": "^", "Hcirc;": "\u0124", "Hfr;": "\u210C", "HilbertSpace;": "\u210B", "Hopf;": "\u210D", "HorizontalLine;": "\u2500", "Hscr;": "\u210B", "Hstrok;": "\u0126", "HumpDownHump;": "\u224E", "HumpEqual;": "\u224F", "IEcy;": "\u0415", "IJlig;": "\u0132", "IOcy;": "\u0401", "Iacute": "\xCD", "Iacute;": "\xCD", "Icirc": "\xCE", "Icirc;": "\xCE", "Icy;": "\u0418", "Idot;": "\u0130", "Ifr;": "\u2111", "Igrave": "\xCC", "Igrave;": "\xCC", "Im;": "\u2111", "Imacr;": "\u012A", "ImaginaryI;": "\u2148", "Implies;": "\u21D2", "Int;": "\u222C", "Integral;": "\u222B", "Intersection;": "\u22C2", "InvisibleComma;": "\u2063", "InvisibleTimes;": "\u2062", "Iogon;": "\u012E", "Iopf;": "\u{1D540}", "Iota;": "\u0399", "Iscr;": "\u2110", "Itilde;": "\u0128", "Iukcy;": "\u0406", "Iuml": "\xCF", "Iuml;": "\xCF", "Jcirc;": "\u0134", "Jcy;": "\u0419", "Jfr;": "\u{1D50D}", "Jopf;": "\u{1D541}", "Jscr;": "\u{1D4A5}", "Jsercy;": "\u0408", "Jukcy;": "\u0404", "KHcy;": "\u0425", "KJcy;": "\u040C", "Kappa;": "\u039A", "Kcedil;": "\u0136", "Kcy;": "\u041A", "Kfr;": "\u{1D50E}", "Kopf;": "\u{1D542}", "Kscr;": "\u{1D4A6}", "LJcy;": "\u0409", "LT": "<", "LT;": "<", "Lacute;": "\u0139", "Lambda;": "\u039B", "Lang;": "\u27EA", "Laplacetrf;": "\u2112", "Larr;": "\u219E", "Lcaron;": "\u013D", "Lcedil;": "\u013B", "Lcy;": "\u041B", "LeftAngleBracket;": "\u27E8", "LeftArrow;": "\u2190", "LeftArrowBar;": "\u21E4", "LeftArrowRightArrow;": "\u21C6", "LeftCeiling;": "\u2308", "LeftDoubleBracket;": "\u27E6", "LeftDownTeeVector;": "\u2961", "LeftDownVector;": "\u21C3", "LeftDownVectorBar;": "\u2959", "LeftFloor;": "\u230A", "LeftRightArrow;": "\u2194", "LeftRightVector;": "\u294E", "LeftTee;": "\u22A3", "LeftTeeArrow;": "\u21A4", "LeftTeeVector;": "\u295A", "LeftTriangle;": "\u22B2", "LeftTriangleBar;": "\u29CF", "LeftTriangleEqual;": "\u22B4", "LeftUpDownVector;": "\u2951", "LeftUpTeeVector;": "\u2960", "LeftUpVector;": "\u21BF", "LeftUpVectorBar;": "\u2958", "LeftVector;": "\u21BC", "LeftVectorBar;": "\u2952", "Leftarrow;": "\u21D0", "Leftrightarrow;": "\u21D4", "LessEqualGreater;": "\u22DA", "LessFullEqual;": "\u2266", "LessGreater;": "\u2276", "LessLess;": "\u2AA1", "LessSlantEqual;": "\u2A7D", "LessTilde;": "\u2272", "Lfr;": "\u{1D50F}", "Ll;": "\u22D8", "Lleftarrow;": "\u21DA", "Lmidot;": "\u013F", "LongLeftArrow;": "\u27F5", "LongLeftRightArrow;": "\u27F7", "LongRightArrow;": "\u27F6", "Longleftarrow;": "\u27F8", "Longleftrightarrow;": "\u27FA", "Longrightarrow;": "\u27F9", "Lopf;": "\u{1D543}", "LowerLeftArrow;": "\u2199", "LowerRightArrow;": "\u2198", "Lscr;": "\u2112", "Lsh;": "\u21B0", "Lstrok;": "\u0141", "Lt;": "\u226A", "Map;": "\u2905", "Mcy;": "\u041C", "MediumSpace;": "\u205F", "Mellintrf;": "\u2133", "Mfr;": "\u{1D510}", "MinusPlus;": "\u2213", "Mopf;": "\u{1D544}", "Mscr;": "\u2133", "Mu;": "\u039C", "NJcy;": "\u040A", "Nacute;": "\u0143", "Ncaron;": "\u0147", "Ncedil;": "\u0145", "Ncy;": "\u041D", "NegativeMediumSpace;": "\u200B", "NegativeThickSpace;": "\u200B", "NegativeThinSpace;": "\u200B", "NegativeVeryThinSpace;": "\u200B", "NestedGreaterGreater;": "\u226B", "NestedLessLess;": "\u226A", "NewLine;": "\n", "Nfr;": "\u{1D511}", "NoBreak;": "\u2060", "NonBreakingSpace;": "\xA0", "Nopf;": "\u2115", "Not;": "\u2AEC", "NotCongruent;": "\u2262", "NotCupCap;": "\u226D", "NotDoubleVerticalBar;": "\u2226", "NotElement;": "\u2209", "NotEqual;": "\u2260", "NotEqualTilde;": "\u2242\u0338", "NotExists;": "\u2204", "NotGreater;": "\u226F", "NotGreaterEqual;": "\u2271", "NotGreaterFullEqual;": "\u2267\u0338", "NotGreaterGreater;": "\u226B\u0338", "NotGreaterLess;": "\u2279", "NotGreaterSlantEqual;": "\u2A7E\u0338", "NotGreaterTilde;": "\u2275", "NotHumpDownHump;": "\u224E\u0338", "NotHumpEqual;": "\u224F\u0338", "NotLeftTriangle;": "\u22EA", "NotLeftTriangleBar;": "\u29CF\u0338", "NotLeftTriangleEqual;": "\u22EC", "NotLess;": "\u226E", "NotLessEqual;": "\u2270", "NotLessGreater;": "\u2278", "NotLessLess;": "\u226A\u0338", "NotLessSlantEqual;": "\u2A7D\u0338", "NotLessTilde;": "\u2274", "NotNestedGreaterGreater;": "\u2AA2\u0338", "NotNestedLessLess;": "\u2AA1\u0338", "NotPrecedes;": "\u2280", "NotPrecedesEqual;": "\u2AAF\u0338", "NotPrecedesSlantEqual;": "\u22E0", "NotReverseElement;": "\u220C", "NotRightTriangle;": "\u22EB", "NotRightTriangleBar;": "\u29D0\u0338", "NotRightTriangleEqual;": "\u22ED", "NotSquareSubset;": "\u228F\u0338", "NotSquareSubsetEqual;": "\u22E2", "NotSquareSuperset;": "\u2290\u0338", "NotSquareSupersetEqual;": "\u22E3", "NotSubset;": "\u2282\u20D2", "NotSubsetEqual;": "\u2288", "NotSucceeds;": "\u2281", "NotSucceedsEqual;": "\u2AB0\u0338", "NotSucceedsSlantEqual;": "\u22E1", "NotSucceedsTilde;": "\u227F\u0338", "NotSuperset;": "\u2283\u20D2", "NotSupersetEqual;": "\u2289", "NotTilde;": "\u2241", "NotTildeEqual;": "\u2244", "NotTildeFullEqual;": "\u2247", "NotTildeTilde;": "\u2249", "NotVerticalBar;": "\u2224", "Nscr;": "\u{1D4A9}", "Ntilde": "\xD1", "Ntilde;": "\xD1", "Nu;": "\u039D", "OElig;": "\u0152", "Oacute": "\xD3", "Oacute;": "\xD3", "Ocirc": "\xD4", "Ocirc;": "\xD4", "Ocy;": "\u041E", "Odblac;": "\u0150", "Ofr;": "\u{1D512}", "Ograve": "\xD2", "Ograve;": "\xD2", "Omacr;": "\u014C", "Omega;": "\u03A9", "Omicron;": "\u039F", "Oopf;": "\u{1D546}", "OpenCurlyDoubleQuote;": "\u201C", "OpenCurlyQuote;": "\u2018", "Or;": "\u2A54", "Oscr;": "\u{1D4AA}", "Oslash": "\xD8", "Oslash;": "\xD8", "Otilde": "\xD5", "Otilde;": "\xD5", "Otimes;": "\u2A37", "Ouml": "\xD6", "Ouml;": "\xD6", "OverBar;": "\u203E", "OverBrace;": "\u23DE", "OverBracket;": "\u23B4", "OverParenthesis;": "\u23DC", "PartialD;": "\u2202", "Pcy;": "\u041F", "Pfr;": "\u{1D513}", "Phi;": "\u03A6", "Pi;": "\u03A0", "PlusMinus;": "\xB1", "Poincareplane;": "\u210C", "Popf;": "\u2119", "Pr;": "\u2ABB", "Precedes;": "\u227A", "PrecedesEqual;": "\u2AAF", "PrecedesSlantEqual;": "\u227C", "PrecedesTilde;": "\u227E", "Prime;": "\u2033", "Product;": "\u220F", "Proportion;": "\u2237", "Proportional;": "\u221D", "Pscr;": "\u{1D4AB}", "Psi;": "\u03A8", "QUOT": '"', "QUOT;": '"', "Qfr;": "\u{1D514}", "Qopf;": "\u211A", "Qscr;": "\u{1D4AC}", "RBarr;": "\u2910", "REG": "\xAE", "REG;": "\xAE", "Racute;": "\u0154", "Rang;": "\u27EB", "Rarr;": "\u21A0", "Rarrtl;": "\u2916", "Rcaron;": "\u0158", "Rcedil;": "\u0156", "Rcy;": "\u0420", "Re;": "\u211C", "ReverseElement;": "\u220B", "ReverseEquilibrium;": "\u21CB", "ReverseUpEquilibrium;": "\u296F", "Rfr;": "\u211C", "Rho;": "\u03A1", "RightAngleBracket;": "\u27E9", "RightArrow;": "\u2192", "RightArrowBar;": "\u21E5", "RightArrowLeftArrow;": "\u21C4", "RightCeiling;": "\u2309", "RightDoubleBracket;": "\u27E7", "RightDownTeeVector;": "\u295D", "RightDownVector;": "\u21C2", "RightDownVectorBar;": "\u2955", "RightFloor;": "\u230B", "RightTee;": "\u22A2", "RightTeeArrow;": "\u21A6", "RightTeeVector;": "\u295B", "RightTriangle;": "\u22B3", "RightTriangleBar;": "\u29D0", "RightTriangleEqual;": "\u22B5", "RightUpDownVector;": "\u294F", "RightUpTeeVector;": "\u295C", "RightUpVector;": "\u21BE", "RightUpVectorBar;": "\u2954", "RightVector;": "\u21C0", "RightVectorBar;": "\u2953", "Rightarrow;": "\u21D2", "Ropf;": "\u211D", "RoundImplies;": "\u2970", "Rrightarrow;": "\u21DB", "Rscr;": "\u211B", "Rsh;": "\u21B1", "RuleDelayed;": "\u29F4", "SHCHcy;": "\u0429", "SHcy;": "\u0428", "SOFTcy;": "\u042C", "Sacute;": "\u015A", "Sc;": "\u2ABC", "Scaron;": "\u0160", "Scedil;": "\u015E", "Scirc;": "\u015C", "Scy;": "\u0421", "Sfr;": "\u{1D516}", "ShortDownArrow;": "\u2193", "ShortLeftArrow;": "\u2190", "ShortRightArrow;": "\u2192", "ShortUpArrow;": "\u2191", "Sigma;": "\u03A3", "SmallCircle;": "\u2218", "Sopf;": "\u{1D54A}", "Sqrt;": "\u221A", "Square;": "\u25A1", "SquareIntersection;": "\u2293", "SquareSubset;": "\u228F", "SquareSubsetEqual;": "\u2291", "SquareSuperset;": "\u2290", "SquareSupersetEqual;": "\u2292", "SquareUnion;": "\u2294", "Sscr;": "\u{1D4AE}", "Star;": "\u22C6", "Sub;": "\u22D0", "Subset;": "\u22D0", "SubsetEqual;": "\u2286", "Succeeds;": "\u227B", "SucceedsEqual;": "\u2AB0", "SucceedsSlantEqual;": "\u227D", "SucceedsTilde;": "\u227F", "SuchThat;": "\u220B", "Sum;": "\u2211", "Sup;": "\u22D1", "Superset;": "\u2283", "SupersetEqual;": "\u2287", "Supset;": "\u22D1", "THORN": "\xDE", "THORN;": "\xDE", "TRADE;": "\u2122", "TSHcy;": "\u040B", "TScy;": "\u0426", "Tab;": "	", "Tau;": "\u03A4", "Tcaron;": "\u0164", "Tcedil;": "\u0162", "Tcy;": "\u0422", "Tfr;": "\u{1D517}", "Therefore;": "\u2234", "Theta;": "\u0398", "ThickSpace;": "\u205F\u200A", "ThinSpace;": "\u2009", "Tilde;": "\u223C", "TildeEqual;": "\u2243", "TildeFullEqual;": "\u2245", "TildeTilde;": "\u2248", "Topf;": "\u{1D54B}", "TripleDot;": "\u20DB", "Tscr;": "\u{1D4AF}", "Tstrok;": "\u0166", "Uacute": "\xDA", "Uacute;": "\xDA", "Uarr;": "\u219F", "Uarrocir;": "\u2949", "Ubrcy;": "\u040E", "Ubreve;": "\u016C", "Ucirc": "\xDB", "Ucirc;": "\xDB", "Ucy;": "\u0423", "Udblac;": "\u0170", "Ufr;": "\u{1D518}", "Ugrave": "\xD9", "Ugrave;": "\xD9", "Umacr;": "\u016A", "UnderBar;": "_", "UnderBrace;": "\u23DF", "UnderBracket;": "\u23B5", "UnderParenthesis;": "\u23DD", "Union;": "\u22C3", "UnionPlus;": "\u228E", "Uogon;": "\u0172", "Uopf;": "\u{1D54C}", "UpArrow;": "\u2191", "UpArrowBar;": "\u2912", "UpArrowDownArrow;": "\u21C5", "UpDownArrow;": "\u2195", "UpEquilibrium;": "\u296E", "UpTee;": "\u22A5", "UpTeeArrow;": "\u21A5", "Uparrow;": "\u21D1", "Updownarrow;": "\u21D5", "UpperLeftArrow;": "\u2196", "UpperRightArrow;": "\u2197", "Upsi;": "\u03D2", "Upsilon;": "\u03A5", "Uring;": "\u016E", "Uscr;": "\u{1D4B0}", "Utilde;": "\u0168", "Uuml": "\xDC", "Uuml;": "\xDC", "VDash;": "\u22AB", "Vbar;": "\u2AEB", "Vcy;": "\u0412", "Vdash;": "\u22A9", "Vdashl;": "\u2AE6", "Vee;": "\u22C1", "Verbar;": "\u2016", "Vert;": "\u2016", "VerticalBar;": "\u2223", "VerticalLine;": "|", "VerticalSeparator;": "\u2758", "VerticalTilde;": "\u2240", "VeryThinSpace;": "\u200A", "Vfr;": "\u{1D519}", "Vopf;": "\u{1D54D}", "Vscr;": "\u{1D4B1}", "Vvdash;": "\u22AA", "Wcirc;": "\u0174", "Wedge;": "\u22C0", "Wfr;": "\u{1D51A}", "Wopf;": "\u{1D54E}", "Wscr;": "\u{1D4B2}", "Xfr;": "\u{1D51B}", "Xi;": "\u039E", "Xopf;": "\u{1D54F}", "Xscr;": "\u{1D4B3}", "YAcy;": "\u042F", "YIcy;": "\u0407", "YUcy;": "\u042E", "Yacute": "\xDD", "Yacute;": "\xDD", "Ycirc;": "\u0176", "Ycy;": "\u042B", "Yfr;": "\u{1D51C}", "Yopf;": "\u{1D550}", "Yscr;": "\u{1D4B4}", "Yuml;": "\u0178", "ZHcy;": "\u0416", "Zacute;": "\u0179", "Zcaron;": "\u017D", "Zcy;": "\u0417", "Zdot;": "\u017B", "ZeroWidthSpace;": "\u200B", "Zeta;": "\u0396", "Zfr;": "\u2128", "Zopf;": "\u2124", "Zscr;": "\u{1D4B5}", "aacute": "\xE1", "aacute;": "\xE1", "abreve;": "\u0103", "ac;": "\u223E", "acE;": "\u223E\u0333", "acd;": "\u223F", "acirc": "\xE2", "acirc;": "\xE2", "acute": "\xB4", "acute;": "\xB4", "acy;": "\u0430", "aelig": "\xE6", "aelig;": "\xE6", "af;": "\u2061", "afr;": "\u{1D51E}", "agrave": "\xE0", "agrave;": "\xE0", "alefsym;": "\u2135", "aleph;": "\u2135", "alpha;": "\u03B1", "amacr;": "\u0101", "amalg;": "\u2A3F", "amp": "&", "amp;": "&", "and;": "\u2227", "andand;": "\u2A55", "andd;": "\u2A5C", "andslope;": "\u2A58", "andv;": "\u2A5A", "ang;": "\u2220", "ange;": "\u29A4", "angle;": "\u2220", "angmsd;": "\u2221", "angmsdaa;": "\u29A8", "angmsdab;": "\u29A9", "angmsdac;": "\u29AA", "angmsdad;": "\u29AB", "angmsdae;": "\u29AC", "angmsdaf;": "\u29AD", "angmsdag;": "\u29AE", "angmsdah;": "\u29AF", "angrt;": "\u221F", "angrtvb;": "\u22BE", "angrtvbd;": "\u299D", "angsph;": "\u2222", "angst;": "\xC5", "angzarr;": "\u237C", "aogon;": "\u0105", "aopf;": "\u{1D552}", "ap;": "\u2248", "apE;": "\u2A70", "apacir;": "\u2A6F", "ape;": "\u224A", "apid;": "\u224B", "apos;": "'", "approx;": "\u2248", "approxeq;": "\u224A", "aring": "\xE5", "aring;": "\xE5", "ascr;": "\u{1D4B6}", "ast;": "*", "asymp;": "\u2248", "asympeq;": "\u224D", "atilde": "\xE3", "atilde;": "\xE3", "auml": "\xE4", "auml;": "\xE4", "awconint;": "\u2233", "awint;": "\u2A11", "bNot;": "\u2AED", "backcong;": "\u224C", "backepsilon;": "\u03F6", "backprime;": "\u2035", "backsim;": "\u223D", "backsimeq;": "\u22CD", "barvee;": "\u22BD", "barwed;": "\u2305", "barwedge;": "\u2305", "bbrk;": "\u23B5", "bbrktbrk;": "\u23B6", "bcong;": "\u224C", "bcy;": "\u0431", "bdquo;": "\u201E", "becaus;": "\u2235", "because;": "\u2235", "bemptyv;": "\u29B0", "bepsi;": "\u03F6", "bernou;": "\u212C", "beta;": "\u03B2", "beth;": "\u2136", "between;": "\u226C", "bfr;": "\u{1D51F}", "bigcap;": "\u22C2", "bigcirc;": "\u25EF", "bigcup;": "\u22C3", "bigodot;": "\u2A00", "bigoplus;": "\u2A01", "bigotimes;": "\u2A02", "bigsqcup;": "\u2A06", "bigstar;": "\u2605", "bigtriangledown;": "\u25BD", "bigtriangleup;": "\u25B3", "biguplus;": "\u2A04", "bigvee;": "\u22C1", "bigwedge;": "\u22C0", "bkarow;": "\u290D", "blacklozenge;": "\u29EB", "blacksquare;": "\u25AA", "blacktriangle;": "\u25B4", "blacktriangledown;": "\u25BE", "blacktriangleleft;": "\u25C2", "blacktriangleright;": "\u25B8", "blank;": "\u2423", "blk12;": "\u2592", "blk14;": "\u2591", "blk34;": "\u2593", "block;": "\u2588", "bne;": "=\u20E5", "bnequiv;": "\u2261\u20E5", "bnot;": "\u2310", "bopf;": "\u{1D553}", "bot;": "\u22A5", "bottom;": "\u22A5", "bowtie;": "\u22C8", "boxDL;": "\u2557", "boxDR;": "\u2554", "boxDl;": "\u2556", "boxDr;": "\u2553", "boxH;": "\u2550", "boxHD;": "\u2566", "boxHU;": "\u2569", "boxHd;": "\u2564", "boxHu;": "\u2567", "boxUL;": "\u255D", "boxUR;": "\u255A", "boxUl;": "\u255C", "boxUr;": "\u2559", "boxV;": "\u2551", "boxVH;": "\u256C", "boxVL;": "\u2563", "boxVR;": "\u2560", "boxVh;": "\u256B", "boxVl;": "\u2562", "boxVr;": "\u255F", "boxbox;": "\u29C9", "boxdL;": "\u2555", "boxdR;": "\u2552", "boxdl;": "\u2510", "boxdr;": "\u250C", "boxh;": "\u2500", "boxhD;": "\u2565", "boxhU;": "\u2568", "boxhd;": "\u252C", "boxhu;": "\u2534", "boxminus;": "\u229F", "boxplus;": "\u229E", "boxtimes;": "\u22A0", "boxuL;": "\u255B", "boxuR;": "\u2558", "boxul;": "\u2518", "boxur;": "\u2514", "boxv;": "\u2502", "boxvH;": "\u256A", "boxvL;": "\u2561", "boxvR;": "\u255E", "boxvh;": "\u253C", "boxvl;": "\u2524", "boxvr;": "\u251C", "bprime;": "\u2035", "breve;": "\u02D8", "brvbar": "\xA6", "brvbar;": "\xA6", "bscr;": "\u{1D4B7}", "bsemi;": "\u204F", "bsim;": "\u223D", "bsime;": "\u22CD", "bsol;": "\\", "bsolb;": "\u29C5", "bsolhsub;": "\u27C8", "bull;": "\u2022", "bullet;": "\u2022", "bump;": "\u224E", "bumpE;": "\u2AAE", "bumpe;": "\u224F", "bumpeq;": "\u224F", "cacute;": "\u0107", "cap;": "\u2229", "capand;": "\u2A44", "capbrcup;": "\u2A49", "capcap;": "\u2A4B", "capcup;": "\u2A47", "capdot;": "\u2A40", "caps;": "\u2229\uFE00", "caret;": "\u2041", "caron;": "\u02C7", "ccaps;": "\u2A4D", "ccaron;": "\u010D", "ccedil": "\xE7", "ccedil;": "\xE7", "ccirc;": "\u0109", "ccups;": "\u2A4C", "ccupssm;": "\u2A50", "cdot;": "\u010B", "cedil": "\xB8", "cedil;": "\xB8", "cemptyv;": "\u29B2", "cent": "\xA2", "cent;": "\xA2", "centerdot;": "\xB7", "cfr;": "\u{1D520}", "chcy;": "\u0447", "check;": "\u2713", "checkmark;": "\u2713", "chi;": "\u03C7", "cir;": "\u25CB", "cirE;": "\u29C3", "circ;": "\u02C6", "circeq;": "\u2257", "circlearrowleft;": "\u21BA", "circlearrowright;": "\u21BB", "circledR;": "\xAE", "circledS;": "\u24C8", "circledast;": "\u229B", "circledcirc;": "\u229A", "circleddash;": "\u229D", "cire;": "\u2257", "cirfnint;": "\u2A10", "cirmid;": "\u2AEF", "cirscir;": "\u29C2", "clubs;": "\u2663", "clubsuit;": "\u2663", "colon;": ":", "colone;": "\u2254", "coloneq;": "\u2254", "comma;": ",", "commat;": "@", "comp;": "\u2201", "compfn;": "\u2218", "complement;": "\u2201", "complexes;": "\u2102", "cong;": "\u2245", "congdot;": "\u2A6D", "conint;": "\u222E", "copf;": "\u{1D554}", "coprod;": "\u2210", "copy": "\xA9", "copy;": "\xA9", "copysr;": "\u2117", "crarr;": "\u21B5", "cross;": "\u2717", "cscr;": "\u{1D4B8}", "csub;": "\u2ACF", "csube;": "\u2AD1", "csup;": "\u2AD0", "csupe;": "\u2AD2", "ctdot;": "\u22EF", "cudarrl;": "\u2938", "cudarrr;": "\u2935", "cuepr;": "\u22DE", "cuesc;": "\u22DF", "cularr;": "\u21B6", "cularrp;": "\u293D", "cup;": "\u222A", "cupbrcap;": "\u2A48", "cupcap;": "\u2A46", "cupcup;": "\u2A4A", "cupdot;": "\u228D", "cupor;": "\u2A45", "cups;": "\u222A\uFE00", "curarr;": "\u21B7", "curarrm;": "\u293C", "curlyeqprec;": "\u22DE", "curlyeqsucc;": "\u22DF", "curlyvee;": "\u22CE", "curlywedge;": "\u22CF", "curren": "\xA4", "curren;": "\xA4", "curvearrowleft;": "\u21B6", "curvearrowright;": "\u21B7", "cuvee;": "\u22CE", "cuwed;": "\u22CF", "cwconint;": "\u2232", "cwint;": "\u2231", "cylcty;": "\u232D", "dArr;": "\u21D3", "dHar;": "\u2965", "dagger;": "\u2020", "daleth;": "\u2138", "darr;": "\u2193", "dash;": "\u2010", "dashv;": "\u22A3", "dbkarow;": "\u290F", "dblac;": "\u02DD", "dcaron;": "\u010F", "dcy;": "\u0434", "dd;": "\u2146", "ddagger;": "\u2021", "ddarr;": "\u21CA", "ddotseq;": "\u2A77", "deg": "\xB0", "deg;": "\xB0", "delta;": "\u03B4", "demptyv;": "\u29B1", "dfisht;": "\u297F", "dfr;": "\u{1D521}", "dharl;": "\u21C3", "dharr;": "\u21C2", "diam;": "\u22C4", "diamond;": "\u22C4", "diamondsuit;": "\u2666", "diams;": "\u2666", "die;": "\xA8", "digamma;": "\u03DD", "disin;": "\u22F2", "div;": "\xF7", "divide": "\xF7", "divide;": "\xF7", "divideontimes;": "\u22C7", "divonx;": "\u22C7", "djcy;": "\u0452", "dlcorn;": "\u231E", "dlcrop;": "\u230D", "dollar;": "$", "dopf;": "\u{1D555}", "dot;": "\u02D9", "doteq;": "\u2250", "doteqdot;": "\u2251", "dotminus;": "\u2238", "dotplus;": "\u2214", "dotsquare;": "\u22A1", "doublebarwedge;": "\u2306", "downarrow;": "\u2193", "downdownarrows;": "\u21CA", "downharpoonleft;": "\u21C3", "downharpoonright;": "\u21C2", "drbkarow;": "\u2910", "drcorn;": "\u231F", "drcrop;": "\u230C", "dscr;": "\u{1D4B9}", "dscy;": "\u0455", "dsol;": "\u29F6", "dstrok;": "\u0111", "dtdot;": "\u22F1", "dtri;": "\u25BF", "dtrif;": "\u25BE", "duarr;": "\u21F5", "duhar;": "\u296F", "dwangle;": "\u29A6", "dzcy;": "\u045F", "dzigrarr;": "\u27FF", "eDDot;": "\u2A77", "eDot;": "\u2251", "eacute": "\xE9", "eacute;": "\xE9", "easter;": "\u2A6E", "ecaron;": "\u011B", "ecir;": "\u2256", "ecirc": "\xEA", "ecirc;": "\xEA", "ecolon;": "\u2255", "ecy;": "\u044D", "edot;": "\u0117", "ee;": "\u2147", "efDot;": "\u2252", "efr;": "\u{1D522}", "eg;": "\u2A9A", "egrave": "\xE8", "egrave;": "\xE8", "egs;": "\u2A96", "egsdot;": "\u2A98", "el;": "\u2A99", "elinters;": "\u23E7", "ell;": "\u2113", "els;": "\u2A95", "elsdot;": "\u2A97", "emacr;": "\u0113", "empty;": "\u2205", "emptyset;": "\u2205", "emptyv;": "\u2205", "emsp13;": "\u2004", "emsp14;": "\u2005", "emsp;": "\u2003", "eng;": "\u014B", "ensp;": "\u2002", "eogon;": "\u0119", "eopf;": "\u{1D556}", "epar;": "\u22D5", "eparsl;": "\u29E3", "eplus;": "\u2A71", "epsi;": "\u03B5", "epsilon;": "\u03B5", "epsiv;": "\u03F5", "eqcirc;": "\u2256", "eqcolon;": "\u2255", "eqsim;": "\u2242", "eqslantgtr;": "\u2A96", "eqslantless;": "\u2A95", "equals;": "=", "equest;": "\u225F", "equiv;": "\u2261", "equivDD;": "\u2A78", "eqvparsl;": "\u29E5", "erDot;": "\u2253", "erarr;": "\u2971", "escr;": "\u212F", "esdot;": "\u2250", "esim;": "\u2242", "eta;": "\u03B7", "eth": "\xF0", "eth;": "\xF0", "euml": "\xEB", "euml;": "\xEB", "euro;": "\u20AC", "excl;": "!", "exist;": "\u2203", "expectation;": "\u2130", "exponentiale;": "\u2147", "fallingdotseq;": "\u2252", "fcy;": "\u0444", "female;": "\u2640", "ffilig;": "\uFB03", "fflig;": "\uFB00", "ffllig;": "\uFB04", "ffr;": "\u{1D523}", "filig;": "\uFB01", "fjlig;": "fj", "flat;": "\u266D", "fllig;": "\uFB02", "fltns;": "\u25B1", "fnof;": "\u0192", "fopf;": "\u{1D557}", "forall;": "\u2200", "fork;": "\u22D4", "forkv;": "\u2AD9", "fpartint;": "\u2A0D", "frac12": "\xBD", "frac12;": "\xBD", "frac13;": "\u2153", "frac14": "\xBC", "frac14;": "\xBC", "frac15;": "\u2155", "frac16;": "\u2159", "frac18;": "\u215B", "frac23;": "\u2154", "frac25;": "\u2156", "frac34": "\xBE", "frac34;": "\xBE", "frac35;": "\u2157", "frac38;": "\u215C", "frac45;": "\u2158", "frac56;": "\u215A", "frac58;": "\u215D", "frac78;": "\u215E", "frasl;": "\u2044", "frown;": "\u2322", "fscr;": "\u{1D4BB}", "gE;": "\u2267", "gEl;": "\u2A8C", "gacute;": "\u01F5", "gamma;": "\u03B3", "gammad;": "\u03DD", "gap;": "\u2A86", "gbreve;": "\u011F", "gcirc;": "\u011D", "gcy;": "\u0433", "gdot;": "\u0121", "ge;": "\u2265", "gel;": "\u22DB", "geq;": "\u2265", "geqq;": "\u2267", "geqslant;": "\u2A7E", "ges;": "\u2A7E", "gescc;": "\u2AA9", "gesdot;": "\u2A80", "gesdoto;": "\u2A82", "gesdotol;": "\u2A84", "gesl;": "\u22DB\uFE00", "gesles;": "\u2A94", "gfr;": "\u{1D524}", "gg;": "\u226B", "ggg;": "\u22D9", "gimel;": "\u2137", "gjcy;": "\u0453", "gl;": "\u2277", "glE;": "\u2A92", "gla;": "\u2AA5", "glj;": "\u2AA4", "gnE;": "\u2269", "gnap;": "\u2A8A", "gnapprox;": "\u2A8A", "gne;": "\u2A88", "gneq;": "\u2A88", "gneqq;": "\u2269", "gnsim;": "\u22E7", "gopf;": "\u{1D558}", "grave;": "`", "gscr;": "\u210A", "gsim;": "\u2273", "gsime;": "\u2A8E", "gsiml;": "\u2A90", "gt": ">", "gt;": ">", "gtcc;": "\u2AA7", "gtcir;": "\u2A7A", "gtdot;": "\u22D7", "gtlPar;": "\u2995", "gtquest;": "\u2A7C", "gtrapprox;": "\u2A86", "gtrarr;": "\u2978", "gtrdot;": "\u22D7", "gtreqless;": "\u22DB", "gtreqqless;": "\u2A8C", "gtrless;": "\u2277", "gtrsim;": "\u2273", "gvertneqq;": "\u2269\uFE00", "gvnE;": "\u2269\uFE00", "hArr;": "\u21D4", "hairsp;": "\u200A", "half;": "\xBD", "hamilt;": "\u210B", "hardcy;": "\u044A", "harr;": "\u2194", "harrcir;": "\u2948", "harrw;": "\u21AD", "hbar;": "\u210F", "hcirc;": "\u0125", "hearts;": "\u2665", "heartsuit;": "\u2665", "hellip;": "\u2026", "hercon;": "\u22B9", "hfr;": "\u{1D525}", "hksearow;": "\u2925", "hkswarow;": "\u2926", "hoarr;": "\u21FF", "homtht;": "\u223B", "hookleftarrow;": "\u21A9", "hookrightarrow;": "\u21AA", "hopf;": "\u{1D559}", "horbar;": "\u2015", "hscr;": "\u{1D4BD}", "hslash;": "\u210F", "hstrok;": "\u0127", "hybull;": "\u2043", "hyphen;": "\u2010", "iacute": "\xED", "iacute;": "\xED", "ic;": "\u2063", "icirc": "\xEE", "icirc;": "\xEE", "icy;": "\u0438", "iecy;": "\u0435", "iexcl": "\xA1", "iexcl;": "\xA1", "iff;": "\u21D4", "ifr;": "\u{1D526}", "igrave": "\xEC", "igrave;": "\xEC", "ii;": "\u2148", "iiiint;": "\u2A0C", "iiint;": "\u222D", "iinfin;": "\u29DC", "iiota;": "\u2129", "ijlig;": "\u0133", "imacr;": "\u012B", "image;": "\u2111", "imagline;": "\u2110", "imagpart;": "\u2111", "imath;": "\u0131", "imof;": "\u22B7", "imped;": "\u01B5", "in;": "\u2208", "incare;": "\u2105", "infin;": "\u221E", "infintie;": "\u29DD", "inodot;": "\u0131", "int;": "\u222B", "intcal;": "\u22BA", "integers;": "\u2124", "intercal;": "\u22BA", "intlarhk;": "\u2A17", "intprod;": "\u2A3C", "iocy;": "\u0451", "iogon;": "\u012F", "iopf;": "\u{1D55A}", "iota;": "\u03B9", "iprod;": "\u2A3C", "iquest": "\xBF", "iquest;": "\xBF", "iscr;": "\u{1D4BE}", "isin;": "\u2208", "isinE;": "\u22F9", "isindot;": "\u22F5", "isins;": "\u22F4", "isinsv;": "\u22F3", "isinv;": "\u2208", "it;": "\u2062", "itilde;": "\u0129", "iukcy;": "\u0456", "iuml": "\xEF", "iuml;": "\xEF", "jcirc;": "\u0135", "jcy;": "\u0439", "jfr;": "\u{1D527}", "jmath;": "\u0237", "jopf;": "\u{1D55B}", "jscr;": "\u{1D4BF}", "jsercy;": "\u0458", "jukcy;": "\u0454", "kappa;": "\u03BA", "kappav;": "\u03F0", "kcedil;": "\u0137", "kcy;": "\u043A", "kfr;": "\u{1D528}", "kgreen;": "\u0138", "khcy;": "\u0445", "kjcy;": "\u045C", "kopf;": "\u{1D55C}", "kscr;": "\u{1D4C0}", "lAarr;": "\u21DA", "lArr;": "\u21D0", "lAtail;": "\u291B", "lBarr;": "\u290E", "lE;": "\u2266", "lEg;": "\u2A8B", "lHar;": "\u2962", "lacute;": "\u013A", "laemptyv;": "\u29B4", "lagran;": "\u2112", "lambda;": "\u03BB", "lang;": "\u27E8", "langd;": "\u2991", "langle;": "\u27E8", "lap;": "\u2A85", "laquo": "\xAB", "laquo;": "\xAB", "larr;": "\u2190", "larrb;": "\u21E4", "larrbfs;": "\u291F", "larrfs;": "\u291D", "larrhk;": "\u21A9", "larrlp;": "\u21AB", "larrpl;": "\u2939", "larrsim;": "\u2973", "larrtl;": "\u21A2", "lat;": "\u2AAB", "latail;": "\u2919", "late;": "\u2AAD", "lates;": "\u2AAD\uFE00", "lbarr;": "\u290C", "lbbrk;": "\u2772", "lbrace;": "{", "lbrack;": "[", "lbrke;": "\u298B", "lbrksld;": "\u298F", "lbrkslu;": "\u298D", "lcaron;": "\u013E", "lcedil;": "\u013C", "lceil;": "\u2308", "lcub;": "{", "lcy;": "\u043B", "ldca;": "\u2936", "ldquo;": "\u201C", "ldquor;": "\u201E", "ldrdhar;": "\u2967", "ldrushar;": "\u294B", "ldsh;": "\u21B2", "le;": "\u2264", "leftarrow;": "\u2190", "leftarrowtail;": "\u21A2", "leftharpoondown;": "\u21BD", "leftharpoonup;": "\u21BC", "leftleftarrows;": "\u21C7", "leftrightarrow;": "\u2194", "leftrightarrows;": "\u21C6", "leftrightharpoons;": "\u21CB", "leftrightsquigarrow;": "\u21AD", "leftthreetimes;": "\u22CB", "leg;": "\u22DA", "leq;": "\u2264", "leqq;": "\u2266", "leqslant;": "\u2A7D", "les;": "\u2A7D", "lescc;": "\u2AA8", "lesdot;": "\u2A7F", "lesdoto;": "\u2A81", "lesdotor;": "\u2A83", "lesg;": "\u22DA\uFE00", "lesges;": "\u2A93", "lessapprox;": "\u2A85", "lessdot;": "\u22D6", "lesseqgtr;": "\u22DA", "lesseqqgtr;": "\u2A8B", "lessgtr;": "\u2276", "lesssim;": "\u2272", "lfisht;": "\u297C", "lfloor;": "\u230A", "lfr;": "\u{1D529}", "lg;": "\u2276", "lgE;": "\u2A91", "lhard;": "\u21BD", "lharu;": "\u21BC", "lharul;": "\u296A", "lhblk;": "\u2584", "ljcy;": "\u0459", "ll;": "\u226A", "llarr;": "\u21C7", "llcorner;": "\u231E", "llhard;": "\u296B", "lltri;": "\u25FA", "lmidot;": "\u0140", "lmoust;": "\u23B0", "lmoustache;": "\u23B0", "lnE;": "\u2268", "lnap;": "\u2A89", "lnapprox;": "\u2A89", "lne;": "\u2A87", "lneq;": "\u2A87", "lneqq;": "\u2268", "lnsim;": "\u22E6", "loang;": "\u27EC", "loarr;": "\u21FD", "lobrk;": "\u27E6", "longleftarrow;": "\u27F5", "longleftrightarrow;": "\u27F7", "longmapsto;": "\u27FC", "longrightarrow;": "\u27F6", "looparrowleft;": "\u21AB", "looparrowright;": "\u21AC", "lopar;": "\u2985", "lopf;": "\u{1D55D}", "loplus;": "\u2A2D", "lotimes;": "\u2A34", "lowast;": "\u2217", "lowbar;": "_", "loz;": "\u25CA", "lozenge;": "\u25CA", "lozf;": "\u29EB", "lpar;": "(", "lparlt;": "\u2993", "lrarr;": "\u21C6", "lrcorner;": "\u231F", "lrhar;": "\u21CB", "lrhard;": "\u296D", "lrm;": "\u200E", "lrtri;": "\u22BF", "lsaquo;": "\u2039", "lscr;": "\u{1D4C1}", "lsh;": "\u21B0", "lsim;": "\u2272", "lsime;": "\u2A8D", "lsimg;": "\u2A8F", "lsqb;": "[", "lsquo;": "\u2018", "lsquor;": "\u201A", "lstrok;": "\u0142", "lt": "<", "lt;": "<", "ltcc;": "\u2AA6", "ltcir;": "\u2A79", "ltdot;": "\u22D6", "lthree;": "\u22CB", "ltimes;": "\u22C9", "ltlarr;": "\u2976", "ltquest;": "\u2A7B", "ltrPar;": "\u2996", "ltri;": "\u25C3", "ltrie;": "\u22B4", "ltrif;": "\u25C2", "lurdshar;": "\u294A", "luruhar;": "\u2966", "lvertneqq;": "\u2268\uFE00", "lvnE;": "\u2268\uFE00", "mDDot;": "\u223A", "macr": "\xAF", "macr;": "\xAF", "male;": "\u2642", "malt;": "\u2720", "maltese;": "\u2720", "map;": "\u21A6", "mapsto;": "\u21A6", "mapstodown;": "\u21A7", "mapstoleft;": "\u21A4", "mapstoup;": "\u21A5", "marker;": "\u25AE", "mcomma;": "\u2A29", "mcy;": "\u043C", "mdash;": "\u2014", "measuredangle;": "\u2221", "mfr;": "\u{1D52A}", "mho;": "\u2127", "micro": "\xB5", "micro;": "\xB5", "mid;": "\u2223", "midast;": "*", "midcir;": "\u2AF0", "middot": "\xB7", "middot;": "\xB7", "minus;": "\u2212", "minusb;": "\u229F", "minusd;": "\u2238", "minusdu;": "\u2A2A", "mlcp;": "\u2ADB", "mldr;": "\u2026", "mnplus;": "\u2213", "models;": "\u22A7", "mopf;": "\u{1D55E}", "mp;": "\u2213", "mscr;": "\u{1D4C2}", "mstpos;": "\u223E", "mu;": "\u03BC", "multimap;": "\u22B8", "mumap;": "\u22B8", "nGg;": "\u22D9\u0338", "nGt;": "\u226B\u20D2", "nGtv;": "\u226B\u0338", "nLeftarrow;": "\u21CD", "nLeftrightarrow;": "\u21CE", "nLl;": "\u22D8\u0338", "nLt;": "\u226A\u20D2", "nLtv;": "\u226A\u0338", "nRightarrow;": "\u21CF", "nVDash;": "\u22AF", "nVdash;": "\u22AE", "nabla;": "\u2207", "nacute;": "\u0144", "nang;": "\u2220\u20D2", "nap;": "\u2249", "napE;": "\u2A70\u0338", "napid;": "\u224B\u0338", "napos;": "\u0149", "napprox;": "\u2249", "natur;": "\u266E", "natural;": "\u266E", "naturals;": "\u2115", "nbsp": "\xA0", "nbsp;": "\xA0", "nbump;": "\u224E\u0338", "nbumpe;": "\u224F\u0338", "ncap;": "\u2A43", "ncaron;": "\u0148", "ncedil;": "\u0146", "ncong;": "\u2247", "ncongdot;": "\u2A6D\u0338", "ncup;": "\u2A42", "ncy;": "\u043D", "ndash;": "\u2013", "ne;": "\u2260", "neArr;": "\u21D7", "nearhk;": "\u2924", "nearr;": "\u2197", "nearrow;": "\u2197", "nedot;": "\u2250\u0338", "nequiv;": "\u2262", "nesear;": "\u2928", "nesim;": "\u2242\u0338", "nexist;": "\u2204", "nexists;": "\u2204", "nfr;": "\u{1D52B}", "ngE;": "\u2267\u0338", "nge;": "\u2271", "ngeq;": "\u2271", "ngeqq;": "\u2267\u0338", "ngeqslant;": "\u2A7E\u0338", "nges;": "\u2A7E\u0338", "ngsim;": "\u2275", "ngt;": "\u226F", "ngtr;": "\u226F", "nhArr;": "\u21CE", "nharr;": "\u21AE", "nhpar;": "\u2AF2", "ni;": "\u220B", "nis;": "\u22FC", "nisd;": "\u22FA", "niv;": "\u220B", "njcy;": "\u045A", "nlArr;": "\u21CD", "nlE;": "\u2266\u0338", "nlarr;": "\u219A", "nldr;": "\u2025", "nle;": "\u2270", "nleftarrow;": "\u219A", "nleftrightarrow;": "\u21AE", "nleq;": "\u2270", "nleqq;": "\u2266\u0338", "nleqslant;": "\u2A7D\u0338", "nles;": "\u2A7D\u0338", "nless;": "\u226E", "nlsim;": "\u2274", "nlt;": "\u226E", "nltri;": "\u22EA", "nltrie;": "\u22EC", "nmid;": "\u2224", "nopf;": "\u{1D55F}", "not": "\xAC", "not;": "\xAC", "notin;": "\u2209", "notinE;": "\u22F9\u0338", "notindot;": "\u22F5\u0338", "notinva;": "\u2209", "notinvb;": "\u22F7", "notinvc;": "\u22F6", "notni;": "\u220C", "notniva;": "\u220C", "notnivb;": "\u22FE", "notnivc;": "\u22FD", "npar;": "\u2226", "nparallel;": "\u2226", "nparsl;": "\u2AFD\u20E5", "npart;": "\u2202\u0338", "npolint;": "\u2A14", "npr;": "\u2280", "nprcue;": "\u22E0", "npre;": "\u2AAF\u0338", "nprec;": "\u2280", "npreceq;": "\u2AAF\u0338", "nrArr;": "\u21CF", "nrarr;": "\u219B", "nrarrc;": "\u2933\u0338", "nrarrw;": "\u219D\u0338", "nrightarrow;": "\u219B", "nrtri;": "\u22EB", "nrtrie;": "\u22ED", "nsc;": "\u2281", "nsccue;": "\u22E1", "nsce;": "\u2AB0\u0338", "nscr;": "\u{1D4C3}", "nshortmid;": "\u2224", "nshortparallel;": "\u2226", "nsim;": "\u2241", "nsime;": "\u2244", "nsimeq;": "\u2244", "nsmid;": "\u2224", "nspar;": "\u2226", "nsqsube;": "\u22E2", "nsqsupe;": "\u22E3", "nsub;": "\u2284", "nsubE;": "\u2AC5\u0338", "nsube;": "\u2288", "nsubset;": "\u2282\u20D2", "nsubseteq;": "\u2288", "nsubseteqq;": "\u2AC5\u0338", "nsucc;": "\u2281", "nsucceq;": "\u2AB0\u0338", "nsup;": "\u2285", "nsupE;": "\u2AC6\u0338", "nsupe;": "\u2289", "nsupset;": "\u2283\u20D2", "nsupseteq;": "\u2289", "nsupseteqq;": "\u2AC6\u0338", "ntgl;": "\u2279", "ntilde": "\xF1", "ntilde;": "\xF1", "ntlg;": "\u2278", "ntriangleleft;": "\u22EA", "ntrianglelefteq;": "\u22EC", "ntriangleright;": "\u22EB", "ntrianglerighteq;": "\u22ED", "nu;": "\u03BD", "num;": "#", "numero;": "\u2116", "numsp;": "\u2007", "nvDash;": "\u22AD", "nvHarr;": "\u2904", "nvap;": "\u224D\u20D2", "nvdash;": "\u22AC", "nvge;": "\u2265\u20D2", "nvgt;": ">\u20D2", "nvinfin;": "\u29DE", "nvlArr;": "\u2902", "nvle;": "\u2264\u20D2", "nvlt;": "<\u20D2", "nvltrie;": "\u22B4\u20D2", "nvrArr;": "\u2903", "nvrtrie;": "\u22B5\u20D2", "nvsim;": "\u223C\u20D2", "nwArr;": "\u21D6", "nwarhk;": "\u2923", "nwarr;": "\u2196", "nwarrow;": "\u2196", "nwnear;": "\u2927", "oS;": "\u24C8", "oacute": "\xF3", "oacute;": "\xF3", "oast;": "\u229B", "ocir;": "\u229A", "ocirc": "\xF4", "ocirc;": "\xF4", "ocy;": "\u043E", "odash;": "\u229D", "odblac;": "\u0151", "odiv;": "\u2A38", "odot;": "\u2299", "odsold;": "\u29BC", "oelig;": "\u0153", "ofcir;": "\u29BF", "ofr;": "\u{1D52C}", "ogon;": "\u02DB", "ograve": "\xF2", "ograve;": "\xF2", "ogt;": "\u29C1", "ohbar;": "\u29B5", "ohm;": "\u03A9", "oint;": "\u222E", "olarr;": "\u21BA", "olcir;": "\u29BE", "olcross;": "\u29BB", "oline;": "\u203E", "olt;": "\u29C0", "omacr;": "\u014D", "omega;": "\u03C9", "omicron;": "\u03BF", "omid;": "\u29B6", "ominus;": "\u2296", "oopf;": "\u{1D560}", "opar;": "\u29B7", "operp;": "\u29B9", "oplus;": "\u2295", "or;": "\u2228", "orarr;": "\u21BB", "ord;": "\u2A5D", "order;": "\u2134", "orderof;": "\u2134", "ordf": "\xAA", "ordf;": "\xAA", "ordm": "\xBA", "ordm;": "\xBA", "origof;": "\u22B6", "oror;": "\u2A56", "orslope;": "\u2A57", "orv;": "\u2A5B", "oscr;": "\u2134", "oslash": "\xF8", "oslash;": "\xF8", "osol;": "\u2298", "otilde": "\xF5", "otilde;": "\xF5", "otimes;": "\u2297", "otimesas;": "\u2A36", "ouml": "\xF6", "ouml;": "\xF6", "ovbar;": "\u233D", "par;": "\u2225", "para": "\xB6", "para;": "\xB6", "parallel;": "\u2225", "parsim;": "\u2AF3", "parsl;": "\u2AFD", "part;": "\u2202", "pcy;": "\u043F", "percnt;": "%", "period;": ".", "permil;": "\u2030", "perp;": "\u22A5", "pertenk;": "\u2031", "pfr;": "\u{1D52D}", "phi;": "\u03C6", "phiv;": "\u03D5", "phmmat;": "\u2133", "phone;": "\u260E", "pi;": "\u03C0", "pitchfork;": "\u22D4", "piv;": "\u03D6", "planck;": "\u210F", "planckh;": "\u210E", "plankv;": "\u210F", "plus;": "+", "plusacir;": "\u2A23", "plusb;": "\u229E", "pluscir;": "\u2A22", "plusdo;": "\u2214", "plusdu;": "\u2A25", "pluse;": "\u2A72", "plusmn": "\xB1", "plusmn;": "\xB1", "plussim;": "\u2A26", "plustwo;": "\u2A27", "pm;": "\xB1", "pointint;": "\u2A15", "popf;": "\u{1D561}", "pound": "\xA3", "pound;": "\xA3", "pr;": "\u227A", "prE;": "\u2AB3", "prap;": "\u2AB7", "prcue;": "\u227C", "pre;": "\u2AAF", "prec;": "\u227A", "precapprox;": "\u2AB7", "preccurlyeq;": "\u227C", "preceq;": "\u2AAF", "precnapprox;": "\u2AB9", "precneqq;": "\u2AB5", "precnsim;": "\u22E8", "precsim;": "\u227E", "prime;": "\u2032", "primes;": "\u2119", "prnE;": "\u2AB5", "prnap;": "\u2AB9", "prnsim;": "\u22E8", "prod;": "\u220F", "profalar;": "\u232E", "profline;": "\u2312", "profsurf;": "\u2313", "prop;": "\u221D", "propto;": "\u221D", "prsim;": "\u227E", "prurel;": "\u22B0", "pscr;": "\u{1D4C5}", "psi;": "\u03C8", "puncsp;": "\u2008", "qfr;": "\u{1D52E}", "qint;": "\u2A0C", "qopf;": "\u{1D562}", "qprime;": "\u2057", "qscr;": "\u{1D4C6}", "quaternions;": "\u210D", "quatint;": "\u2A16", "quest;": "?", "questeq;": "\u225F", "quot": '"', "quot;": '"', "rAarr;": "\u21DB", "rArr;": "\u21D2", "rAtail;": "\u291C", "rBarr;": "\u290F", "rHar;": "\u2964", "race;": "\u223D\u0331", "racute;": "\u0155", "radic;": "\u221A", "raemptyv;": "\u29B3", "rang;": "\u27E9", "rangd;": "\u2992", "range;": "\u29A5", "rangle;": "\u27E9", "raquo": "\xBB", "raquo;": "\xBB", "rarr;": "\u2192", "rarrap;": "\u2975", "rarrb;": "\u21E5", "rarrbfs;": "\u2920", "rarrc;": "\u2933", "rarrfs;": "\u291E", "rarrhk;": "\u21AA", "rarrlp;": "\u21AC", "rarrpl;": "\u2945", "rarrsim;": "\u2974", "rarrtl;": "\u21A3", "rarrw;": "\u219D", "ratail;": "\u291A", "ratio;": "\u2236", "rationals;": "\u211A", "rbarr;": "\u290D", "rbbrk;": "\u2773", "rbrace;": "}", "rbrack;": "]", "rbrke;": "\u298C", "rbrksld;": "\u298E", "rbrkslu;": "\u2990", "rcaron;": "\u0159", "rcedil;": "\u0157", "rceil;": "\u2309", "rcub;": "}", "rcy;": "\u0440", "rdca;": "\u2937", "rdldhar;": "\u2969", "rdquo;": "\u201D", "rdquor;": "\u201D", "rdsh;": "\u21B3", "real;": "\u211C", "realine;": "\u211B", "realpart;": "\u211C", "reals;": "\u211D", "rect;": "\u25AD", "reg": "\xAE", "reg;": "\xAE", "rfisht;": "\u297D", "rfloor;": "\u230B", "rfr;": "\u{1D52F}", "rhard;": "\u21C1", "rharu;": "\u21C0", "rharul;": "\u296C", "rho;": "\u03C1", "rhov;": "\u03F1", "rightarrow;": "\u2192", "rightarrowtail;": "\u21A3", "rightharpoondown;": "\u21C1", "rightharpoonup;": "\u21C0", "rightleftarrows;": "\u21C4", "rightleftharpoons;": "\u21CC", "rightrightarrows;": "\u21C9", "rightsquigarrow;": "\u219D", "rightthreetimes;": "\u22CC", "ring;": "\u02DA", "risingdotseq;": "\u2253", "rlarr;": "\u21C4", "rlhar;": "\u21CC", "rlm;": "\u200F", "rmoust;": "\u23B1", "rmoustache;": "\u23B1", "rnmid;": "\u2AEE", "roang;": "\u27ED", "roarr;": "\u21FE", "robrk;": "\u27E7", "ropar;": "\u2986", "ropf;": "\u{1D563}", "roplus;": "\u2A2E", "rotimes;": "\u2A35", "rpar;": ")", "rpargt;": "\u2994", "rppolint;": "\u2A12", "rrarr;": "\u21C9", "rsaquo;": "\u203A", "rscr;": "\u{1D4C7}", "rsh;": "\u21B1", "rsqb;": "]", "rsquo;": "\u2019", "rsquor;": "\u2019", "rthree;": "\u22CC", "rtimes;": "\u22CA", "rtri;": "\u25B9", "rtrie;": "\u22B5", "rtrif;": "\u25B8", "rtriltri;": "\u29CE", "ruluhar;": "\u2968", "rx;": "\u211E", "sacute;": "\u015B", "sbquo;": "\u201A", "sc;": "\u227B", "scE;": "\u2AB4", "scap;": "\u2AB8", "scaron;": "\u0161", "sccue;": "\u227D", "sce;": "\u2AB0", "scedil;": "\u015F", "scirc;": "\u015D", "scnE;": "\u2AB6", "scnap;": "\u2ABA", "scnsim;": "\u22E9", "scpolint;": "\u2A13", "scsim;": "\u227F", "scy;": "\u0441", "sdot;": "\u22C5", "sdotb;": "\u22A1", "sdote;": "\u2A66", "seArr;": "\u21D8", "searhk;": "\u2925", "searr;": "\u2198", "searrow;": "\u2198", "sect": "\xA7", "sect;": "\xA7", "semi;": ";", "seswar;": "\u2929", "setminus;": "\u2216", "setmn;": "\u2216", "sext;": "\u2736", "sfr;": "\u{1D530}", "sfrown;": "\u2322", "sharp;": "\u266F", "shchcy;": "\u0449", "shcy;": "\u0448", "shortmid;": "\u2223", "shortparallel;": "\u2225", "shy": "\xAD", "shy;": "\xAD", "sigma;": "\u03C3", "sigmaf;": "\u03C2", "sigmav;": "\u03C2", "sim;": "\u223C", "simdot;": "\u2A6A", "sime;": "\u2243", "simeq;": "\u2243", "simg;": "\u2A9E", "simgE;": "\u2AA0", "siml;": "\u2A9D", "simlE;": "\u2A9F", "simne;": "\u2246", "simplus;": "\u2A24", "simrarr;": "\u2972", "slarr;": "\u2190", "smallsetminus;": "\u2216", "smashp;": "\u2A33", "smeparsl;": "\u29E4", "smid;": "\u2223", "smile;": "\u2323", "smt;": "\u2AAA", "smte;": "\u2AAC", "smtes;": "\u2AAC\uFE00", "softcy;": "\u044C", "sol;": "/", "solb;": "\u29C4", "solbar;": "\u233F", "sopf;": "\u{1D564}", "spades;": "\u2660", "spadesuit;": "\u2660", "spar;": "\u2225", "sqcap;": "\u2293", "sqcaps;": "\u2293\uFE00", "sqcup;": "\u2294", "sqcups;": "\u2294\uFE00", "sqsub;": "\u228F", "sqsube;": "\u2291", "sqsubset;": "\u228F", "sqsubseteq;": "\u2291", "sqsup;": "\u2290", "sqsupe;": "\u2292", "sqsupset;": "\u2290", "sqsupseteq;": "\u2292", "squ;": "\u25A1", "square;": "\u25A1", "squarf;": "\u25AA", "squf;": "\u25AA", "srarr;": "\u2192", "sscr;": "\u{1D4C8}", "ssetmn;": "\u2216", "ssmile;": "\u2323", "sstarf;": "\u22C6", "star;": "\u2606", "starf;": "\u2605", "straightepsilon;": "\u03F5", "straightphi;": "\u03D5", "strns;": "\xAF", "sub;": "\u2282", "subE;": "\u2AC5", "subdot;": "\u2ABD", "sube;": "\u2286", "subedot;": "\u2AC3", "submult;": "\u2AC1", "subnE;": "\u2ACB", "subne;": "\u228A", "subplus;": "\u2ABF", "subrarr;": "\u2979", "subset;": "\u2282", "subseteq;": "\u2286", "subseteqq;": "\u2AC5", "subsetneq;": "\u228A", "subsetneqq;": "\u2ACB", "subsim;": "\u2AC7", "subsub;": "\u2AD5", "subsup;": "\u2AD3", "succ;": "\u227B", "succapprox;": "\u2AB8", "succcurlyeq;": "\u227D", "succeq;": "\u2AB0", "succnapprox;": "\u2ABA", "succneqq;": "\u2AB6", "succnsim;": "\u22E9", "succsim;": "\u227F", "sum;": "\u2211", "sung;": "\u266A", "sup1": "\xB9", "sup1;": "\xB9", "sup2": "\xB2", "sup2;": "\xB2", "sup3": "\xB3", "sup3;": "\xB3", "sup;": "\u2283", "supE;": "\u2AC6", "supdot;": "\u2ABE", "supdsub;": "\u2AD8", "supe;": "\u2287", "supedot;": "\u2AC4", "suphsol;": "\u27C9", "suphsub;": "\u2AD7", "suplarr;": "\u297B", "supmult;": "\u2AC2", "supnE;": "\u2ACC", "supne;": "\u228B", "supplus;": "\u2AC0", "supset;": "\u2283", "supseteq;": "\u2287", "supseteqq;": "\u2AC6", "supsetneq;": "\u228B", "supsetneqq;": "\u2ACC", "supsim;": "\u2AC8", "supsub;": "\u2AD4", "supsup;": "\u2AD6", "swArr;": "\u21D9", "swarhk;": "\u2926", "swarr;": "\u2199", "swarrow;": "\u2199", "swnwar;": "\u292A", "szlig": "\xDF", "szlig;": "\xDF", "target;": "\u2316", "tau;": "\u03C4", "tbrk;": "\u23B4", "tcaron;": "\u0165", "tcedil;": "\u0163", "tcy;": "\u0442", "tdot;": "\u20DB", "telrec;": "\u2315", "tfr;": "\u{1D531}", "there4;": "\u2234", "therefore;": "\u2234", "theta;": "\u03B8", "thetasym;": "\u03D1", "thetav;": "\u03D1", "thickapprox;": "\u2248", "thicksim;": "\u223C", "thinsp;": "\u2009", "thkap;": "\u2248", "thksim;": "\u223C", "thorn": "\xFE", "thorn;": "\xFE", "tilde;": "\u02DC", "times": "\xD7", "times;": "\xD7", "timesb;": "\u22A0", "timesbar;": "\u2A31", "timesd;": "\u2A30", "tint;": "\u222D", "toea;": "\u2928", "top;": "\u22A4", "topbot;": "\u2336", "topcir;": "\u2AF1", "topf;": "\u{1D565}", "topfork;": "\u2ADA", "tosa;": "\u2929", "tprime;": "\u2034", "trade;": "\u2122", "triangle;": "\u25B5", "triangledown;": "\u25BF", "triangleleft;": "\u25C3", "trianglelefteq;": "\u22B4", "triangleq;": "\u225C", "triangleright;": "\u25B9", "trianglerighteq;": "\u22B5", "tridot;": "\u25EC", "trie;": "\u225C", "triminus;": "\u2A3A", "triplus;": "\u2A39", "trisb;": "\u29CD", "tritime;": "\u2A3B", "trpezium;": "\u23E2", "tscr;": "\u{1D4C9}", "tscy;": "\u0446", "tshcy;": "\u045B", "tstrok;": "\u0167", "twixt;": "\u226C", "twoheadleftarrow;": "\u219E", "twoheadrightarrow;": "\u21A0", "uArr;": "\u21D1", "uHar;": "\u2963", "uacute": "\xFA", "uacute;": "\xFA", "uarr;": "\u2191", "ubrcy;": "\u045E", "ubreve;": "\u016D", "ucirc": "\xFB", "ucirc;": "\xFB", "ucy;": "\u0443", "udarr;": "\u21C5", "udblac;": "\u0171", "udhar;": "\u296E", "ufisht;": "\u297E", "ufr;": "\u{1D532}", "ugrave": "\xF9", "ugrave;": "\xF9", "uharl;": "\u21BF", "uharr;": "\u21BE", "uhblk;": "\u2580", "ulcorn;": "\u231C", "ulcorner;": "\u231C", "ulcrop;": "\u230F", "ultri;": "\u25F8", "umacr;": "\u016B", "uml": "\xA8", "uml;": "\xA8", "uogon;": "\u0173", "uopf;": "\u{1D566}", "uparrow;": "\u2191", "updownarrow;": "\u2195", "upharpoonleft;": "\u21BF", "upharpoonright;": "\u21BE", "uplus;": "\u228E", "upsi;": "\u03C5", "upsih;": "\u03D2", "upsilon;": "\u03C5", "upuparrows;": "\u21C8", "urcorn;": "\u231D", "urcorner;": "\u231D", "urcrop;": "\u230E", "uring;": "\u016F", "urtri;": "\u25F9", "uscr;": "\u{1D4CA}", "utdot;": "\u22F0", "utilde;": "\u0169", "utri;": "\u25B5", "utrif;": "\u25B4", "uuarr;": "\u21C8", "uuml": "\xFC", "uuml;": "\xFC", "uwangle;": "\u29A7", "vArr;": "\u21D5", "vBar;": "\u2AE8", "vBarv;": "\u2AE9", "vDash;": "\u22A8", "vangrt;": "\u299C", "varepsilon;": "\u03F5", "varkappa;": "\u03F0", "varnothing;": "\u2205", "varphi;": "\u03D5", "varpi;": "\u03D6", "varpropto;": "\u221D", "varr;": "\u2195", "varrho;": "\u03F1", "varsigma;": "\u03C2", "varsubsetneq;": "\u228A\uFE00", "varsubsetneqq;": "\u2ACB\uFE00", "varsupsetneq;": "\u228B\uFE00", "varsupsetneqq;": "\u2ACC\uFE00", "vartheta;": "\u03D1", "vartriangleleft;": "\u22B2", "vartriangleright;": "\u22B3", "vcy;": "\u0432", "vdash;": "\u22A2", "vee;": "\u2228", "veebar;": "\u22BB", "veeeq;": "\u225A", "vellip;": "\u22EE", "verbar;": "|", "vert;": "|", "vfr;": "\u{1D533}", "vltri;": "\u22B2", "vnsub;": "\u2282\u20D2", "vnsup;": "\u2283\u20D2", "vopf;": "\u{1D567}", "vprop;": "\u221D", "vrtri;": "\u22B3", "vscr;": "\u{1D4CB}", "vsubnE;": "\u2ACB\uFE00", "vsubne;": "\u228A\uFE00", "vsupnE;": "\u2ACC\uFE00", "vsupne;": "\u228B\uFE00", "vzigzag;": "\u299A", "wcirc;": "\u0175", "wedbar;": "\u2A5F", "wedge;": "\u2227", "wedgeq;": "\u2259", "weierp;": "\u2118", "wfr;": "\u{1D534}", "wopf;": "\u{1D568}", "wp;": "\u2118", "wr;": "\u2240", "wreath;": "\u2240", "wscr;": "\u{1D4CC}", "xcap;": "\u22C2", "xcirc;": "\u25EF", "xcup;": "\u22C3", "xdtri;": "\u25BD", "xfr;": "\u{1D535}", "xhArr;": "\u27FA", "xharr;": "\u27F7", "xi;": "\u03BE", "xlArr;": "\u27F8", "xlarr;": "\u27F5", "xmap;": "\u27FC", "xnis;": "\u22FB", "xodot;": "\u2A00", "xopf;": "\u{1D569}", "xoplus;": "\u2A01", "xotime;": "\u2A02", "xrArr;": "\u27F9", "xrarr;": "\u27F6", "xscr;": "\u{1D4CD}", "xsqcup;": "\u2A06", "xuplus;": "\u2A04", "xutri;": "\u25B3", "xvee;": "\u22C1", "xwedge;": "\u22C0", "yacute": "\xFD", "yacute;": "\xFD", "yacy;": "\u044F", "ycirc;": "\u0177", "ycy;": "\u044B", "yen": "\xA5", "yen;": "\xA5", "yfr;": "\u{1D536}", "yicy;": "\u0457", "yopf;": "\u{1D56A}", "yscr;": "\u{1D4CE}", "yucy;": "\u044E", "yuml": "\xFF", "yuml;": "\xFF", "zacute;": "\u017A", "zcaron;": "\u017E", "zcy;": "\u0437", "zdot;": "\u017C", "zeetrf;": "\u2128", "zeta;": "\u03B6", "zfr;": "\u{1D537}", "zhcy;": "\u0436", "zigrarr;": "\u21DD", "zopf;": "\u{1D56B}", "zscr;": "\u{1D4CF}", "zwj;": "\u200D", "zwnj;": "\u200C" });
 
 // ../wire-core/dist/operations.js
 var wireWatchHooks2 = Symbol("wireWatchHooks");
+var sourceLock2 = (source) => source.service === "google-docs" && source.type === "document" ? "google-docs:" + String(source["document_id"] ?? source.identifier.split("#tab=")[0]) : resourceId2(source);
 
 // ../wire/src/hooks.ts
 var execFileAsync = (0, import_node_util.promisify)(import_node_child_process2.execFile);
 function primaryFilesystemLink(resource) {
-  return resource.filesystem_links.find((link2) => link2.role === "primary");
+  return resource.filesystem_links.find((link4) => link4.role === "primary");
 }
 function wireTitle(resource) {
   return resource.data.find((item) => item.namespace === "wire" && item.key === "title").value;
 }
 async function hookCommandPaths(wireRoot2, event) {
-  const hooksPath = (0, import_node_path4.join)(wireRoot2, "hooks");
-  const eventPath = (0, import_node_path4.join)(hooksPath, event);
+  const hooksPath = (0, import_node_path6.join)(wireRoot2, "hooks");
+  const eventPath = (0, import_node_path6.join)(hooksPath, event);
   const paths = [];
-  if ((0, import_node_fs3.existsSync)(eventPath)) paths.push(eventPath);
-  const directoryPath = (0, import_node_path4.join)(hooksPath, `${event}.d`);
-  if ((0, import_node_fs3.existsSync)(directoryPath)) {
-    const directory = (0, import_node_fs3.statSync)(directoryPath);
+  if ((0, import_node_fs4.existsSync)(eventPath)) paths.push(eventPath);
+  const directoryPath = (0, import_node_path6.join)(hooksPath, `${event}.d`);
+  if ((0, import_node_fs4.existsSync)(directoryPath)) {
+    const directory = (0, import_node_fs4.statSync)(directoryPath);
     if (!directory.isDirectory()) throw new Error(`Wire hook path is not a directory: ${directoryPath}`);
-    for (const filename of (await (0, import_promises5.readdir)(directoryPath)).sort()) paths.push((0, import_node_path4.join)(directoryPath, filename));
+    for (const filename of (await (0, import_promises7.readdir)(directoryPath)).sort()) paths.push((0, import_node_path6.join)(directoryPath, filename));
   }
   for (const path of paths) {
-    const file = (0, import_node_fs3.statSync)(path);
+    const file = (0, import_node_fs4.statSync)(path);
     if (!file.isFile()) throw new Error(`Wire hook path is not a file: ${path}`);
     if ((file.mode & 73) === 0) throw new Error(`Wire hook is not executable: ${path}`);
   }
@@ -15731,7 +16499,7 @@ function resourceEnvironment(command, currentDirectory, wireRoot2, result) {
     WIRE_EVENT: "post-resource",
     WIRE_COMMAND: command,
     WIRE_CWD: currentDirectory,
-    WIRE_WORKSPACE: (0, import_node_path4.dirname)(wireRoot2),
+    WIRE_WORKSPACE: (0, import_node_path6.dirname)(wireRoot2),
     WIRE_ROOT: wireRoot2,
     WIRE_RESOURCE_ID: result.resource.id,
     WIRE_SERVICE: service,
@@ -15750,7 +16518,7 @@ function summaryEnvironment(event, command, currentDirectory, wireRoot2, results
     WIRE_EVENT: event,
     WIRE_COMMAND: command,
     WIRE_CWD: currentDirectory,
-    WIRE_WORKSPACE: (0, import_node_path4.dirname)(wireRoot2),
+    WIRE_WORKSPACE: (0, import_node_path6.dirname)(wireRoot2),
     WIRE_ROOT: wireRoot2,
     WIRE_RESULT_COUNT: String(results.length),
     WIRE_CHANGED_COUNT: String(results.filter(changedWireResult).length),
@@ -15766,21 +16534,21 @@ function outputEnvironment(stdout) {
   }
   return values2;
 }
-async function updateMovedResult(options, wireRoot2, result, movedPath) {
-  const workspace2 = (0, import_node_path4.dirname)(wireRoot2);
-  const outputPath = (0, import_node_path4.isAbsolute)(movedPath) ? movedPath : (0, import_node_path4.resolve)(workspace2, movedPath);
+async function updateMovedResult(options, wireRoot2, result, movedPath, tracked) {
+  const workspace2 = (0, import_node_path6.dirname)(wireRoot2);
+  const outputPath = (0, import_node_path6.isAbsolute)(movedPath) ? movedPath : (0, import_node_path6.resolve)(workspace2, movedPath);
   const relativePath = wireRelativePath(outputPath, wireRoot2);
   const primary = primaryFilesystemLink(result.resource);
-  const resource = {
-    ...result.resource,
-    filesystem_links: [
-      ...result.resource.filesystem_links.filter((link2) => !(link2.path === primary.path && link2.role === "primary")),
-      { ...primary, path: relativePath }
-    ]
-  };
-  if (result.summary.action !== "detached") {
-    const registry = await openWireRegistry(wireRoot2, options.home);
-    if ((await registry.listResources()).some((item) => item.id === result.resource.id)) await registry.put(resource);
+  const moveLink = (r) => ({ ...r, filesystem_links: r.filesystem_links.map((link4) => link4.role === "primary" && link4.path === primary.path ? { ...link4, path: relativePath } : link4) });
+  let resource = moveLink(result.resource);
+  if (result.summary.action !== "detached" && tracked) {
+    const source = result.resource.identifiers.find((i) => i.service + ":" + i.identifier === result.resource.id);
+    resource = await withHistoryLock2(wireRoot2, sourceLock2({ ...source, type: result.resource.type }), async () => {
+      const registry = await openWireRegistry(wireRoot2, options.home);
+      const latest = await registry.get(result.resource.id);
+      if (primaryFilesystemLink(latest).path !== primary.path) throw new Error("The registered path changed while the hook was running. Wire kept the newer path.");
+      return registry.put(moveLink(latest));
+    });
   }
   return { ...result, resource, path: outputPath, summary: { ...result.summary, local: outputPath } };
 }
@@ -15791,12 +16559,12 @@ async function hookEnvironment(options, wireRoot2) {
 async function runHookCommands(wireRoot2, event, environment2) {
   let current = { ...environment2 };
   for (const path of await hookCommandPaths(wireRoot2, event)) {
-    const result = await execFileAsync(path, [], { cwd: (0, import_node_path4.dirname)(wireRoot2), env: current, encoding: "utf8" });
+    const result = await execFileAsync(path, [], { cwd: (0, import_node_path6.dirname)(wireRoot2), env: current, encoding: "utf8" });
     current = { ...current, ...outputEnvironment(result.stdout) };
   }
   return current;
 }
-async function runResourceHooks(options, command, result) {
+async function runResourceHooks(options, command, result, tracked = true) {
   const wireRoot2 = await configuredWireRoot(result.path, options.home);
   if (wireRoot2 === null) return { result, environment: {} };
   let currentResult = result;
@@ -15805,12 +16573,12 @@ async function runResourceHooks(options, command, result) {
     ...resourceEnvironment(command, options.currentDirectory, wireRoot2, currentResult)
   };
   for (const path of await hookCommandPaths(wireRoot2, "post-resource")) {
-    const hookResult = await execFileAsync(path, [], { cwd: (0, import_node_path4.dirname)(wireRoot2), env: environment2, encoding: "utf8" });
+    const hookResult = await execFileAsync(path, [], { cwd: (0, import_node_path6.dirname)(wireRoot2), env: environment2, encoding: "utf8" });
     const output = outputEnvironment(hookResult.stdout);
     environment2 = { ...environment2, ...output };
     const outputPath = output["WIRE_PATH"];
-    if (outputPath !== void 0 && (0, import_node_path4.resolve)((0, import_node_path4.dirname)(wireRoot2), outputPath) !== currentResult.path) {
-      currentResult = await updateMovedResult(options, wireRoot2, currentResult, outputPath);
+    if (outputPath !== void 0 && (0, import_node_path6.resolve)((0, import_node_path6.dirname)(wireRoot2), outputPath) !== currentResult.path) {
+      currentResult = await updateMovedResult(options, wireRoot2, currentResult, outputPath, tracked);
       environment2 = { ...environment2, ...resourceEnvironment(command, options.currentDirectory, wireRoot2, currentResult) };
     }
   }
@@ -15825,8 +16593,8 @@ async function runSummaryHooks(options, event, command, rootPath, results, envir
     ...summaryEnvironment(event, command, options.currentDirectory, wireRoot2, results)
   });
 }
-async function runSingleResultHooks(options, command, result) {
-  const state = result.summary.action === "failed" ? { result, environment: {} } : await runResourceHooks(options, command, result);
+async function runSingleResultHooks(options, command, result, tracked = true) {
+  const state = result.summary.action === "failed" ? { result, environment: {} } : await runResourceHooks(options, command, result, tracked);
   await runSummaryHooks(options, "post-command", command, state.result.path, [state.result], state.environment);
   return state.result;
 }
@@ -15851,10 +16619,10 @@ function withWireHooks(wire2, options) {
   const watchSyncHook = (command, result) => runSingleResultHooks(options, command, result);
   return Object.freeze({
     ...wire2,
-    attach: async (url, path) => runSingleResultHooks(options, "attach", await wire2.attach(url, path)),
+    attach: async (url, path, editorReceipts) => runSingleResultHooks(options, "attach", await wire2.attach(url, path, editorReceipts)),
     create: async (url, path) => runSingleResultHooks(options, "attach", await wire2.create(url, path)),
     sync: async (value, path) => runSingleResultHooks(options, "sync", await wire2.sync(value, path)),
-    downloadSource: async (url, path) => runSingleResultHooks(options, "download", await wire2.downloadSource(url, path)),
+    downloadSource: async (url, path) => runSingleResultHooks(options, "download", await wire2.downloadSource(url, path), false),
     download: async (value, path) => runSingleResultHooks(options, "download", await wire2.download(value, path)),
     detach: async (value, path) => runSingleResultHooks(options, "detach", await wire2.detach(value, path)),
     unlink: async (value, path) => runSingleResultHooks(options, "detach", await wire2.unlink(value, path)),
@@ -15872,7 +16640,7 @@ async function asanaHttp(runtime2, url, init) {
     const header = response.headers.get("retry-after");
     if (header === null || !/^\d+$/.test(header) || Number(header) > 120) return response;
     await response.body?.cancel();
-    await new Promise((resolve5) => setTimeout(resolve5, Number(header) * 1e3));
+    await new Promise((resolve7) => setTimeout(resolve7, Number(header) * 1e3));
   }
 }
 function asanaAuthError() {
@@ -17533,8 +18301,8 @@ ${el.tagName === "h1" ? "#" : "##"} ${content()}
       case "ul":
       case "ol": {
         const rows = Array.from(el.childNodes).filter((item) => item.nodeName === "li").map((li, i) => {
-          const prefix = el.tagName === "ol" ? `${i + 1}. ` : "- ";
-          return prefix + children(li).trim().replace(/\n/g, "\n" + " ".repeat(prefix.length));
+          const prefix2 = el.tagName === "ol" ? `${i + 1}. ` : "- ";
+          return prefix2 + children(li).trim().replace(/\n/g, "\n" + " ".repeat(prefix2.length));
         });
         return "\n" + rows.join("\n") + "\n";
       }
@@ -17673,7 +18441,7 @@ var asanaProvider = Object.freeze({
 });
 
 // ../provider-chatgpt/src/cooldown.ts
-var import_promises6 = require("node:timers/promises");
+var import_promises8 = require("node:timers/promises");
 var ChatgptCooldownError = class extends Error {
   constructor(cooldown) {
     super(`ChatGPT is still rate-limited after ${cooldown.attempt} attempts. No further requests were sent. Retry no earlier than ${cooldown.retry_at} (${cooldown.source}).`);
@@ -17699,7 +18467,7 @@ function responseCooldown(response, now, attempt, endpoint2) {
   return { endpoint: endpoint2, status: response.status, attempt, delay_ms: milliseconds, retry_at: new Date(now + milliseconds).toISOString(), source };
 }
 function createChatgptRequester(http, onCooldown = async () => {
-}, timing = { now: () => Date.now(), sleep: (milliseconds) => (0, import_promises6.setTimeout)(milliseconds) }) {
+}, timing = { now: () => Date.now(), sleep: (milliseconds) => (0, import_promises8.setTimeout)(milliseconds) }) {
   const deadlines = /* @__PURE__ */ new Map();
   let stopped;
   return async (url, headers, endpoint2) => {
@@ -17767,7 +18535,7 @@ async function connectChatgpt(runtime2, referer, onCooldown) {
   const request2 = createChatgptRequester(runtime2.http, onCooldown);
   const forAccount = (id) => {
     const authenticated = { ...headers, "chatgpt-account-id": id };
-    const json = async (endpoint2) => {
+    const json2 = async (endpoint2) => {
       if (!endpoint2.startsWith("/backend-api/")) throw new Error("Invalid ChatGPT API endpoint");
       const result = await request2(`https://chatgpt.com${endpoint2}`, authenticated, endpoint2);
       if (!result.ok) throw new ChatgptRequestError(result.status, endpoint2);
@@ -17791,16 +18559,16 @@ async function connectChatgpt(runtime2, referer, onCooldown) {
       }
       throw new Error("Too many ChatGPT file redirects");
     };
-    return { id, json, bytes };
+    return { id, json: json2, bytes };
   };
   return { accountId, forAccount };
 }
 
 // ../provider-chatgpt/src/download.ts
-var import_node_crypto3 = require("node:crypto");
+var import_node_crypto7 = require("node:crypto");
 function segment(value) {
   const safe = value.replace(/[^\p{L}\p{N}._-]/gu, "-").slice(0, 64);
-  return safe === value && safe !== "." && safe !== ".." && safe !== "" ? safe : `${safe || "item"}-${(0, import_node_crypto3.createHash)("sha256").update(value).digest("hex").slice(0, 12)}`;
+  return safe === value && safe !== "." && safe !== ".." && safe !== "" ? safe : `${safe || "item"}-${(0, import_node_crypto7.createHash)("sha256").update(value).digest("hex").slice(0, 12)}`;
 }
 function items(value) {
   if (!Array.isArray(value)) throw new Error("ChatGPT list response is missing items");
@@ -17855,7 +18623,7 @@ function assets(value, context) {
 }
 var DownloadWriteError = class extends Error {
 };
-async function downloadChatgpt(runtime2, url, source, write, render2) {
+async function downloadChatgpt(runtime2, url, source, write2, render2) {
   if (source.type !== "project") return null;
   const wholeHistory = source.identifier === "history";
   const base = wholeHistory ? "chatgpt" : `chatgpt/projects/${segment(source.identifier)}`;
@@ -17868,12 +18636,12 @@ async function downloadChatgpt(runtime2, url, source, write, render2) {
   const started = runtime2.clock.now().toISOString();
   const save = async (path2, contents) => {
     try {
-      await write(path2, contents);
+      await write2(path2, contents);
     } catch (error) {
       throw new DownloadWriteError(`Could not write ${path2}: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
-  const json = (path2, value) => save(path2, `${JSON.stringify(value, null, 2)}
+  const json2 = (path2, value) => save(path2, `${JSON.stringify(value, null, 2)}
 `);
   const attempt = async (resource, action) => {
     try {
@@ -17886,9 +18654,9 @@ async function downloadChatgpt(runtime2, url, source, write, render2) {
   };
   const session = await connectChatgpt(runtime2, url, async (cooldown) => {
     cooldowns.push(cooldown);
-    await json(`${base}/manifest.json`, { status: "cooldown", source: url, started_at: started, records, files, errors, skipped, cooldowns, retry_at: cooldown.retry_at });
+    await json2(`${base}/manifest.json`, { status: "cooldown", source: url, started_at: started, records, files, errors, skipped, cooldowns, retry_at: cooldown.retry_at });
   });
-  await json(`${base}/manifest.json`, { status: "in_progress", source: url, started_at: started });
+  await json2(`${base}/manifest.json`, { status: "in_progress", source: url, started_at: started });
   const paged = async (client, path2, query, output, consume, offsetMode = false, filter) => {
     const seen = /* @__PURE__ */ new Set();
     let cursor;
@@ -17898,7 +18666,7 @@ async function downloadChatgpt(runtime2, url, source, write, render2) {
       const parameters = { ...query, ...offsetMode ? { offset: String(offset) } : cursor === void 0 ? {} : { cursor } };
       const page = object3(await client.json(endpoint(path2, parameters)));
       const entries = items(page["items"]);
-      await json(`${output}/${pageNumber++}.json`, filter === void 0 ? page : { ...page, items: entries.filter(filter) });
+      await json2(`${output}/${pageNumber++}.json`, filter === void 0 ? page : { ...page, items: entries.filter(filter) });
       for (const item of entries) consume(item);
       if (offsetMode) {
         if (page["offset"] !== void 0 && page["offset"] !== offset) throw new Error(`ChatGPT returned a different offset for ${path2}`);
@@ -17933,10 +18701,10 @@ async function downloadChatgpt(runtime2, url, source, write, render2) {
         const downloadUrl = text(metadata["download_url"]) ?? text(metadata["content_url"]);
         if (downloadUrl === void 0) throw new Error(`ChatGPT file is unavailable (${String(metadata["status"] ?? "missing URL")})`);
         const bytes = await client.bytes(downloadUrl);
-        const name = `${(0, import_node_crypto3.createHash)("sha256").update(asset.key).digest("hex").slice(0, 12)}-${segment(asset.name)}`;
+        const name = `${(0, import_node_crypto7.createHash)("sha256").update(asset.key).digest("hex").slice(0, 12)}-${segment(asset.name)}`;
         const path2 = `${directory}/assets/${name}`;
         await save(path2, bytes);
-        files.push({ path: path2, source: asset.endpoint, bytes: bytes.byteLength, sha256: (0, import_node_crypto3.createHash)("sha256").update(bytes).digest("hex") });
+        files.push({ path: path2, source: asset.endpoint, bytes: bytes.byteLength, sha256: (0, import_node_crypto7.createHash)("sha256").update(bytes).digest("hex") });
         links.push(`- [${asset.name.replace(/[\[\]\r\n]/g, " ")}](assets/${encodeURIComponent(name)})`);
       });
     }
@@ -17978,7 +18746,7 @@ async function downloadChatgpt(runtime2, url, source, write, render2) {
       let instructions = "";
       let fileLinks = [];
       if (detail !== void 0) {
-        await json(`${projectDirectory2}/project.json`, detail);
+        await json2(`${projectDirectory2}/project.json`, detail);
         await attempt(`${id}: project metadata`, async () => {
           const wrapper = object3(detail);
           const project = object3(wrapper["gizmo"]);
@@ -17991,7 +18759,7 @@ async function downloadChatgpt(runtime2, url, source, write, render2) {
       await attempt(`${id}: project sources`, () => paged(client, `/backend-api/projects/${encodeURIComponent(id)}/connector_scopes`, { limit: "100" }, `${projectDirectory2}/sources`, () => {
       }));
       const ids = [...projectConversations.get(id) ?? []];
-      const prefix = projectId === void 0 ? "../../" : "";
+      const prefix2 = projectId === void 0 ? "../../" : "";
       const markdown2 = `# ${projectTitle}
 
 ## Instructions
@@ -18000,7 +18768,7 @@ ${instructions || "No project instructions."}
 
 ## Conversations
 
-${ids.map((conversationId) => `- [${conversationId}](${prefix}conversations/${segment(conversationId)}/index.md)`).join("\n") || "No conversations."}
+${ids.map((conversationId) => `- [${conversationId}](${prefix2}conversations/${segment(conversationId)}/index.md)`).join("\n") || "No conversations."}
 
 ## Files
 
@@ -18011,15 +18779,15 @@ ${fileLinks.join("\n") || "See project.json and sources for source metadata."}
     }
     for (const [id, listing] of conversations) {
       const conversationDirectory = `${directory}/conversations/${segment(id)}`;
-      await json(`${conversationDirectory}/listing.json`, listing);
+      await json2(`${conversationDirectory}/listing.json`, listing);
       await attempt(`${client.id}: conversation ${id}`, async () => {
         const conversation = object3(await client.json(`/backend-api/conversation/${encodeURIComponent(id)}`));
-        await json(`${conversationDirectory}/conversation.json`, conversation);
+        await json2(`${conversationDirectory}/conversation.json`, conversation);
         records.push({ type: "conversation", account_id: client.id, id, title: text(conversation["title"]) ?? id, path: `${conversationDirectory}/index.md`, raw: `${conversationDirectory}/conversation.json` });
         const fileLinks = await downloadAssets(client, assets(conversation, { conversation: id }), conversationDirectory);
         await attempt(`${id}: canvases`, async () => {
           const canvases = await client.json(`/backend-api/conversation/${encodeURIComponent(id)}/textdocs`);
-          await json(`${conversationDirectory}/textdocs.json`, canvases);
+          await json2(`${conversationDirectory}/textdocs.json`, canvases);
           for (const canvas of items(canvases)) {
             const content = text(canvas["content"]);
             if (content !== void 0) await save(`${conversationDirectory}/canvases/${segment(identifier(canvas))}.txt`, content);
@@ -18056,7 +18824,7 @@ ${fileLinks.join("\n")}
       }
       for (const [id, entry] of library) {
         const fileDirectory = `${directory}/library/files/${segment(id)}`;
-        await json(`${fileDirectory}/metadata.json`, entry);
+        await json2(`${fileDirectory}/metadata.json`, entry);
         const links = await downloadAssets(client, [{ key: `library:${id}`, name: text(entry["name"]) ?? id, endpoint: `/backend-api/files/library/files/${encodeURIComponent(id)}/content_url` }], fileDirectory);
         await save(`${fileDirectory}/index.md`, `# ${text(entry["name"]) ?? id}
 
@@ -18064,7 +18832,7 @@ ${links.join("\n")}
 `);
       }
       for (const path2 of ["me", "user_system_messages", "settings/user"]) {
-        await attempt(`${client.id}: ${path2}`, async () => json(`${directory}/account/${path2.replaceAll("/", "-")}.json`, await client.json(`/backend-api/${path2}`)));
+        await attempt(`${client.id}: ${path2}`, async () => json2(`${directory}/account/${path2.replaceAll("/", "-")}.json`, await client.json(`/backend-api/${path2}`)));
       }
     }
   };
@@ -18077,7 +18845,7 @@ ${links.join("\n")}
     const accounts = await attempt("accounts", () => current.json("/backend-api/accounts/check/v4-2023-04-27"));
     const accountIds = /* @__PURE__ */ new Set([session.accountId]);
     if (accounts !== void 0) {
-      await json(`${base}/accounts.json`, accounts);
+      await json2(`${base}/accounts.json`, accounts);
       await attempt("account listing", async () => {
         for (const value of Object.values(object3(object3(accounts)["accounts"]))) {
           const entry = object3(value);
@@ -18099,7 +18867,7 @@ ${links.join("\n")}
   }
   const status = errors.length === 0 ? "complete" : "partial";
   const manifest = { status, source: url, started_at: started, finished_at: runtime2.clock.now().toISOString(), records, files, errors, skipped, cooldowns };
-  await json(`${base}/manifest.json`, manifest);
+  await json2(`${base}/manifest.json`, manifest);
   const relative3 = (path2) => path2.slice(base.length + 1);
   const lines = records.map((record) => `- ${record["type"]}: [${String(record["title"]).replace(/[\[\]\r\n]/g, " ")}](${relative3(record["path"])})`);
   const markdown = `# ${title2}
@@ -18251,7 +19019,7 @@ var chatgptService = defineService({
     if (project !== null) return Object.freeze({ service: "chatgpt", identifier: project[1], type: "project" });
     return Object.freeze({ service: "chatgpt", identifier: /\/c\/([^/]+)\/?$/.exec(url.pathname)[1], type: "message-thread" });
   },
-  download: (runtime2, url, source, write) => downloadChatgpt(runtime2, url, source, write, conversationMarkdown),
+  download: (runtime2, url, source, write2) => downloadChatgpt(runtime2, url, source, write2, conversationMarkdown),
   fetch: async (runtime2, url, source) => {
     if (source.type === "project") throw new Error("Use `wire download <url>` to export ChatGPT history or projects as a directory.");
     const session = await connectChatgpt(runtime2, url);
@@ -18270,7 +19038,7 @@ function decode(data) {
   return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
 }
 function entities(text3) {
-  return text3.replace(/&nbsp;/g, "\xA0").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&#(\d+);/g, (_match, code) => String.fromCodePoint(Number(code))).replace(/&#x([0-9a-f]+);/gi, (_match, code) => String.fromCodePoint(Number.parseInt(code, 16)));
+  return text3.replace(/&nbsp;/g, "\xA0").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&#(\d+);/g, (_match, code3) => String.fromCodePoint(Number(code3))).replace(/&#x([0-9a-f]+);/gi, (_match, code3) => String.fromCodePoint(Number.parseInt(code3, 16)));
 }
 function stripTags(html) {
   return html.replace(/<[^>]+>/g, "");
@@ -18436,8 +19204,11 @@ function boundedDeletion(base, side, other, i) {
   const count = (rows) => rows.reduce((n, r) => n + Number(r === value), 0);
   return count(side) === count(base) - 1;
 }
+function conflictMessage(location = "") {
+  return `Google Docs changed remotely and locally.${location} Resolve the conflict in Google Docs or the local Markdown file before syncing again.`;
+}
 function conflict(location = "") {
-  throw new Error(`Google Docs changed remotely and locally.${location} Resolve the conflict in Google Docs or the local Markdown file before syncing again.`);
+  throw new WireMergeConflict(conflictMessage(location));
 }
 function mergeDocBlocks(base, local, remote, sameRendering = (a, b2) => a === b2) {
   if (base === remote || local === remote) return local;
@@ -18457,7 +19228,7 @@ function mergeDocBlocks(base, local, remote, sameRendering = (a, b2) => a === b2
     for (const change of changes) {
       if (change.end - change.start === change.replacement.length) continue;
       const repeated = [...blocks.slice(change.start, change.end), ...change.replacement].some((block) => block.trim() && (positions.get(block) === -1 || positions.has(block) && sidePositions.get(block) === -1));
-      if (repeated && !(change.end === change.start + 1 && !change.replacement.length && boundedDeletion(blocks, side, side === localBlocks ? remoteBlocks : localBlocks, change.start))) conflict();
+      if (repeated && !(change.end === change.start + 1 && !change.replacement.length && boundedDeletion(blocks, side, side === localBlocks ? remoteBlocks : localBlocks, change.start))) throw new Error(conflictMessage());
     }
   }
   const all = [...localChanges, ...remoteChanges].sort((a, b2) => a.start - b2.start || a.end - b2.end);
@@ -18497,14 +19268,14 @@ async function googleRead(runtime2, url, init) {
       response = await runtime2.http.request(url, init);
     } catch (error) {
       const cause = error instanceof TypeError && error.name === "TypeError" ? error.cause : void 0;
-      const code = cause instanceof Error && "code" in cause ? cause.code : void 0;
-      if (typeof code !== "string" || !transient.has(code)) {
-        if (error instanceof Error && error.name === "AbortError" || code === "ABORT_ERR") throw new Error("Google Docs read cancelled.");
-        if (typeof code === "string" && permanent.has(code)) throw new Error(`Google Docs read failed before a response (${code}).`);
+      const code3 = cause instanceof Error && "code" in cause ? cause.code : void 0;
+      if (typeof code3 !== "string" || !transient.has(code3)) {
+        if (error instanceof Error && error.name === "AbortError" || code3 === "ABORT_ERR") throw new Error("Google Docs read cancelled.");
+        if (typeof code3 === "string" && permanent.has(code3)) throw new Error(`Google Docs read failed before a response (${code3}).`);
         throw new Error("Google Docs read failed before a response.");
       }
-      if (attempt >= 3) throw new Error(`Google Docs read failed before a response (${code}).`);
-      await new Promise((resolve5) => setTimeout(resolve5, 1e3 * 2 ** attempt));
+      if (attempt >= 3) throw new Error(`Google Docs read failed before a response (${code3}).`);
+      await new Promise((resolve7) => setTimeout(resolve7, 1e3 * 2 ** attempt));
       continue;
     }
     if (![429, 500, 502, 503, 504].includes(response.status)) return response;
@@ -18520,12 +19291,12 @@ async function googleRead(runtime2, url, init) {
       return response;
     }
     await response.body?.cancel();
-    await new Promise((resolve5) => setTimeout(resolve5, delay2));
+    await new Promise((resolve7) => setTimeout(resolve7, delay2));
   }
 }
 
 // ../provider-google-docs/src/native-docs.ts
-var import_node_crypto4 = require("node:crypto");
+var import_node_crypto8 = require("node:crypto");
 function eligible(scopes, requireWrite) {
   const has = (name) => scopes?.includes("https://www.googleapis.com/auth/" + name);
   if (!requireWrite && (has("documents.readonly") || has("documents") || has("drive.readonly"))) return true;
@@ -18588,11 +19359,11 @@ function paragraph(line) {
       }
       if (c === "!" && s[i + 1] === "[" || c === "`" || c === "<" && /^<\/?[\w!]/.test(s.slice(i)) || c === "&" && /^&(?:#\d+|#x[\da-f]+|[a-z]+);/i.test(s.slice(i))) return unsafe("unsupported inline content");
       if (c === "[") {
-        const link2 = /^\[([^\[\]]+)\]\((https?:\/\/[^\s()]+|mailto:[^\s()]+)\)/.exec(s.slice(i));
-        if (!link2) return unsafe("unsupported link syntax");
+        const link4 = /^\[([^\[\]]+)\]\((https?:\/\/[^\s()]+|mailto:[^\s()]+)\)/.exec(s.slice(i));
+        if (!link4) return unsafe("unsupported link syntax");
         emit(s.slice(begin, i), style);
-        read(link2[1], { ...style, link: { url: link2[2] } }, depth + 1);
-        begin = i += link2[0].length;
+        read(link4[1], { ...style, link: { url: link4[2] } }, depth + 1);
+        begin = i += link4[0].length;
         continue;
       }
       const marker = /^(\*{1,3}|_{1,3}|~~)/.exec(s.slice(i))?.[0];
@@ -18656,7 +19427,7 @@ function nativeDocMarkdownEqual(left, right) {
   });
   return JSON.stringify(numberStarts(spacedBlocks(left))) === JSON.stringify(numberStarts(spacedBlocks(right))) && JSON.stringify(normalized(left)) === JSON.stringify(normalized(right));
 }
-var digest = (s) => (0, import_node_crypto4.createHash)("sha256").update(s).digest("hex");
+var digest2 = (s) => (0, import_node_crypto8.createHash)("sha256").update(s).digest("hex");
 var labels = (md) => spacedBlocks(md).map((line) => {
   try {
     return paragraph(line).text;
@@ -18688,7 +19459,7 @@ function nativeSlots(tab, target) {
       const { elements, ...p } = e.paragraph;
       return [p, elements.map(({ startIndex, endIndex, ...rest }) => rest), p.bullet && tab.documentTab.lists[p.bullet.listId]];
     });
-    result.set(body2[i], digest(JSON.stringify(shape, canonical)));
+    result.set(body2[i], digest2(JSON.stringify(shape, canonical)));
   }
   return result;
 }
@@ -18706,13 +19477,13 @@ function captureDuplicateIdentity(data, id, revision, tabId, md) {
   return {
     revision,
     tab: tab?.tabProperties.tabId ?? "",
-    markdown: digest(md),
+    markdown: digest2(md),
     slots: tab?.documentTab?.body?.content ? [...nativeSlots(tab).values()] : []
   };
 }
 function duplicateContext(base, local, revision, raw) {
   const proof = raw;
-  const identity = typeof revision === "string" && proof && proof.revision === revision && typeof proof.tab === "string" && proof.markdown === digest(base) && Array.isArray(proof.slots) && proof.slots.every((s) => typeof s === "string" && /^[a-f0-9]{64}$/.test(s)) ? proof : void 0;
+  const identity = typeof revision === "string" && proof && proof.revision === revision && typeof proof.tab === "string" && proof.markdown === digest2(base) && Array.isArray(proof.slots) && proof.slots.every((s) => typeof s === "string" && /^[a-f0-9]{64}$/.test(s)) ? proof : void 0;
   return { base, local, identity };
 }
 function characters(block) {
@@ -18967,10 +19738,10 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition, context)
       if (block.numbered) return unsafe("cannot create a numbered level without a matching native list paragraph");
       const relative3 = block.level - priorLevel;
       if (relative3 < 0) return unsafe("outdent would split the preceding native list");
-      const prefix = relative3 ? "x\n" + "	".repeat(relative3) : "";
-      if (prefix) requests.push({ insertText: { location: location(start), text: prefix } });
-      requests.push({ createParagraphBullets: { range: range(start, start + prefix.length + 1), bulletPreset: "BULLET_DISC_CIRCLE_SQUARE" } });
-      if (prefix) requests.push({ deleteContentRange: { range: range(start, start + 2) } });
+      const prefix2 = relative3 ? "x\n" + "	".repeat(relative3) : "";
+      if (prefix2) requests.push({ insertText: { location: location(start), text: prefix2 } });
+      requests.push({ createParagraphBullets: { range: range(start, start + prefix2.length + 1), bulletPreset: "BULLET_DISC_CIRCLE_SQUARE" } });
+      if (prefix2) requests.push({ deleteContentRange: { range: range(start, start + 2) } });
     }
   };
   const precedingLevel = (at, b2) => {
@@ -19627,9 +20398,9 @@ async function docImages(markdown, archive) {
     if (/^ {0,3}(?:`{3,}|~{3,})/.test(block)) return [{ literal: true, text: block }];
     const parts = [];
     let from = 0;
-    for (const code of block.matchAll(/(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g)) {
-      parts.push({ literal: false, text: block.slice(from, code.index) }, { literal: true, text: code[0] });
-      from = code.index + code[0].length;
+    for (const code3 of block.matchAll(/(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g)) {
+      parts.push({ literal: false, text: block.slice(from, code3.index) }, { literal: true, text: code3[0] });
+      from = code3.index + code3[0].length;
     }
     parts.push({ literal: false, text: block.slice(from) });
     return parts;
@@ -19764,8 +20535,8 @@ function slidesMarkdown(bytes) {
 }
 function urlParam(url, name) {
   const query = url.searchParams.get(name);
-  const hash2 = new URLSearchParams(url.hash.slice(1)).get(name);
-  return query !== null && query !== "" ? query : hash2 !== null && hash2 !== "" ? hash2 : null;
+  const hash4 = new URLSearchParams(url.hash.slice(1)).get(name);
+  return query !== null && query !== "" ? query : hash4 !== null && hash4 !== "" ? hash4 : null;
 }
 function sheetSession(html) {
   const tokenMatch = /"info_params":\{"token":"([^"]+)"/.exec(html);
@@ -19860,7 +20631,7 @@ async function googleDocListMarkdown(markdown, wordExport) {
     return text3 && outer.has(text3) && !other.has(text3) ? line.slice(2) : line;
   }).join("\n");
 }
-async function fetchGoogleDocument(runtime2, source, previous, reuseNative) {
+async function fetchGoogleDocument(runtime2, source, previous, reuseNative, verifyRevision = false) {
   const id = source["document_id"] ?? source.identifier;
   const key2 = resourceKey(source);
   const gid2 = source["sheet_gid"];
@@ -19948,18 +20719,27 @@ async function fetchGoogleDocument(runtime2, source, previous, reuseNative) {
   }
   const exported = markdown;
   markdown = await docImages(markdown, archive);
-  if (markdown !== exported && readRevision) {
+  if ((verifyRevision || markdown !== exported) && readRevision) {
     const end = await (await read("https://docs.googleapis.com/v1/documents/" + encodeURIComponent(id) + "?fields=revisionId")).json();
-    if (end.revisionId !== readRevision) throw new Error("Google Docs changed during image export; local copy preserved. Sync again.");
+    if (end.revisionId !== readRevision) throw new StaleDocRevision(markdown !== exported ? "Google Docs changed during image export; local copy preserved. Sync again." : "Google Docs changed during Markdown export; local copy preserved. Sync again.");
   }
   const duplicateIdentity = readRevision ? await identityFor(markdown, readRevision) : void 0;
   return { title: title2, markdown, ...readRevision ? { readRevision } : {}, data: { document_id: id, title: title2, output_path: null, sheet_gid: null, markdown, rows: null, ...duplicateIdentity ? { duplicate_identity: duplicateIdentity, verified_revision: readRevision } : {}, ...markdown.includes("data:image/") ? { original_images: true } : {}, ...readRevision ? { position_revision: readRevision } : {}, ...legacyImages === exported && readRevision ? { verified_revision: readRevision } : {}, ...tab === null ? {} : { document_tab: tab } } };
 }
-async function synchronizeGoogleDocument(runtime2, url, source, base, markdown, retryStaleRevision = true) {
+async function synchronizeGoogleDocument(runtime2, url, source, base, markdown, observeRemote, requireConditionalWrite = false, retryStaleRevision = true) {
+  const verifyRevision = observeRemote !== void 0 || requireConditionalWrite;
   let nativeDocument;
-  const remote = await fetchGoogleDocument(runtime2, source, base, (doc) => {
-    nativeDocument = doc;
-  });
+  const retry = () => synchronizeGoogleDocument(runtime2, url, source, base, markdown, observeRemote, requireConditionalWrite, false);
+  let remote;
+  try {
+    remote = await fetchGoogleDocument(runtime2, source, base, (doc) => {
+      nativeDocument = doc;
+    }, verifyRevision);
+  } catch (error) {
+    if (retryStaleRevision && error instanceof StaleDocRevision && verifyRevision) return retry();
+    throw error;
+  }
+  await observeRemote?.(remote);
   if (source.type === "presentation") {
     const baseMarkdown2 = objectValue(base)["markdown"];
     if (typeof baseMarkdown2 !== "string") throw new Error("Google sync base must include markdown");
@@ -19987,6 +20767,7 @@ async function synchronizeGoogleDocument(runtime2, url, source, base, markdown, 
     const formula = cells.find((cell) => formulaLikeCell(cell.value));
     if (formula !== void 0) throw new Error(`Google Sheets sync cannot upload formula-like cell text at row ${formula.row + 1}, column ${formula.column + 1}
 Prefix it with an apostrophe or rewrite it as plain text before syncing.`);
+    if (requireConditionalWrite) throw new Error("Google Sheets cannot condition a save on the revision read. Local draft preserved; apply the edit in Google Sheets.");
     await uploadSheetRows(runtime2, source["document_id"] ?? source.identifier, source["sheet_gid"], resourceKey(source), cells);
     const uploaded2 = await fetchGoogleDocument(runtime2, source);
     if (!rowsEqual(stringRows(objectValue(uploaded2.data)["rows"]), localRows)) throw new Error("Google Sheets save verification failed");
@@ -20013,7 +20794,11 @@ Prefix it with an apostrophe or rewrite it as plain text before syncing.`);
       tab,
       remote.markdown,
       merged,
-      async (revision) => remote.readRevision === revision ? remote.markdown : (await fetchGoogleDocument(runtime2, source)).markdown,
+      async (revision) => {
+        if (remote.readRevision === revision) return remote.markdown;
+        if (remote.readRevision || requireConditionalWrite) throw new StaleDocRevision("Google Docs changed before writing; sync again.");
+        return (await fetchGoogleDocument(runtime2, source)).markdown;
+      },
       (revision) => {
         wroteRemote = true;
         writtenRevision = revision;
@@ -20023,11 +20808,11 @@ Prefix it with an apostrophe or rewrite it as plain text before syncing.`);
       nativeDocument
     );
   } catch (error) {
-    if (retryStaleRevision && error instanceof StaleDocRevision) return synchronizeGoogleDocument(runtime2, url, source, base, markdown, false);
+    if (retryStaleRevision && error instanceof StaleDocRevision) return retry();
     throw error;
   }
   if (!native) throw new Error("Google Docs uploads require an OAuth token with drive, drive.file, or both documents and drive.readonly scopes. Set GOOGLE_DOCS_TOKEN_FILE or GOOGLE_FORMS_TOKEN_FILE. Browser login supports downloads only.");
-  const uploaded = await fetchGoogleDocument(runtime2, source, {});
+  const uploaded = await fetchGoogleDocument(runtime2, source, {}, void 0, verifyRevision);
   if (!nativeDocMarkdownEqual(uploaded.markdown, merged)) throw new Error("Google Docs save verification failed");
   if (writtenRevision && writtenRevision === uploaded.readRevision) {
     return { ...uploaded, wroteRemote, data: { ...objectValue(uploaded.data), verified_revision: writtenRevision } };
@@ -20054,7 +20839,7 @@ var googleDocsService = defineService({
     return Object.freeze({ service: "google-docs", identifier: documentId, type: "document", ...resource_key });
   },
   fetch: (runtime2, _url, source) => fetchGoogleDocument(runtime2, source),
-  synchronize: (runtime2, url, source, base, markdown) => synchronizeGoogleDocument(runtime2, url, source, base, markdown)
+  synchronize: (runtime2, url, source, base, markdown, _path, observeRemote, requireConditionalWrite) => synchronizeGoogleDocument(runtime2, url, source, base, markdown, observeRemote, requireConditionalWrite)
 });
 
 // ../provider-google-docs/src/google-forms.ts
@@ -20226,8 +21011,8 @@ var googleDocsProvider = Object.freeze({
 });
 
 // ../provider-notion/src/notion-sync.ts
-var import_node_crypto5 = require("node:crypto");
-var import_node_path5 = require("node:path");
+var import_node_crypto9 = require("node:crypto");
+var import_node_path7 = require("node:path");
 function object4(value) {
   return value;
 }
@@ -20255,8 +21040,8 @@ function formatBlockId(id) {
 function compact(value) {
   return stableJsonCompact(value);
 }
-function hash(value) {
-  return `sha256:${(0, import_node_crypto5.createHash)("sha256").update(compact(value)).digest("hex")}`;
+function hash3(value) {
+  return `sha256:${(0, import_node_crypto9.createHash)("sha256").update(compact(value)).digest("hex")}`;
 }
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -20351,10 +21136,10 @@ function parseInline(value) {
       rest = rest.slice(rest.length === 1 ? 1 : 2);
       continue;
     }
-    const link2 = markdownLink(rest);
-    if (link2 !== null) {
-      pushMarked(link2.label, ["a", link2.url]);
-      rest = rest.slice(link2.length);
+    const link4 = markdownLink(rest);
+    if (link4 !== null) {
+      pushMarked(link4.label, ["a", link4.url]);
+      rest = rest.slice(link4.length);
       continue;
     }
     const dateSpan = /^<span data-notion-date="([^"]+)">(.*?)<\/span>/.exec(rest);
@@ -20444,21 +21229,21 @@ function parseInline(value) {
 }
 function renderSegment(content, marks) {
   let rendered = marks.some((raw) => raw[0] === "c") ? content : escapeInlineMarkdown(content);
-  let link2 = null;
+  let link4 = null;
   for (const raw of renderMarks(marks)) {
     const mark = raw;
     if (mark[0] === "c") rendered = inlineCode(rendered);
     else if (mark[0] === "s") rendered = `~~${rendered}~~`;
     else if (mark[0] === "i") rendered = `*${rendered}*`;
     else if (mark[0] === "b") rendered = `**${rendered}**`;
-    else if (mark[0] === "a") link2 = mark[1];
+    else if (mark[0] === "a") link4 = mark[1];
     else if (mark[0] === "_") rendered = `<u>${rendered}</u>`;
     else if (mark[0] === "h") rendered = `<span data-notion-color="${escapeHtml(mark[1])}">${rendered}</span>`;
     else if (mark[0] === "e") rendered = `<span data-notion-equation="${escapeHtml(mark[1])}">${rendered}</span>`;
     else if (mark[0] === "p" || mark[0] === "u") rendered = `<span data-notion-mention="${mark[0]}" data-notion-id="${escapeHtml(mark[1])}"${mark[0] === "p" ? ` data-notion-space-id="${escapeHtml(mark[2])}"` : ""}>${rendered}</span>`;
     else if (mark[0] === "d") rendered = `<span data-notion-date="${escapeHtml(compact(mark[1]))}">${rendered}</span>`;
   }
-  return link2 === null ? rendered : `[${rendered}](${link2})`;
+  return link4 === null ? rendered : `[${rendered}](${link4})`;
 }
 function renderRichText(value) {
   return normalizeRichText(value).map((segment2) => renderSegment(text2(segment2[0]), segment2[1] ?? [])).join("");
@@ -20743,7 +21528,7 @@ function tableColumnOrder(remote, local) {
   const remoteColumns = object4(remote["format"])["table_block_column_order"];
   const used = /* @__PURE__ */ new Set();
   return localColumns.map((column, index) => {
-    const value = index < remoteColumns.length ? remoteColumns[index] : used.has(column) ? `column_${index}_${(0, import_node_crypto5.randomUUID)().replaceAll("-", "")}` : column;
+    const value = index < remoteColumns.length ? remoteColumns[index] : used.has(column) ? `column_${index}_${(0, import_node_crypto9.randomUUID)().replaceAll("-", "")}` : column;
     used.add(value);
     return value;
   });
@@ -20764,7 +21549,7 @@ function parserBlockToNotionBlock(block, id, parentId, parentTable, spaceId, use
   if (["header", "sub_header", "sub_sub_header"].includes(block.type)) return { ...base, properties: { title: block.rich_text }, ...block.properties["format"] === void 0 ? {} : { format: block.properties["format"] } };
   return { ...base, properties: { title: block.rich_text } };
 }
-function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTime, createId = () => (0, import_node_crypto5.randomUUID)(), initialTableColumnOrder) {
+function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTime, createId = () => (0, import_node_crypto9.randomUUID)(), initialTableColumnOrder) {
   const operations = [];
   const topLevelIds = [];
   const lastAtIndent = /* @__PURE__ */ new Map();
@@ -20826,7 +21611,7 @@ function canonicalParserBlock(block, columnOrder) {
   return { type: block.type };
 }
 function notionBlockContentHash(block, columnOrder) {
-  return hash("rich_text" in block ? canonicalParserBlock(block, columnOrder) : canonicalBlock(block, columnOrder));
+  return hash3("rich_text" in block ? canonicalParserBlock(block, columnOrder) : canonicalBlock(block, columnOrder));
 }
 function sidecarBlocksFromNotionTree(tree) {
   const blocks = [];
@@ -20851,7 +21636,7 @@ function localTree(blocks) {
   return roots;
 }
 function outputNode(node, remoteNode, parentId, remote, currentTime, columnOrder) {
-  const id = remoteNode?.id ?? formatBlockId((0, import_node_crypto5.randomUUID)().replaceAll("-", ""));
+  const id = remoteNode?.id ?? formatBlockId((0, import_node_crypto9.randomUUID)().replaceAll("-", ""));
   const block = parserBlockToNotionBlock(node.block, id, parentId, "block", remote.spaceId, remote.userId, currentTime, node.block.type === "table" ? tableColumnOrder(remoteNode?.block, node.block) : node.block.type === "table_row" ? columnOrder : void 0);
   const nextColumnOrder = block["type"] === "table" ? object4(block["format"])["table_block_column_order"] : columnOrder;
   return { id, block, children: node.children.map((child, index) => outputNode(child, remoteNode?.children[index], id, remote, currentTime, nextColumnOrder)) };
@@ -20981,7 +21766,7 @@ function diffNotionBlockTrees(remoteTree, localBlocks, _sidecarBlocks, ambient) 
   return { operations, summary };
 }
 function renderNode(tree, indent, parentType = "", download = false) {
-  const prefix = "  ".repeat(indent);
+  const prefix2 = "  ".repeat(indent);
   const type = tree.block["type"] === "text" && object4(tree.block["format"] ?? {})["toggleable"] === true ? "toggle" : tree.block["type"];
   const children = () => tree.children.flatMap((child) => renderNode(child, indent + 1, type, download));
   const properties = object4(tree.block["properties"] ?? {});
@@ -20989,52 +21774,52 @@ function renderNode(tree, indent, parentType = "", download = false) {
   const format = object4(tree.block["format"] ?? {});
   if (["header", "sub_header", "sub_sub_header"].includes(type)) {
     const marker = type === "header" ? "#" : type === "sub_header" ? "##" : "###";
-    return [`${prefix}${marker} ${title2}${format["toggleable"] === true ? " {toggle}" : ""}`, ...children()];
+    return [`${prefix2}${marker} ${title2}${format["toggleable"] === true ? " {toggle}" : ""}`, ...children()];
   }
   if (type === "bulleted_list") {
     const lines = title2.split("\n");
-    return [`${prefix}- ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${escapeBlockMarkdownLine(line)}`), ...children()];
+    return [`${prefix2}- ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix2}  ${escapeBlockMarkdownLine(line)}`), ...children()];
   }
   if (type === "numbered_list") {
     const lines = title2.split("\n");
-    return [`${prefix}1. ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}   ${escapeBlockMarkdownLine(line)}`), ...children()];
+    return [`${prefix2}1. ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix2}   ${escapeBlockMarkdownLine(line)}`), ...children()];
   }
   if (type === "to_do") {
     const checked = richTextText(properties["checked"] ?? [["No"]]) === "Yes";
-    if (title2 === "") return [`${prefix}:::to-do`, `${prefix}:::checked ${JSON.stringify(checked)}`, prefix, ...children(), `${prefix}:::`];
+    if (title2 === "") return [`${prefix2}:::to-do`, `${prefix2}:::checked ${JSON.stringify(checked)}`, prefix2, ...children(), `${prefix2}:::`];
     const lines = title2.split("\n");
-    return [`${prefix}- [${checked ? "x" : " "}] ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix}  ${escapeBlockMarkdownLine(line)}`), ...children()];
+    return [`${prefix2}- [${checked ? "x" : " "}] ${lines[0]}`, ...lines.slice(1).map((line) => `${prefix2}  ${escapeBlockMarkdownLine(line)}`), ...children()];
   }
-  if (type === "quote") return [...title2.split("\n").map((line) => `${prefix}> ${escapeBlockMarkdownLine(line)}`), ...children()];
-  if (type === "divider") return [`${prefix}---`];
+  if (type === "quote") return [...title2.split("\n").map((line) => `${prefix2}> ${escapeBlockMarkdownLine(line)}`), ...children()];
+  if (type === "divider") return [`${prefix2}---`];
   if (type === "code") {
-    const code = richTextText(properties["title"]);
-    const longest = Math.max(0, ...[...code.matchAll(/`+/g)].map((match) => match[0].length));
+    const code3 = richTextText(properties["title"]);
+    const longest = Math.max(0, ...[...code3.matchAll(/`+/g)].map((match) => match[0].length));
     const fence = "`".repeat(Math.max(3, longest + 1));
     const language = richTextText(properties["language"]).replace("Plain Text", "");
-    return [`${prefix}${fence}${language}`, ...code.split("\n").map((line) => `${prefix}${line}`), `${prefix}${fence}`];
+    return [`${prefix2}${fence}${language}`, ...code3.split("\n").map((line) => `${prefix2}${line}`), `${prefix2}${fence}`];
   }
-  if (type === "image") return [`${prefix}![${escapeInlineMarkdown(richTextText(properties["alt_text"] ?? []))}](${encodeURI(richTextText(properties["source"]))})`];
-  if (type === "equation") return [`${prefix}:::equation`, ...title2.split("\n").map((line) => `${prefix}${line}`), `${prefix}:::`];
-  if (type === "page") return [`${prefix}:::page`, `${prefix}${title2}`, ...children(), `${prefix}:::`];
-  if (type === "column_list") return [`${prefix}:::columns`, ...children(), `${prefix}:::`];
-  if (type === "column") return [`${prefix}:::column`, ...format["column_ratio"] === void 0 ? [] : [`${prefix}${format["column_ratio"]}`], ...children(), `${prefix}:::`];
-  if (type === "transclusion_container") return [`${prefix}:::synced`, ...children(), `${prefix}:::`];
-  if (type === "callout" || type === "toggle") return [`${prefix}:::${type}`, `${prefix}${title2}`, ...children(), `${prefix}:::`];
+  if (type === "image") return [`${prefix2}![${escapeInlineMarkdown(richTextText(properties["alt_text"] ?? []))}](${encodeURI(richTextText(properties["source"]))})`];
+  if (type === "equation") return [`${prefix2}:::equation`, ...title2.split("\n").map((line) => `${prefix2}${line}`), `${prefix2}:::`];
+  if (type === "page") return [`${prefix2}:::page`, `${prefix2}${title2}`, ...children(), `${prefix2}:::`];
+  if (type === "column_list") return [`${prefix2}:::columns`, ...children(), `${prefix2}:::`];
+  if (type === "column") return [`${prefix2}:::column`, ...format["column_ratio"] === void 0 ? [] : [`${prefix2}${format["column_ratio"]}`], ...children(), `${prefix2}:::`];
+  if (type === "transclusion_container") return [`${prefix2}:::synced`, ...children(), `${prefix2}:::`];
+  if (type === "callout" || type === "toggle") return [`${prefix2}:::${type}`, `${prefix2}${title2}`, ...children(), `${prefix2}:::`];
   if (type === "table") {
     const columns = object4(tree.block["format"])["table_block_column_order"];
     const rows = tree.children.map((child) => columns.map((column) => renderRichText(object4(child.block["properties"] ?? {})[column] ?? []).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/<br>/g, "\\<br>").replace(/\n/g, "<br>")));
-    return rows.flatMap((row, index) => index === 0 ? [`${prefix}| ${row.join(" | ")} |`, `${prefix}| ${columns.map(() => "---").join(" | ")} |`] : [`${prefix}| ${row.join(" | ")} |`]);
+    return rows.flatMap((row, index) => index === 0 ? [`${prefix2}| ${row.join(" | ")} |`, `${prefix2}| ${columns.map(() => "---").join(" | ")} |`] : [`${prefix2}| ${row.join(" | ")} |`]);
   }
   if (type !== "text") {
-    const opaque = [`${prefix}:::notion-opaque`, ...stableJsonPretty(tree.block).split("\n").map((line) => `${prefix}${line}`), `${prefix}:::`];
-    if (tree.block["format"] !== void 0) return [`${prefix}:::notion-format`, `${prefix}:::format ${compact(tree.block["format"])}`, ...opaque, `${prefix}:::`];
+    const opaque = [`${prefix2}:::notion-opaque`, ...stableJsonPretty(tree.block).split("\n").map((line) => `${prefix2}${line}`), `${prefix2}:::`];
+    if (tree.block["format"] !== void 0) return [`${prefix2}:::notion-format`, `${prefix2}:::format ${compact(tree.block["format"])}`, ...opaque, `${prefix2}:::`];
     return opaque;
   }
   const nested = download ? children() : [];
-  if (title2 === "") return [`${prefix}:::text`, `${prefix}:::`, ...nested];
-  if (["bulleted_list", "numbered_list", "to_do"].includes(parentType)) return [`${prefix}:::text`, ...title2.split("\n").map((line) => `${prefix}${line}`), `${prefix}:::`, ...nested];
-  return [...title2.split("\n").map((line) => `${prefix}${escapeBlockMarkdownLine(line)}`), ...nested];
+  if (title2 === "") return [`${prefix2}:::text`, `${prefix2}:::`, ...nested];
+  if (["bulleted_list", "numbered_list", "to_do"].includes(parentType)) return [`${prefix2}:::text`, ...title2.split("\n").map((line) => `${prefix2}${line}`), `${prefix2}:::`, ...nested];
+  return [...title2.split("\n").map((line) => `${prefix2}${escapeBlockMarkdownLine(line)}`), ...nested];
 }
 function renderNotionTreeToMarkdown(tree, mentions, emailMentions = {}, download = false) {
   const title2 = renderRichText(object4(tree.block["properties"])["title"]);
@@ -21044,7 +21829,7 @@ function renderNotionTreeToMarkdown(tree, mentions, emailMentions = {}, download
     ...renderNode(child, 0, "", download)
   ]);
   let markdown = [`# ${title2}`, ...body2.length === 0 ? [] : ["", ...body2]].join("\n").trim();
-  for (const [id, link2] of Object.entries(emailMentions)) markdown = markdown.replace(new RegExp(`<span data-notion-mention="u" data-notion-id="${escapeRegExp(escapeHtml(id))}">.*?</span>`, "g"), () => link2);
+  for (const [id, link4] of Object.entries(emailMentions)) markdown = markdown.replace(new RegExp(`<span data-notion-mention="u" data-notion-id="${escapeRegExp(escapeHtml(id))}">.*?</span>`, "g"), () => link4);
   return mentions === void 0 ? markdown : renderUserMentions(markdown, mentions);
 }
 async function notionPost(runtime2, path, cookie, body2, headers) {
@@ -21057,7 +21842,7 @@ async function notionPost(runtime2, path, cookie, body2, headers) {
     const delay2 = response.headers.get("retry-after");
     if (response.status !== 429 || !read || attempt === 3 || delay2 === null || !/^\d+$/.test(delay2) || Number(delay2) > 120) throw new Error(`POST ${path} failed: ${response.status} ${await response.text()}`);
     await response.body?.cancel();
-    await new Promise((resolve5) => setTimeout(resolve5, Number(delay2) * 1e3));
+    await new Promise((resolve7) => setTimeout(resolve7, Number(delay2) * 1e3));
   }
 }
 async function resolveNotionEmailMentions(runtime2, blocks, cookie, spaceId, headers, mentions) {
@@ -21078,16 +21863,16 @@ async function resolveNotionEmailMentions(runtime2, blocks, cookie, spaceId, hea
   const users = response["users"];
   for (const segment2 of segments) {
     const marks = segment2[1];
-    const link2 = marks.find((mark) => mark[0] === "a" && mark[1].startsWith("mailto:"));
-    const email = decodeURIComponent(link2[1].slice(7));
+    const link4 = marks.find((mark) => mark[0] === "a" && mark[1].startsWith("mailto:"));
+    const email = decodeURIComponent(link4[1].slice(7));
     if (!/^[^@\s?]+@[^@\s?]+$/.test(email)) throw new Error(`Invalid mention email: ${email}`);
     const matches = users.filter((user) => user["aliases"]?.some((alias) => alias.toLowerCase() === email.toLowerCase()));
     if (matches.length !== 1) throw new Error(`Expected one Notion user for ${email}, found ${matches.length}`);
     const id = matches[0]["userId"];
     mentions[id] = `[${escapeInlineMarkdown(segment2[0])}](mailto:${email})`;
     segment2[0] = "\u2023";
-    link2[0] = "u";
-    link2[1] = id;
+    link4[0] = "u";
+    link4[1] = id;
   }
 }
 async function fetchComments(runtime2, tree, spaceId, cookie, headers) {
@@ -21112,10 +21897,10 @@ async function fetchComments(runtime2, tree, spaceId, cookie, headers) {
   const discussions = [...records["discussion"].values()].filter((discussion) => blockIds.has(discussion["parent_id"]) && discussion["alive"] !== false);
   for (const table of ["comment", "notion_user", "bot"]) {
     const ids = table === "comment" ? discussions.flatMap((discussion) => discussion["comments"]) : [...records["comment"].values()].filter((comment) => comment["alive"] === true && (comment["created_by_table"] ?? "notion_user") === table).map((comment) => comment["created_by_id"]);
-    const missing = [...new Set(ids)].filter((id) => !records[table].has(id));
-    if (missing.length === 0) continue;
-    const data = await notionPost(runtime2, "getRecordValues", cookie, { requests: missing.map((id) => ({ table, id })) }, headers);
-    for (const [index, result] of data["results"].entries()) records[table].set(missing[index], object4(result["value"]));
+    const missing3 = [...new Set(ids)].filter((id) => !records[table].has(id));
+    if (missing3.length === 0) continue;
+    const data = await notionPost(runtime2, "getRecordValues", cookie, { requests: missing3.map((id) => ({ table, id })) }, headers);
+    for (const [index, result] of data["results"].entries()) records[table].set(missing3[index], object4(result["value"]));
   }
   return renderComments(tree.id, discussions, records["comment"], new Map([...records["notion_user"], ...records["bot"]]));
 }
@@ -21124,9 +21909,9 @@ function renderComments(pageId, discussions, commentsById, users) {
     const comments = discussion["comments"].map((id) => commentsById.get(id)).filter((comment) => comment["alive"] === true);
     if (comments.length === 0) return "";
     const context = discussion["context"] === void 0 ? "" : renderRichText(discussion["context"]);
-    const link2 = `https://www.notion.so/${pageId.replaceAll("-", "")}#${discussion["parent_id"].replaceAll("-", "")}`;
+    const link4 = `https://www.notion.so/${pageId.replaceAll("-", "")}#${discussion["parent_id"].replaceAll("-", "")}`;
     return [
-      `### [${discussion["parent_id"] === pageId ? "Page comment" : "Inline comment"}](${link2})${discussion["resolved"] === true ? " (resolved)" : ""}`,
+      `### [${discussion["parent_id"] === pageId ? "Page comment" : "Inline comment"}](${link4})${discussion["resolved"] === true ? " (resolved)" : ""}`,
       ...context === "" ? [] : [context.split("\n").map((line) => `> ${line}`).join("\n")],
       ...comments.map((comment) => `**${escapeInlineMarkdown(users.get(comment["created_by_id"])["name"])}** \u2014 ${new Date(comment["created_time"]).toISOString()}
 
@@ -21168,7 +21953,7 @@ async function fetchTree(runtime2, url, source) {
   const spaceId = blocks.get(pageId)["space_id"];
   headers = { ...headers, "x-notion-space-id": spaceId };
   while (true) {
-    const missing = /* @__PURE__ */ new Set();
+    const missing3 = /* @__PURE__ */ new Set();
     const pending = [pageId];
     const visited = /* @__PURE__ */ new Set();
     while (pending.length > 0) {
@@ -21177,14 +21962,14 @@ async function fetchTree(runtime2, url, source) {
       visited.add(idValue);
       const block = blocks.get(idValue);
       if (block === void 0) {
-        missing.add(idValue);
+        missing3.add(idValue);
         continue;
       }
       if (idValue !== pageId && block["type"] === "page") continue;
       for (const child of block["content"] ?? []) pending.push(child);
     }
-    if (missing.size === 0) break;
-    const missingIds = [...missing];
+    if (missing3.size === 0) break;
+    const missingIds = [...missing3];
     const data = await notionPost(runtime2, "getRecordValues", cookie, { requests: missingIds.map((idValue) => ({ table: "block", id: idValue })) }, headers);
     for (const [index, result] of data["results"].entries()) {
       const block = object4(result["value"]);
@@ -21204,7 +21989,7 @@ async function fetchNotionDocument(runtime2, url, source) {
   const { tree, comments } = await fetchTree(runtime2, url, source);
   return notionDocument(source.identifier, tree, void 0, {}, comments);
 }
-async function downloadNotionDirectory(runtime2, url, source, write) {
+async function downloadNotionDirectory(runtime2, url, source, write2) {
   const cookies = await runtime2.cookies.loadSaved("notion");
   if (cookies === null) throw notionAuthError();
   const cookie = cookies.map(({ name, value }) => `${name}=${value}`).join("; ");
@@ -21258,7 +22043,7 @@ async function downloadNotionDirectory(runtime2, url, source, write) {
   };
   const exportPage = async (page, directory) => {
     const id = text2(page["id"]);
-    const path = import_node_path5.posix.join(directory, "index.md");
+    const path = import_node_path7.posix.join(directory, "index.md");
     paths.set(id, path);
     const threads = [];
     const build = async (blockId, pageRoot) => {
@@ -21269,10 +22054,10 @@ async function downloadNotionDirectory(runtime2, url, source, write) {
         if (block !== void 0) {
           label = richTextText(object4(block["properties"] ?? {})["title"] ?? []) || "Untitled";
           if (!paths.has(blockId)) {
-            const child = await exportPage(block, import_node_path5.posix.join(directory, directoryName(block)));
-            await write(child.path, child.markdown);
+            const child = await exportPage(block, import_node_path7.posix.join(directory, directoryName(block)));
+            await write2(child.path, child.markdown);
           }
-          href = import_node_path5.posix.relative(directory, paths.get(blockId));
+          href = import_node_path7.posix.relative(directory, paths.get(blockId));
         }
         return { id: blockId, block: { type: "text", properties: { title: [[label, [["a", href]]]] } }, children: [] };
       }
@@ -21304,7 +22089,7 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
   const spaceView = object4(object4(spaces[userId])["space_view"]);
   if (Object.keys(spaceView).length !== 1) throw new Error("Notion upload requires an explicit target workspace.");
   const spaceId = object4(spaceView[Object.keys(spaceView)[0]])["spaceId"];
-  const pageId = (0, import_node_crypto5.randomUUID)();
+  const pageId = (0, import_node_crypto9.randomUUID)();
   const compactPageId = pageId.replaceAll("-", "");
   const currentTime = runtime2.clock.now().getTime();
   const headers = { "x-notion-active-user-header": userId, "x-notion-space-id": spaceId, referer: `https://www.notion.so/${compactPageId}`, ...csrf === void 0 ? {} : { "x-csrf-token": csrf } };
@@ -21333,7 +22118,7 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
   const emailMentions = {};
   await resolveNotionEmailMentions(runtime2, localBlocks, cookie, spaceId, headers, emailMentions);
   const operations = [pageOperation, ...buildNotionCreateOperations(localBlocks, pageId, spaceId, userId, currentTime).operations];
-  await notionPost(runtime2, "saveTransactionsFanout", cookie, { requestId: (0, import_node_crypto5.randomUUID)(), transactions: [{ id: (0, import_node_crypto5.randomUUID)(), spaceId, operations }] }, headers);
+  await notionPost(runtime2, "saveTransactionsFanout", cookie, { requestId: (0, import_node_crypto9.randomUUID)(), transactions: [{ id: (0, import_node_crypto9.randomUUID)(), spaceId, operations }] }, headers);
   const pageTree = {
     id: pageId,
     block: pageOperation.args,
@@ -21350,12 +22135,19 @@ function splitTitle(markdown) {
   if (/^#{1,6}\s+\S/.test(first)) return { title: first.replace(/^#+\s+/, "").trim(), body: lines.slice(1).join("\n") };
   return { title: "", body: markdown };
 }
-async function synchronizeNotionDocument(runtime2, url, source, base, markdown, _markdownPath) {
+async function synchronizeNotionDocument(runtime2, url, source, base, markdown, _markdownPath, observeRemote, requireConditionalWrite = false) {
   const remote = await fetchTree(runtime2, url, source);
+  const save = async (operations2) => {
+    if (operations2.length === 0) return;
+    if (requireConditionalWrite) throw new Error("Notion cannot condition a save on the revision read. Local draft preserved; apply the edit in Notion.");
+    await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto9.randomUUID)(), transactions: [{ id: (0, import_node_crypto9.randomUUID)(), spaceId: remote.spaceId, operations: operations2 }] }, remote.headers);
+  };
   const baseObject = object4(base);
   const mentions = baseUserMentions(baseObject);
   const emailMentions = { ...baseObject["email_mentions"] };
-  const currentMarkdown = renderNotionTreeToMarkdown(remote.tree, mentions, emailMentions);
+  const observed = notionDocument(remote.tree.id, remote.tree, mentions, { ...emailMentions }, remote.comments);
+  await observeRemote?.(observed);
+  const currentMarkdown = withoutComments(observed.markdown);
   const baseMarkdown = baseObject["markdown"] === void 0 ? void 0 : withoutComments(baseObject["markdown"]);
   let split = splitTitle(withoutComments(markdown));
   const currentSplit = splitTitle(currentMarkdown);
@@ -21366,7 +22158,7 @@ async function synchronizeNotionDocument(runtime2, url, source, base, markdown, 
     const remoteTitleChanged = baseSplit.title !== currentSplit.title;
     const localBodyChanged = baseSplit.body !== split.body;
     const remoteBodyChanged = baseSplit.body !== currentSplit.body;
-    if (localTitleChanged && remoteTitleChanged && split.title !== "" && split.title !== currentSplit.title || localBodyChanged && remoteBodyChanged && split.body !== currentSplit.body) throw new Error("Markdown and Notion changed since last sync");
+    if (localTitleChanged && remoteTitleChanged && split.title !== "" && split.title !== currentSplit.title || localBodyChanged && remoteBodyChanged && split.body !== currentSplit.body) throw new WireMergeConflict("Markdown and Notion changed since last sync");
     if ((localTitleChanged || localBodyChanged) && (remoteTitleChanged || remoteBodyChanged)) {
       split = { title: localTitleChanged ? split.title : currentSplit.title, body: localBodyChanged ? split.body : currentSplit.body };
       fieldMerged = true;
@@ -21378,22 +22170,22 @@ ${split.body}`;
     if (baseSplit !== void 0) {
       const localTitleChanged = baseSplit.title !== split.title;
       const remoteTitleChanged = baseSplit.title !== currentSplit.title;
-      if (!localTitleChanged && remoteTitleChanged) return notionDocument(remote.tree.id, remote.tree, mentions, emailMentions, remote.comments);
-      if (localTitleChanged && remoteTitleChanged && split.title !== currentSplit.title) throw new Error("Markdown and Notion changed since last sync");
-      if (localTitleChanged && remoteTitleChanged) return notionDocument(remote.tree.id, remote.tree, mentions, emailMentions, remote.comments);
+      if (!localTitleChanged && remoteTitleChanged) return { ...observed, wroteRemote: false };
+      if (localTitleChanged && remoteTitleChanged && split.title !== currentSplit.title) throw new WireMergeConflict("Markdown and Notion changed since last sync");
+      if (localTitleChanged && remoteTitleChanged) return { ...observed, wroteRemote: false };
     }
     const titleRich2 = split.title === "" ? object4(remote.tree.block["properties"])["title"] : titleRichText(split.title);
     const titleChanged = split.title !== "" && compact(object4(remote.tree.block["properties"])["title"]) !== compact(titleRich2);
-    if (titleChanged) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto5.randomUUID)(), transactions: [{ id: (0, import_node_crypto5.randomUUID)(), spaceId: remote.spaceId, operations: [{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: titleRich2 } } }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime2.clock.now().getTime() }] }] }, remote.headers);
+    if (titleChanged) await save([{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: titleRich2 } } }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime2.clock.now().getTime() }]);
     const outputTree2 = { ...remote.tree, block: { ...remote.tree.block, properties: { ...object4(remote.tree.block["properties"]), title: titleRich2 } } };
-    return notionDocument(remote.tree.id, outputTree2, mentions, emailMentions, remote.comments);
+    return { ...notionDocument(remote.tree.id, outputTree2, mentions, emailMentions, remote.comments), wroteRemote: titleChanged };
   }
   if (baseMarkdown !== void 0) {
     const localChanged = baseMarkdown !== targetMarkdown;
     const remoteChanged = baseMarkdown !== currentMarkdown;
-    if (!localChanged && remoteChanged) return notionDocument(remote.tree.id, remote.tree, mentions, emailMentions, remote.comments);
-    if (localChanged && remoteChanged && targetMarkdown !== currentMarkdown && !fieldMerged) throw new Error("Markdown and Notion changed since last sync");
-    if (localChanged && remoteChanged && targetMarkdown === currentMarkdown) return notionDocument(remote.tree.id, remote.tree, mentions, emailMentions, remote.comments);
+    if (!localChanged && remoteChanged) return { ...observed, wroteRemote: false };
+    if (localChanged && remoteChanged && targetMarkdown !== currentMarkdown && !fieldMerged) throw new WireMergeConflict("Markdown and Notion changed since last sync");
+    if (localChanged && remoteChanged && targetMarkdown === currentMarkdown) return { ...observed, wroteRemote: false };
   }
   const localBody = mentions === void 0 ? split.body : hydrateUserMentions(split.body, mentions);
   const localBlocks = parseNotionMarkdown(localBody);
@@ -21403,9 +22195,9 @@ ${split.body}`;
   const operations = [...diffResult.operations];
   const titleRich = split.title === "" ? object4(remote.tree.block["properties"])["title"] : titleRichText(split.title);
   if (split.title !== "" && compact(object4(remote.tree.block["properties"])["title"]) !== compact(titleRich)) operations.unshift({ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: titleRich } } });
-  if (operations.length > 0) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto5.randomUUID)(), transactions: [{ id: (0, import_node_crypto5.randomUUID)(), spaceId: remote.spaceId, operations }] }, remote.headers);
+  await save(operations);
   const outputTree = { id: remote.tree.id, block: { ...remote.tree.block, properties: { ...object4(remote.tree.block["properties"]), title: titleRich } }, children: localTree(localBlocks).map((node, index) => outputNode(node, remote.tree.children[index], remote.tree.id, remote, ambient.currentTime)) };
-  return notionDocument(remote.tree.id, outputTree, mentions, emailMentions, remote.comments);
+  return { ...notionDocument(remote.tree.id, outputTree, mentions, emailMentions, remote.comments), wroteRemote: operations.length > 0 };
 }
 
 // ../provider-notion/src/notion.ts
@@ -21416,7 +22208,7 @@ var notionService = defineService({
   parse: (url) => Object.freeze({ service: "notion", identifier: notionPageId.exec(url.href)[0].replaceAll("-", "").toLowerCase(), type: "document" }),
   fetch: fetchNotionDocument,
   download: downloadNotionDirectory,
-  synchronize: (runtime2, url, source, base, markdown, markdownPath) => synchronizeNotionDocument(runtime2, url, source, base, markdown, markdownPath),
+  synchronize: synchronizeNotionDocument,
   upload: uploadNotionDocument
 });
 
@@ -21633,9 +22425,9 @@ function applyStyles(text3, styles) {
   if (!supportsColor() || styles.length === 0) {
     return text3;
   }
-  const open2 = styles.map((style) => style.open).join("");
-  const output = text3.includes(reset) ? replaceAll(text3, reset, `${reset}${open2}`) : text3;
-  return `${open2}${output}${reset}`;
+  const open4 = styles.map((style) => style.open).join("");
+  const output = text3.includes(reset) ? replaceAll(text3, reset, `${reset}${open4}`) : text3;
+  return `${open4}${output}${reset}`;
 }
 function clampRgb(value) {
   if (Number.isNaN(value)) {
@@ -21916,9 +22708,9 @@ function slackBlocksToMarkdown(blocks, users) {
         return elements.map((element, index) => {
           const indent = block["indent"] === void 0 ? 0 : block["indent"];
           const offset = block["offset"] === void 0 ? 0 : block["offset"];
-          const prefix = block["style"] === "ordered" ? `${offset + index + 1}. ` : "- ";
-          return `${"    ".repeat(indent)}${prefix}${richInline(element["elements"], users).replace(/\n/g, `
-${"    ".repeat(indent)}${" ".repeat(prefix.length)}`)}`;
+          const prefix2 = block["style"] === "ordered" ? `${offset + index + 1}. ` : "- ";
+          return `${"    ".repeat(indent)}${prefix2}${richInline(element["elements"], users).replace(/\n/g, `
+${"    ".repeat(indent)}${" ".repeat(prefix2.length)}`)}`;
         }).join("\n");
       case "section":
         return [...block["text"] === void 0 ? [] : [render2(block["text"])], ...block["fields"] === void 0 ? [] : block["fields"].map(render2)].join("\n\n");
@@ -21949,21 +22741,21 @@ async function api(runtime2, origin2, token, cookie, method, parameters) {
   const read = ["conversations.history", "conversations.replies", "users.info", "users.list", "bots.info", "search.modules.channels"].includes(method);
   for (let attempt = 0; ; attempt++) {
     const response = await runtime2.http.request(`${origin2}/api/${method}`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded", "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36" }, body: body2 });
-    const json = response.status === 429 ? {} : await response.json();
+    const json2 = response.status === 429 ? {} : await response.json();
     if (response.status === 429) await response.body?.cancel();
-    const limitedRead = read && (response.status === 429 || json["error"] === "ratelimited");
+    const limitedRead = read && (response.status === 429 || json2["error"] === "ratelimited");
     const header = limitedRead ? response.headers.get("retry-after") : null;
     if (limitedRead && attempt < 3) {
       const seconds = header === null ? 2 ** attempt : /^\d+$/.test(header) ? Number(header) : NaN;
       if (seconds <= 120) {
-        await new Promise((resolve5) => setTimeout(resolve5, seconds * 1e3));
+        await new Promise((resolve7) => setTimeout(resolve7, seconds * 1e3));
         continue;
       }
     }
     const hint = header === null ? "" : ` (Retry-After: ${header})`;
-    if (!response.ok) throw new Error(`Slack API ${method} failed: HTTP ${response.status}${response.status === 429 ? "" : " " + JSON.stringify(json)}${hint}`);
-    if (json["ok"] === false) throw new Error(`Slack API ${method} failed: ${json["error"]}${hint}`);
-    return json;
+    if (!response.ok) throw new Error(`Slack API ${method} failed: HTTP ${response.status}${response.status === 429 ? "" : " " + JSON.stringify(json2)}${hint}`);
+    if (json2["ok"] === false) throw new Error(`Slack API ${method} failed: ${json2["error"]}${hint}`);
+    return json2;
   }
 }
 function formatTimestamp(timestamp, timezone) {
@@ -22114,9 +22906,9 @@ var slackProvider = Object.freeze({
 });
 
 // ../provider-zoom/src/zoom-hub.ts
-var import_node_crypto6 = require("node:crypto");
-var import_node_path6 = require("node:path");
-var import_promises7 = require("node:timers/promises");
+var import_node_crypto10 = require("node:crypto");
+var import_node_path8 = require("node:path");
+var import_promises9 = require("node:timers/promises");
 var userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 function zoomAuthError() {
   return new Error("Zoom authentication is missing or expired. Run `wire zoom login` once; other commands reuse saved cookies.");
@@ -22162,9 +22954,9 @@ function cookieKey(cookie) {
 function cookieJar(cookies) {
   return new Map(cookies.map((cookie) => [cookieKey(cookie), cookie]));
 }
-function domainMatches(cookie, hostname) {
+function domainMatches(cookie, hostname3) {
   const domain = cookie.domain.startsWith(".") ? cookie.domain.slice(1) : cookie.domain;
-  return hostname === domain || cookie.includeSubdomains && hostname.endsWith(`.${domain}`);
+  return hostname3 === domain || cookie.includeSubdomains && hostname3.endsWith(`.${domain}`);
 }
 function pathMatches(cookiePath2, requestPath) {
   return requestPath === cookiePath2 || requestPath.startsWith(cookiePath2.endsWith("/") ? cookiePath2 : `${cookiePath2}/`);
@@ -22263,7 +23055,7 @@ async function connectZoom(runtime2, pace) {
       if (pace) {
         const wait2 = Math.max(nextRequest, Number(state.metadata["hub_retry_at"] ?? 0)) - runtime2.clock.now().getTime();
         if (wait2 > 6e4) throw new Error(`Zoom Hub rate limited; retry after ${new Date(Number(state.metadata["hub_retry_at"])).toISOString()}`);
-        if (wait2 > 0) await (0, import_promises7.setTimeout)(wait2);
+        if (wait2 > 0) await (0, import_promises9.setTimeout)(wait2);
       }
       const response = await runtime2.http.request(url, { ...init, headers: { ...init.headers, cookie: requestCookies(jar, parsed, runtime2.clock.now()) } });
       const now = runtime2.clock.now();
@@ -22365,24 +23157,24 @@ async function scrapeZoom(runtime2, directory) {
   ), path);
   const seen = /* @__PURE__ */ new Set();
   const counts2 = { downloaded: 0, unchanged: 0, unavailable: 0, locallyModified: 0 };
-  const digest2 = (text3) => (0, import_node_crypto6.createHash)("sha256").update(text3).digest("hex");
+  const digest3 = (text3) => (0, import_node_crypto10.createHash)("sha256").update(text3).digest("hex");
   const sync = async (file) => {
     const id = file["id"];
     const notes = file["meetingNotes"];
     if (file["isDeleted"] || !notes || !(notes["meetingId"] || notes["mainMeetingId"] || notes["source"] === "1pMeeting") || seen.has(id)) return;
     seen.add(id);
-    const path = (0, import_node_path6.join)(directory, "zoom", encodeURIComponent(id) + ".md");
+    const path = (0, import_node_path8.join)(directory, "zoom", encodeURIComponent(id) + ".md");
     const version = file["updatedInfo"]["time"];
-    const jsonPath = (0, import_node_path6.join)(directory, "zoom", encodeURIComponent(id) + ".json");
+    const jsonPath = (0, import_node_path8.join)(directory, "zoom", encodeURIComponent(id) + ".json");
     const hasJson = await runtime2.filesystem.exists(jsonPath);
     if (await runtime2.filesystem.exists(path)) {
       const contents = await runtime2.filesystem.readText(path);
       const marker = /\n\n<!-- wire:zoom (\S+) ([a-f0-9]{64})(?: ([a-f0-9]{64}))? -->\n$/.exec(contents);
-      if (!marker || digest2(contents.slice(0, marker.index)) !== marker[2]) {
+      if (!marker || digest3(contents.slice(0, marker.index)) !== marker[2]) {
         counts2.locallyModified++;
         return;
       }
-      if (hasJson && digest2(await runtime2.filesystem.readText(jsonPath)) !== marker[3]) {
+      if (hasJson && digest3(await runtime2.filesystem.readText(jsonPath)) !== marker[3]) {
         counts2.locallyModified++;
         return;
       }
@@ -22406,12 +23198,12 @@ async function scrapeZoom(runtime2, directory) {
       counts2.unavailable++;
       return;
     }
-    const json = JSON.stringify(doc.archive, null, 2) + "\n";
+    const json2 = JSON.stringify(doc.archive, null, 2) + "\n";
     await runtime2.filesystem.writeText(path, doc.document.markdown + `
 
-<!-- wire:zoom ${version} ${digest2(doc.document.markdown)} ${digest2(json)} -->
+<!-- wire:zoom ${version} ${digest3(doc.document.markdown)} ${digest3(json2)} -->
 `);
-    await runtime2.filesystem.writeText(jsonPath, json);
+    await runtime2.filesystem.writeText(jsonPath, json2);
     counts2.downloaded++;
   };
   let token = "";
@@ -22459,7 +23251,7 @@ var authServices = ["ashby", "asana", "chatgpt", "gmail", "google-docs", "notion
 var wireStatus;
 function operationPath(value, path) {
   if (value.startsWith("http://") || value.startsWith("https://")) return path;
-  return (0, import_node_path7.isAbsolute)(value) ? value : (0, import_node_path7.resolve)(path, value);
+  return (0, import_node_path9.isAbsolute)(value) ? value : (0, import_node_path9.resolve)(path, value);
 }
 async function commandEnvironment(path) {
   const home = process.env["HOME"];
@@ -22479,13 +23271,13 @@ function repositoryRoot() {
 }
 function runtime(values2) {
   const filesystem = {
-    exists: async (path) => (0, import_node_fs4.existsSync)(path),
-    readText: (path) => (0, import_promises8.readFile)(path, "utf8"),
+    exists: async (path) => (0, import_node_fs5.existsSync)(path),
+    readText: (path) => (0, import_promises10.readFile)(path, "utf8"),
     writeText: async (path, contents) => {
-      await (0, import_promises8.mkdir)((0, import_node_path7.dirname)(path), { recursive: true });
-      await (0, import_promises8.writeFile)(path, contents, "utf8");
+      await (0, import_promises10.mkdir)((0, import_node_path9.dirname)(path), { recursive: true });
+      await (0, import_promises10.writeFile)(path, contents, "utf8");
     },
-    delete: (path) => (0, import_promises8.rm)(path)
+    delete: (path) => (0, import_promises10.rm)(path)
   };
   const clock = {
     now: () => /* @__PURE__ */ new Date(),
@@ -22526,13 +23318,13 @@ async function wire(path) {
     fetchInput: capabilities,
     catalog: serviceCatalog,
     filesystem: {
-      exists: async (path2) => (0, import_node_fs4.existsSync)(path2),
-      isFile: async (path2) => (0, import_node_fs4.existsSync)(path2) && (0, import_node_fs4.statSync)(path2).isFile(),
+      exists: async (path2) => (0, import_node_fs5.existsSync)(path2),
+      isFile: async (path2) => (0, import_node_fs5.existsSync)(path2) && (0, import_node_fs5.statSync)(path2).isFile(),
       readText: capabilities.filesystem.readText,
       writeText: capabilities.filesystem.writeText,
       writeBytes: async (path2, contents) => {
-        await (0, import_promises8.mkdir)((0, import_node_path7.dirname)(path2), { recursive: true });
-        await (0, import_promises8.writeFile)(path2, contents);
+        await (0, import_promises10.mkdir)((0, import_node_path9.dirname)(path2), { recursive: true });
+        await (0, import_promises10.writeFile)(path2, contents);
       }
     },
     workspace: {
@@ -22608,7 +23400,7 @@ function selectedPath(uri) {
 }
 function selectedDirectory(uri) {
   const path = selectedPath(uri);
-  return (0, import_node_fs4.existsSync)(path) && (0, import_node_fs4.statSync)(path).isDirectory() ? path : (0, import_node_path7.dirname)(path);
+  return (0, import_node_fs5.existsSync)(path) && (0, import_node_fs5.statSync)(path).isDirectory() ? path : (0, import_node_path9.dirname)(path);
 }
 function projectDirectory() {
   const root = repositoryRoot();
@@ -22617,12 +23409,12 @@ function projectDirectory() {
 }
 function resourceFile(uri) {
   const path = selectedPath(uri);
-  if (!(0, import_node_fs4.statSync)(path).isFile()) throw new Error(`Expected file: ${path}`);
+  if (!(0, import_node_fs5.statSync)(path).isFile()) throw new Error(`Expected file: ${path}`);
   return path;
 }
 function pathInsideDirectory(directory, path) {
-  const normalizedDirectory = (0, import_node_path7.resolve)(directory);
-  const normalizedPath = (0, import_node_path7.resolve)(path);
+  const normalizedDirectory = (0, import_node_path9.resolve)(directory);
+  const normalizedPath = (0, import_node_path9.resolve)(path);
   return normalizedPath === normalizedDirectory || normalizedPath.startsWith(`${normalizedDirectory}/`);
 }
 async function saveDocument(path) {
@@ -22688,17 +23480,17 @@ async function previewUrl() {
 async function syncFile(uri) {
   const path = resourceFile(uri);
   await saveDocument(path);
-  const result = await wireProgress("Syncing", async () => (await wire(operationPath(path, (0, import_node_path7.dirname)(path)))).sync(path, (0, import_node_path7.dirname)(path)));
+  const result = await wireProgress("Syncing", async () => (await wire(operationPath(path, (0, import_node_path9.dirname)(path)))).sync(path, (0, import_node_path9.dirname)(path)));
   await showWireResultStatus(result);
 }
 async function detachFile(uri) {
   const path = resourceFile(uri);
-  const result = await wireProgress("Detaching", async () => (await wire(operationPath(path, (0, import_node_path7.dirname)(path)))).detach(path, (0, import_node_path7.dirname)(path)));
+  const result = await wireProgress("Detaching", async () => (await wire(operationPath(path, (0, import_node_path9.dirname)(path)))).detach(path, (0, import_node_path9.dirname)(path)));
   await showWireResultStatus(result);
 }
 async function openResource(uri) {
   const path = resourceFile(uri);
-  const resource = await wireProgress("Opening", async () => (await wire(operationPath(path, (0, import_node_path7.dirname)(path)))).openResource(path, (0, import_node_path7.dirname)(path)));
+  const resource = await wireProgress("Opening", async () => (await wire(operationPath(path, (0, import_node_path9.dirname)(path)))).openResource(path, (0, import_node_path9.dirname)(path)));
   showWireStatus(`Wire - Opened: ${title(resource)}`);
 }
 async function syncDirectory(uri) {
@@ -22749,7 +23541,7 @@ async function authLogout() {
   showWireStatus(`Wire - Logged out: ${service}`);
 }
 async function compileAndReload() {
-  const root = (0, import_node_path7.resolve)(__dirname, "..");
+  const root = (0, import_node_path9.resolve)(__dirname, "..");
   await execFileAsync2("node", ["bump-version.mjs", "patch"], { cwd: root });
   await execFileAsync2("npm", ["run", "compile"], { cwd: root });
   await vscode.commands.executeCommand("workbench.action.reloadWindow");
