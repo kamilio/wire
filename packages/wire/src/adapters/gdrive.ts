@@ -4,6 +4,7 @@ import { basename, dirname, extname, join } from "node:path";
 import { googleDocOriginalImages } from "provider-google-docs";
 import type { RuntimeCapabilities } from "wire-core";
 
+const docxType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const google = "application/vnd.google-apps.";
 const formats: Record<string, [string, string]> = {
   document: [".md", "text/markdown"],
@@ -147,6 +148,10 @@ export async function previewDrive(runtime: DriveRuntime, url: string) {
       item.name + ": image-only PDF (no text layer)."
     );
   }
+  if (item.mimeType === docxType || /\.docx$/i.test(item.name)) {
+    const response = await drive(runtime, "/" + id, { alt: "media", supportsAllDrives: "true" });
+    return (await import("./drive-docx.js")).docxMarkdown(new Uint8Array(await response.arrayBuffer()));
+  }
   if (item.mimeType.startsWith("text/"))
     return (await drive(runtime, "/" + id, { alt: "media", supportsAllDrives: "true" })).text();
   return "# " + item.name + "\n\n" + item.mimeType;
@@ -198,7 +203,7 @@ async function sheetLinks(runtime: DriveRuntime, id: string) {
   return { links, labels };
 }
 
-export async function scrapeDrive(runtime: DriveRuntime, cwd: string, url?: string, deleteVerifiedPdfs = false) {
+export async function scrapeDrive(runtime: DriveRuntime, cwd: string, url?: string, deleteVerifiedPdfs = false, deleteVerifiedDocx = false) {
   const sheet = url?.match(sheetUrl)?.[1], folder = url?.match(folderUrl)?.[1];
   if (url && !sheet && !folder) throw new Error("Expected a Google Drive folder or Google Sheets URL.");
   const metadata = async (id: string): Promise<File> => (await drive(runtime, "/" + encodeURIComponent(id), { fields: "id,name,mimeType,version", supportsAllDrives: "true" })).json();
@@ -223,9 +228,10 @@ export async function scrapeDrive(runtime: DriveRuntime, cwd: string, url?: stri
   root ??= await metadata(source);
   let downloaded = 0,
     unchanged = 0,
-    removed = 0;
+    removed = 0, removedDocx = 0;
   const errors: string[] = [],
     skipped: string[] = [],
+    retainedDocx: string[] = [],
     images: string[] = [];
   const priorPaths = new Map(Object.values(state.entries).filter(e => e.path).map(e => [e.id, e.path!]));
   let labels = new Map<string, string>();
@@ -234,7 +240,9 @@ export async function scrapeDrive(runtime: DriveRuntime, cwd: string, url?: stri
       try {
         if (f.name.endsWith(".cannedSearch") || f.name === ".DS_Store") continue;
         const folder = f.mimeType === google + "folder",
-          pdf = f.mimeType === "application/pdf" || /\.pdf$/i.test(f.name);
+          pdf = !f.mimeType.startsWith(google) && (f.mimeType === "application/pdf" || /\.pdf$/i.test(f.name)),
+          docx = !f.mimeType.startsWith(google) && (f.mimeType === docxType || /\.docx$/i.test(f.name)),
+          cleanup = (pdf && deleteVerifiedPdfs) || (docx && deleteVerifiedDocx);
         const format = formats[f.mimeType.slice(google.length)];
         if (!folder && !format && f.mimeType.startsWith(google)) {
           skipped.push(f.name);
@@ -244,12 +252,12 @@ export async function scrapeDrive(runtime: DriveRuntime, cwd: string, url?: stri
         const opaque = title === f.id || /^(?:[a-f\d]{24,}|[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12})$/i.test(title);
         const label = labels.get(f.id);
         const name = safeName(opaque && label ? label + (label.toLowerCase().endsWith(extension.toLowerCase()) ? "" : extension) : f.name);
-        const suff = format?.[0] ?? (pdf && !/\.pdf$/i.test(name) ? ".pdf" : "");
+        const suff = format?.[0] ?? (pdf && !/\.pdf$/i.test(name) ? ".pdf" : docx && !/\.docx$/i.test(name) ? ".docx" : "");
         let path = join(dir, name + (name.endsWith(suff) ? "" : suff));
         // Existing scrapes keep their original sidecar paths.
-        const markdownPath = () => state.entries[key(path + ".md")]?.id !== f.id && /\.pdf$/i.test(path)
-          ? path.slice(0, -4) + ".md" : path + ".md";
-        const paths = () => (pdf ? [path, markdownPath()] : [path]);
+        const markdownPath = () => state.entries[key(path + ".md")]?.id !== f.id && /\.(pdf|docx)$/i.test(path)
+          ? path.slice(0, -extname(path).length) + ".md" : path + ".md";
+        const paths = () => (pdf || docx ? [path, markdownPath()] : [path]);
         const key = (p: string) => "./" + p.normalize("NFC").toLowerCase();
         const occupied = async () => {
           for (const p of paths()) {
@@ -280,8 +288,9 @@ export async function scrapeDrive(runtime: DriveRuntime, cwd: string, url?: stri
         }
         const original = state.entries[key(path)];
         const removeVerified = async (bytes: Uint8Array, md: Buffer) => {
-          const { verifiedPdf } = await import("./drive-pdf.js");
-          if (!verifiedPdf(bytes, md.toString("utf8"))) return;
+          const verified = docx ? (await import("./drive-docx.js")).verifiedDocx(full, bytes, md.toString("utf8"))
+            : (await import("./drive-pdf.js")).verifiedPdf(bytes, md.toString("utf8"));
+          if (!verified) { if (docx) retainedDocx.push(path); return; }
           // Recheck both local files after verification, before removing the managed copy.
           for (const p of paths()) {
             const local = join(cwd, p);
@@ -290,7 +299,7 @@ export async function scrapeDrive(runtime: DriveRuntime, cwd: string, url?: stri
           }
           await unlink(full);
           state.entries[key(path)]!.markdownOnly = true;
-          removed++;
+          if (docx) removedDocx++; else removed++;
         };
         let current = true;
         for (const p of paths()) {
@@ -320,7 +329,7 @@ export async function scrapeDrive(runtime: DriveRuntime, cwd: string, url?: stri
         }
         if (current) {
           if (state.entries[key(path)]?.noText) images.push(path);
-          if (pdf && deleteVerifiedPdfs && !original?.noText && (await stat(full)))
+          if (cleanup && !original?.noText && (await stat(full)))
             await removeVerified(await readFile(full), await readFile(join(cwd, markdownPath())));
           original!.path = path;
           unchanged++;
@@ -334,9 +343,9 @@ export async function scrapeDrive(runtime: DriveRuntime, cwd: string, url?: stri
         const bytes = doc?.bytes ?? raw;
         await save(full, bytes);
         state.entries[key(path)] = { id: f.id, path, version: f.version, hash: digest(bytes), ...(doc ? { images: doc.images, originalImages: true } : {}) };
-        if (pdf) {
-          const { pdfMarkdown } = await import("./drive-pdf.js");
-          const text = pdfMarkdown(bytes);
+        if (pdf || docx) {
+          const text = docx ? await (await import("./drive-docx.js")).docxMarkdown(bytes)
+            : (await import("./drive-pdf.js")).pdfMarkdown(bytes);
           if (text === null) {
             state.entries[key(path)]!.noText = true;
             images.push(path);
@@ -347,7 +356,7 @@ export async function scrapeDrive(runtime: DriveRuntime, cwd: string, url?: stri
           const sidecar = markdownPath();
           await save(join(cwd, sidecar), md);
           state.entries[key(sidecar)] = { id: f.id, version: f.version, hash: digest(md) };
-          if (deleteVerifiedPdfs) await removeVerified(bytes, md);
+          if (cleanup) await removeVerified(bytes, md);
         }
         downloaded++;
       } catch (e) {
@@ -379,6 +388,8 @@ export async function scrapeDrive(runtime: DriveRuntime, cwd: string, url?: stri
     unchanged +
     " unchanged." +
     (removed ? " Verified Markdown; removed " + removed + " local PDF copies." : "") +
+    (removedDocx ? " Verified Markdown; removed " + removedDocx + " local DOCX copies." : "") +
+    (retainedDocx.length ? "\nDOCX originals kept because Markdown verification was incomplete: " + retainedDocx.join(", ") : "") +
     (images.length ? "\nPDFs with no text layer (originals kept): " + images.join(", ") : "") +
     (skipped.length ? "\nUnsupported Drive items: " + skipped.join(", ") : "");
   if (errors.length) throw new Error(summary + "\n" + errors.join("\n"));

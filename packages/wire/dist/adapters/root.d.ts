@@ -11,7 +11,7 @@ export type WireRootOptions = Readonly<{
     allowPaste: boolean;
     ashby?: (action: string, arg?: string) => Promise<string>;
     previewDrive?: (url: string) => Promise<string>;
-    scrapeDrive?: (url?: string, deleteVerifiedPdfs?: boolean) => Promise<string>;
+    scrapeDrive?: (url?: string, deleteVerifiedPdfs?: boolean, deleteVerifiedDocx?: boolean) => Promise<string>;
     calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>;
     latticeSync?: (url: string | undefined, file?: string) => Promise<string>;
     latticeRequests?: (url: string) => Promise<string>;

@@ -10,7 +10,7 @@ import { formatAgenda, type readAgenda } from "./calendar.js";
 
 export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
-export type WireRootOptions = Readonly<{ allowPaste: boolean; ashby?: (action: string, arg?: string) => Promise<string>; previewDrive?: (url: string) => Promise<string>; scrapeDrive?: (url?: string, deleteVerifiedPdfs?: boolean) => Promise<string>; calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
+export type WireRootOptions = Readonly<{ allowPaste: boolean; ashby?: (action: string, arg?: string) => Promise<string>; previewDrive?: (url: string) => Promise<string>; scrapeDrive?: (url?: string, deleteVerifiedPdfs?: boolean, deleteVerifiedDocx?: boolean) => Promise<string>; calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
 
 const authServices = ["ashby", "asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
 const removedCliCommandNames = Object.freeze({
@@ -608,8 +608,8 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
           handler: ({ params }) => userFacing(() => options.previewDrive!(params.url)), render: render<string>(v => v),
         })] : []),
         defineCommand({ name: "scrape", description: "Download a folder, or a spreadsheet and its linked Drive files, into its own directory. Run there without a URL to refresh.", scope: ["cli"], positional: ["url"],
-          params: S.Object({ url: S.Optional(S.String({ description: "Google Drive folder or Google Sheets URL." })), "delete-verified-pdfs": S.Optional(S.Boolean({ description: "Remove local PDFs only after verifying their Markdown independently. Originals are kept by default." })) }),
-          handler: ({ params }) => userFacing(() => options.scrapeDrive!(params.url, params["delete-verified-pdfs"])), render: render<string>(v => v),
+          params: S.Object({ url: S.Optional(S.String({ description: "Google Drive folder or Google Sheets URL." })), "delete-verified-docx": S.Optional(S.Boolean({ description: "Remove local DOCX files only after independently verifying their Markdown." })), "delete-verified-pdfs": S.Optional(S.Boolean({ description: "Remove local PDFs only after verifying their Markdown independently. Originals are kept by default." })) }),
+          handler: ({ params }) => userFacing(() => options.scrapeDrive!(params.url, params["delete-verified-pdfs"], params["delete-verified-docx"])), render: render<string>(v => v),
         }),
       ] })] : []),
       ...(options.calendarAgenda ? [defineGroup({ name: "google-calendar", description: "Read Google Calendar.", scope: ["cli"], children: [
