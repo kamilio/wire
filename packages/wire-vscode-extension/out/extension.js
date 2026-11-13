@@ -15206,8 +15206,8 @@ function composeWire(dependencies) {
     const pathResources = await registry.findByPath(relativePath);
     if (pathResources.length === 0 && await dependencies.filesystem.exists(candidatePath)) {
       const markdown2 = await dependencies.filesystem.readText(candidatePath);
-      const uploaded = await uploadSource(dependencies.fetchInput, dependencies.catalog, markdown2, candidatePath);
-      return store(uploaded.url, (0, import_node_path3.dirname)(candidatePath), uploaded, markdown2, "uploaded", candidatePath, void 0, uploaded.markdown);
+      const uploaded2 = await uploadSource(dependencies.fetchInput, dependencies.catalog, markdown2, candidatePath);
+      return store(uploaded2.url, (0, import_node_path3.dirname)(candidatePath), uploaded2, markdown2, "uploaded", candidatePath, void 0, uploaded2.markdown);
     }
     const resource = await resolveResource(registry, value, root, path);
     const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
@@ -15234,7 +15234,8 @@ function composeWire(dependencies) {
       }
     }
     const fetched = await synchronizeSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog, base, markdown, outputPath);
-    const action = localChanged ? fetched.markdown === baseMarkdown ? "synced" : "uploaded" : fetched.markdown === markdown ? "synced" : "downloaded";
+    const uploaded = fetched.wroteRemote ?? (localChanged && fetched.markdown !== baseMarkdown);
+    const action = uploaded ? "uploaded" : fetched.markdown === markdown || localChanged && fetched.markdown === baseMarkdown ? "synced" : "downloaded";
     return store(resource.urls[0], outputDirectory, fetched, markdown, action, void 0, action === "uploaded" && baseMarkdown !== null ? baseMarkdown : void 0, action === "uploaded" ? markdown : fetched.markdown);
   };
   const download = async (value, path) => {
@@ -19079,7 +19080,7 @@ async function anchoredComments(runtime2, id, headers, tab, tabs) {
   } while (cursor);
   return found;
 }
-async function tryUploadDocBlocks(runtime2, documentId, key2, tabId, remoteMarkdown, desiredMarkdown, confirmRemote, wroteRevision, positionRevision) {
+async function tryUploadDocBlocks(runtime2, documentId, key2, tabId, remoteMarkdown, desiredMarkdown, confirmRemote, onWrite, positionRevision) {
   const token = (await nativeDocsGrant(runtime2))?.token;
   if (!token) return false;
   const url = "https://docs.googleapis.com/v1/documents/" + encodeURIComponent(documentId);
@@ -19105,9 +19106,9 @@ async function tryUploadDocBlocks(runtime2, documentId, key2, tabId, remoteMarkd
   if (!requests.length) return true;
   const update = await runtime2.http.request(url + ":batchUpdate", { method: "POST", headers: { ...headers, "content-type": "application/json" }, redirect: "error", body: JSON.stringify({ writeControl: { requiredRevisionId: data.revisionId }, requests }) });
   if (!update.ok) throw new Error("Google Docs block update failed: HTTP " + update.status + ". Sync again to check the current revision.");
-  if (wroteRevision) {
+  if (onWrite) {
     const ack = await update.json();
-    if (typeof ack.writeControl?.requiredRevisionId === "string") wroteRevision(ack.writeControl.requiredRevisionId);
+    onWrite(typeof ack.writeControl?.requiredRevisionId === "string" ? ack.writeControl.requiredRevisionId : void 0);
   }
   return true;
 }
@@ -19817,7 +19818,7 @@ async function synchronizeGoogleDocument(runtime2, _url, source, base, markdown)
   const baseMarkdown = objectValue(base)["markdown"];
   const label = source["sheet_gid"] === void 0 ? "Google Docs" : "Google Sheets";
   if (typeof baseMarkdown !== "string") throw new Error("Google sync base must include markdown");
-  if (source["sheet_gid"] === void 0 && (markdown.trimEnd() === baseMarkdown.trimEnd() || markdown.trimEnd() === remote.markdown.trimEnd())) return remote;
+  if (source["sheet_gid"] === void 0 && (markdown.trimEnd() === baseMarkdown.trimEnd() || markdown.trimEnd() === remote.markdown.trimEnd())) return { ...remote, wroteRemote: false };
   if (source["sheet_gid"] !== void 0) {
     const baseObject = objectValue(base);
     if (baseObject["rows"] === void 0) {
@@ -19842,15 +19843,15 @@ Prefix it with an apostrophe or rewrite it as plain text before syncing.`);
   if (documentTab(source) === "t.0" && objectValue(base)["document_id"] && !objectValue(base)["document_tab"] && baseMarkdown !== remote.markdown) {
     throw new Error("Google Docs saved snapshot predates explicit tab selection. Keep the local edits and reconcile them with a fresh download of this tab.");
   }
-  if (baseMarkdown !== remote.markdown && alreadyAppliedPlainLabelMove(baseMarkdown, markdown, remote.markdown)) return remote;
+  if (baseMarkdown !== remote.markdown && alreadyAppliedPlainLabelMove(baseMarkdown, markdown, remote.markdown)) return { ...remote, wroteRemote: false };
   const merged = mergeDocBlocks(baseMarkdown, markdown, remote.markdown, nativeDocMarkdownEqual);
-  if (merged === remote.markdown) return remote;
+  if (merged === remote.markdown) return { ...remote, wroteRemote: false };
   const id = source["document_id"] ?? source.identifier;
   const key2 = resourceKey(source), tab = documentTab(source);
   const snapshot = objectValue(base);
   const sameBase = baseMarkdown === remote.markdown || snapshot["verified_revision"] !== void 0 && snapshot["verified_revision"] === objectValue(remote.data)["verified_revision"];
   const positionRevision = snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && sameBase ? snapshot["position_revision"] ?? snapshot["verified_revision"] : void 0;
-  let writtenRevision;
+  let wroteRemote = false, writtenRevision;
   const native = await tryUploadDocBlocks(
     runtime2,
     id,
@@ -19860,6 +19861,7 @@ Prefix it with an apostrophe or rewrite it as plain text before syncing.`);
     merged,
     async (revision) => remote.readRevision === revision ? remote.markdown : (await fetchGoogleDocument(runtime2, source)).markdown,
     (revision) => {
+      wroteRemote = true;
       writtenRevision = revision;
     },
     typeof positionRevision === "string" ? positionRevision : void 0
@@ -19868,9 +19870,9 @@ Prefix it with an apostrophe or rewrite it as plain text before syncing.`);
   const uploaded = await fetchGoogleDocument(runtime2, source, {});
   if (!nativeDocMarkdownEqual(uploaded.markdown, merged)) throw new Error("Google Docs save verification failed");
   if (writtenRevision && writtenRevision === uploaded.readRevision) {
-    return { ...uploaded, data: { ...objectValue(uploaded.data), verified_revision: writtenRevision } };
+    return { ...uploaded, wroteRemote, data: { ...objectValue(uploaded.data), verified_revision: writtenRevision } };
   }
-  return uploaded;
+  return { ...uploaded, wroteRemote };
 }
 var googleDocsService = defineService({
   name: "google-docs",

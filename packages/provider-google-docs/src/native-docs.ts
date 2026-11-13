@@ -652,7 +652,7 @@ async function anchoredComments(runtime: RuntimeCapabilities, id: string, header
   return found;
 }
 
-export async function tryUploadDocBlocks(runtime: RuntimeCapabilities, documentId: string, key: string | null, tabId: string | null, remoteMarkdown: string, desiredMarkdown: string, confirmRemote: (revision: string) => Promise<string>, wroteRevision?: (revision: string) => void, positionRevision?: string): Promise<boolean> {
+export async function tryUploadDocBlocks(runtime: RuntimeCapabilities, documentId: string, key: string | null, tabId: string | null, remoteMarkdown: string, desiredMarkdown: string, confirmRemote: (revision: string) => Promise<string>, onWrite?: (revision: string | undefined) => void, positionRevision?: string): Promise<boolean> {
   const token = (await nativeDocsGrant(runtime))?.token;
   if (!token) return false;
   const url = "https://docs.googleapis.com/v1/documents/" + encodeURIComponent(documentId);
@@ -673,9 +673,9 @@ export async function tryUploadDocBlocks(runtime: RuntimeCapabilities, documentI
   if (!requests.length) return true;
   const update = await runtime.http.request(url + ":batchUpdate", { method: "POST", headers: { ...headers, "content-type": "application/json" }, redirect: "error", body: JSON.stringify({ writeControl: { requiredRevisionId: data.revisionId }, requests }) });
   if (!update.ok) throw new Error("Google Docs block update failed: HTTP " + update.status + ". Sync again to check the current revision.");
-  if (wroteRevision) {
+  if (onWrite) {
     const ack = await update.json() as { writeControl?: { requiredRevisionId?: string } };
-    if (typeof ack.writeControl?.requiredRevisionId === "string") wroteRevision(ack.writeControl.requiredRevisionId);
+    onWrite(typeof ack.writeControl?.requiredRevisionId === "string" ? ack.writeControl.requiredRevisionId : undefined);
   }
   return true;
 }

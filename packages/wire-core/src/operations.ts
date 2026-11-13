@@ -389,7 +389,8 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
       }
     }
     const fetched = await synchronizeSource(dependencies.fetchInput, resource.urls[0]!, dependencies.catalog, base, markdown, outputPath);
-    const action = localChanged ? fetched.markdown === baseMarkdown ? "synced" : "uploaded" : fetched.markdown === markdown ? "synced" : "downloaded";
+    const uploaded = fetched.wroteRemote ?? (localChanged && fetched.markdown !== baseMarkdown);
+    const action = uploaded ? "uploaded" : fetched.markdown === markdown || (localChanged && fetched.markdown === baseMarkdown) ? "synced" : "downloaded";
     return store(resource.urls[0]!, outputDirectory, fetched, markdown, action, undefined, action === "uploaded" && baseMarkdown !== null ? baseMarkdown : undefined, action === "uploaded" ? markdown : fetched.markdown);
   };
 

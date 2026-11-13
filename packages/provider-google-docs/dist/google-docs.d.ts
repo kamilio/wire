@@ -1,4 +1,4 @@
-import type { JsonValue, RuntimeCapabilities, Source } from "wire-core";
+import type { JsonValue, RuntimeCapabilities, Source, SynchronizedDocument } from "wire-core";
 export declare function googleDocOriginalImages(bytes: Uint8Array): {
     data: Uint8Array<ArrayBufferLike>;
     ext: string;
@@ -32,11 +32,7 @@ export declare const googleDocsService: Readonly<{
         service: string;
         identifier: string;
         type: import("wire-core").ResourceType;
-    }>, base: JsonValue, markdown: string, markdownPath: string): Promise<Readonly<{
-        title: string;
-        markdown: string;
-        data: JsonValue;
-    }>>;
+    }>, base: JsonValue, markdown: string, markdownPath: string): Promise<SynchronizedDocument>;
     upload?(input: RuntimeCapabilities, markdown: string, markdownPath: string): Promise<import("wire-core").UploadedDocument>;
 }>;
 //# sourceMappingURL=google-docs.d.ts.map

@@ -3,7 +3,7 @@ import { docBlocks, mergeDocBlocks } from "./doc-blocks.js";
 import { googleRead } from "./google-read.js";
 import { alreadyAppliedPlainLabelMove, nativeDocMarkdownEqual, nativeDocsGrant, tryUploadDocBlocks } from "./native-docs.js";
 import { inflateRawSync } from "node:zlib";
-import type { FetchedDocument, JsonObject, JsonValue, RuntimeCapabilities, Source } from "wire-core";
+import type { FetchedDocument, JsonObject, JsonValue, RuntimeCapabilities, Source, SynchronizedDocument } from "wire-core";
 
 async function cookieHeader(runtime: RuntimeCapabilities): Promise<string> {
   const cookies = await runtime.cookies.loadSaved("google-docs");
@@ -768,7 +768,7 @@ async function fetchGoogleDocument(runtime: RuntimeCapabilities, source: Source,
   return { title, markdown, ...(readRevision ? { readRevision } : {}), data: { document_id: id, title, output_path: null, sheet_gid: null, markdown, rows: null, ...(markdown.includes("data:image/") ? { original_images: true } : {}), ...(readRevision ? {position_revision: readRevision} : {}), ...(legacyImages === exported && readRevision ? {verified_revision: readRevision} : {}), ...(tab === null ? {} : { document_tab: tab }) } };
 }
 
-async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, _url: string, source: Source, base: JsonValue, markdown: string): Promise<FetchedDocument> {
+async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, _url: string, source: Source, base: JsonValue, markdown: string): Promise<SynchronizedDocument> {
   const remote = await fetchGoogleDocument(runtime, source, base);
   if (source.type === "presentation") {
     const baseMarkdown = objectValue(base)["markdown"];
@@ -780,7 +780,7 @@ async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, _url: str
   const baseMarkdown = objectValue(base)["markdown"];
   const label = source["sheet_gid"] === undefined ? "Google Docs" : "Google Sheets";
   if (typeof baseMarkdown !== "string") throw new Error("Google sync base must include markdown");
-  if (source["sheet_gid"] === undefined && (markdown.trimEnd() === baseMarkdown.trimEnd() || markdown.trimEnd() === remote.markdown.trimEnd())) return remote;
+  if (source["sheet_gid"] === undefined && (markdown.trimEnd() === baseMarkdown.trimEnd() || markdown.trimEnd() === remote.markdown.trimEnd())) return { ...remote, wroteRemote: false };
   if (source["sheet_gid"] !== undefined) {
     const baseObject = objectValue(base);
     if (baseObject["rows"] === undefined) {
@@ -804,9 +804,9 @@ async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, _url: str
   if (documentTab(source) === "t.0" && objectValue(base)["document_id"] && !objectValue(base)["document_tab"] && baseMarkdown !== remote.markdown) {
     throw new Error("Google Docs saved snapshot predates explicit tab selection. Keep the local edits and reconcile them with a fresh download of this tab.");
   }
-  if (baseMarkdown !== remote.markdown && alreadyAppliedPlainLabelMove(baseMarkdown, markdown, remote.markdown)) return remote;
+  if (baseMarkdown !== remote.markdown && alreadyAppliedPlainLabelMove(baseMarkdown, markdown, remote.markdown)) return { ...remote, wroteRemote: false };
   const merged = mergeDocBlocks(baseMarkdown, markdown, remote.markdown, nativeDocMarkdownEqual);
-  if (merged === remote.markdown) return remote;
+  if (merged === remote.markdown) return { ...remote, wroteRemote: false };
   const id = (source["document_id"] as string | undefined) ?? source.identifier;
   const key = resourceKey(source), tab = documentTab(source);
   const snapshot = objectValue(base);
@@ -815,17 +815,17 @@ async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, _url: str
   const sameBase = baseMarkdown === remote.markdown || (snapshot["verified_revision"] !== undefined && snapshot["verified_revision"] === objectValue(remote.data)["verified_revision"]);
   const positionRevision = snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && sameBase
     ? snapshot["position_revision"] ?? snapshot["verified_revision"] : undefined;
-  let writtenRevision: string | undefined;
+  let wroteRemote = false, writtenRevision: string | undefined;
   const native = await tryUploadDocBlocks(runtime, id, key, tab, remote.markdown, merged,
     async revision => remote.readRevision === revision ? remote.markdown : (await fetchGoogleDocument(runtime, source)).markdown,
-    revision => { writtenRevision = revision; }, typeof positionRevision === "string" ? positionRevision : undefined);
+    revision => { wroteRemote = true; writtenRevision = revision; }, typeof positionRevision === "string" ? positionRevision : undefined);
   if (!native) throw new Error("Google Docs uploads require an OAuth token with drive, drive.file, or both documents and drive.readonly scopes. Set GOOGLE_DOCS_TOKEN_FILE or GOOGLE_FORMS_TOKEN_FILE. Browser login supports downloads only.");
   const uploaded = await fetchGoogleDocument(runtime, source, {});
   if (!nativeDocMarkdownEqual(uploaded.markdown, merged)) throw new Error("Google Docs save verification failed");
   if (writtenRevision && writtenRevision === uploaded.readRevision) {
-    return { ...uploaded, data: { ...objectValue(uploaded.data), verified_revision: writtenRevision } };
+    return { ...uploaded, wroteRemote, data: { ...objectValue(uploaded.data), verified_revision: writtenRevision } };
   }
-  return uploaded;
+  return { ...uploaded, wroteRemote };
 }
 
 export const googleDocsService = defineService<RuntimeCapabilities>({

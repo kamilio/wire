@@ -799,7 +799,7 @@ async function anchoredComments(runtime, id, headers, tab, tabs) {
     } while (cursor);
     return found;
 }
-export async function tryUploadDocBlocks(runtime, documentId, key, tabId, remoteMarkdown, desiredMarkdown, confirmRemote, wroteRevision, positionRevision) {
+export async function tryUploadDocBlocks(runtime, documentId, key, tabId, remoteMarkdown, desiredMarkdown, confirmRemote, onWrite, positionRevision) {
     const token = (await nativeDocsGrant(runtime))?.token;
     if (!token)
         return false;
@@ -831,10 +831,9 @@ export async function tryUploadDocBlocks(runtime, documentId, key, tabId, remote
     const update = await runtime.http.request(url + ":batchUpdate", { method: "POST", headers: { ...headers, "content-type": "application/json" }, redirect: "error", body: JSON.stringify({ writeControl: { requiredRevisionId: data.revisionId }, requests }) });
     if (!update.ok)
         throw new Error("Google Docs block update failed: HTTP " + update.status + ". Sync again to check the current revision.");
-    if (wroteRevision) {
+    if (onWrite) {
         const ack = await update.json();
-        if (typeof ack.writeControl?.requiredRevisionId === "string")
-            wroteRevision(ack.writeControl.requiredRevisionId);
+        onWrite(typeof ack.writeControl?.requiredRevisionId === "string" ? ack.writeControl.requiredRevisionId : undefined);
     }
     return true;
 }

@@ -419,6 +419,22 @@ test("sync passes stored snapshot and edited Markdown into service synchronizati
   assert.deepEqual(synced.summary, { action: "uploaded", added: 0, modified: 1, removed: 0, remote: "https://sync.test/project", local: created.path });
 });
 
+test("sync reports an already-applied draft without counting it as an upload", async () => {
+  for (const hasWebEdit of [false, true]) {
+    const project = join(testRoot, "synced-existing-" + hasWebEdit);
+    await mkdir(project);
+    await initializeWire(project, "sqlite", "registry.sqlite3");
+    const local = "Saved draft\n", remote = hasWebEdit ? local + "Later web edit\n" : local;
+    const wire = createSynchronizingWire(project, async () => ({ title: "Project", markdown: remote, data: { revision: 2 }, wroteRemote: false }));
+    const original = await wire.attach("https://sync.test/project", project);
+    await writeFile(original.path, local);
+    const result = await wire.sync(original.path, project);
+    assert.deepEqual(result.summary, { action: hasWebEdit ? "downloaded" : "synced", added: hasWebEdit ? 1 : 0, modified: 0, removed: 0, remote: "https://sync.test/project", local: original.path });
+    assert.equal(await readFile(original.path, "utf8"), remote);
+    assert.deepEqual(result.resource.data.find(item => item.key === "snapshot").value, { revision: 2, markdown: remote });
+  }
+});
+
 test("sync rejects local edits for download-only providers", async () => {
   const project = join(testRoot, "download-only-local-edits");
   await mkdir(project);

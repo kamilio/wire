@@ -25,11 +25,7 @@ export declare const chatgptService: Readonly<{
         service: string;
         identifier: string;
         type: import("wire-core").ResourceType;
-    }>, base: JsonValue, markdown: string, markdownPath: string): Promise<Readonly<{
-        title: string;
-        markdown: string;
-        data: JsonValue;
-    }>>;
+    }>, base: JsonValue, markdown: string, markdownPath: string): Promise<import("wire-core").SynchronizedDocument>;
     upload?(input: RuntimeCapabilities, markdown: string, markdownPath: string): Promise<import("wire-core").UploadedDocument>;
 }>;
 //# sourceMappingURL=chatgpt.d.ts.map

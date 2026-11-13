@@ -24,11 +24,7 @@ export declare const zoomHubService: Readonly<{
         service: string;
         identifier: string;
         type: import("wire-core").ResourceType;
-    }>, base: import("wire-core").JsonValue, markdown: string, markdownPath: string): Promise<Readonly<{
-        title: string;
-        markdown: string;
-        data: import("wire-core").JsonValue;
-    }>>;
+    }>, base: import("wire-core").JsonValue, markdown: string, markdownPath: string): Promise<import("wire-core").SynchronizedDocument>;
     upload?(input: RuntimeCapabilities, markdown: string, markdownPath: string): Promise<import("wire-core").UploadedDocument>;
 }>;
 export declare function scrapeZoom(runtime: RuntimeCapabilities, directory: string): Promise<{

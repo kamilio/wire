@@ -1,4 +1,4 @@
-import type { FetchedDocument, Service, ServiceCatalog, Source, UploadedDocument } from "./model.js";
+import type { FetchedDocument, Service, ServiceCatalog, Source, SynchronizedDocument, UploadedDocument } from "./model.js";
 export type ServiceProvider<FetchInput> = Readonly<{
     services: readonly Service<FetchInput>[];
 }>;
@@ -11,6 +11,6 @@ export declare function defineServiceCatalog<FetchInput>(services: readonly Serv
 export declare function createServiceRegistry<FetchInput>(): ServiceRegistry<FetchInput>;
 export declare function parseSourceUrl<FetchInput>(value: string, catalog: ServiceCatalog<FetchInput>): Source;
 export declare function fetchSource<FetchInput>(input: FetchInput, value: string, catalog: ServiceCatalog<FetchInput>): Promise<FetchedDocument>;
-export declare function synchronizeSource<FetchInput>(input: FetchInput, value: string, catalog: ServiceCatalog<FetchInput>, base: import("./model.js").JsonValue, markdown: string, markdownPath: string): Promise<FetchedDocument>;
+export declare function synchronizeSource<FetchInput>(input: FetchInput, value: string, catalog: ServiceCatalog<FetchInput>, base: import("./model.js").JsonValue, markdown: string, markdownPath: string): Promise<SynchronizedDocument>;
 export declare function uploadSource<FetchInput>(input: FetchInput, catalog: ServiceCatalog<FetchInput>, markdown: string, markdownPath: string): Promise<UploadedDocument>;
 //# sourceMappingURL=source.d.ts.map

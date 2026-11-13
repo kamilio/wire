@@ -1,4 +1,4 @@
-import type { FetchedDocument, Service, ServiceCatalog, Source, UploadedDocument } from "./model.js";
+import type { FetchedDocument, Service, ServiceCatalog, Source, SynchronizedDocument, UploadedDocument } from "./model.js";
 
 export type ServiceProvider<FetchInput> = Readonly<{
   services: readonly Service<FetchInput>[];
@@ -57,7 +57,7 @@ export function synchronizeSource<FetchInput>(
   base: import("./model.js").JsonValue,
   markdown: string,
   markdownPath: string,
-): Promise<FetchedDocument> {
+): Promise<SynchronizedDocument> {
   const url = new URL(value);
   const service = serviceForUrl(url, catalog);
   const source = service.parse(url);

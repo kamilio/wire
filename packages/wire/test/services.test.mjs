@@ -1934,15 +1934,35 @@ test("only a verified Docs batch revision can skip later exports; native revisio
   });
   const url = "https://docs.google.com/document/d/doc/edit";
   const uploaded = await synchronizeSource(rt, url, serviceCatalog, { markdown: "Old" }, "New", "local.md");
-  assert.equal(posts, 1); assert.equal(exports, 2); assert.equal(uploaded.data.verified_revision, "rev2");
+  assert.equal(uploaded.wroteRemote, true); assert.equal(posts, 1); assert.equal(exports, 2); assert.equal(uploaded.data.verified_revision, "rev2");
   const same = await synchronizeSource(rt, url, serviceCatalog, uploaded.data, "New", "local.md");
-  assert.equal(same.markdown, "New"); assert.equal(exports, 2);
+  assert.equal(same.wroteRemote, false); assert.equal(same.markdown, "New"); assert.equal(exports, 2);
   const wrongTab = { ...uploaded.data, document_tab: "t.0", markdown: "Another tab" };
   await synchronizeSource(rt, url, serviceCatalog, wrongTab, wrongTab.markdown, "local.md");
   assert.equal(exports, 3);
   rev = "rev3"; text = "Changed in Docs";
   const changed = await synchronizeSource(rt, url, serviceCatalog, same.data, "New", "local.md");
   assert.equal(changed.markdown, text); assert.equal(exports, 4); assert.equal(changed.data.verified_revision, undefined);
+});
+
+test("Docs receipts distinguish an empty native plan from a successful batch without a revision receipt", async () => {
+  let text = "Fruit.", posts = 0;
+  const rt = docsDriveRuntime(async (input, init) => {
+    const u = new URL(input);
+    if (u.pathname.endsWith("/export")) return new Response(text);
+    if (u.pathname.endsWith("/comments")) return response({ comments: [] });
+    if (u.pathname.endsWith(":batchUpdate")) {
+      assert.ok(JSON.parse(init.body).requests.length); posts++; text = "Plum."; return response({});
+    }
+    if (u.hostname === "www.googleapis.com") return response({ id: "doc", name: "Private" });
+    if (u.searchParams.has("fields")) return response({ documentId: "doc", title: "Private", revisionId: String(posts) });
+    return response({ documentId: "doc", revisionId: String(posts), tabs: [{ tabProperties: { tabId: "t.0" }, documentTab: { body: { content: [
+      { startIndex: 1, endIndex: text.length+2, paragraph: { paragraphStyle: { namedStyleType: "NORMAL_TEXT" }, elements: [{ textRun: { content: text+"\n" } }] } },
+    ] } } }] });
+  });
+  const sync = (markdown) => synchronizeSource(rt, "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Fruit." }, markdown, "local.md");
+  assert.equal((await sync("Fruit\\.")).wroteRemote, false); assert.equal(posts, 0);
+  assert.equal((await sync("Plum.")).wroteRemote, true); assert.equal(posts, 1);
 });
 
 test("a lost Docs acknowledgment plus a disjoint web edit recovers the exported nested bullet without another write", async () => {
@@ -1958,6 +1978,7 @@ test("a lost Docs acknowledgment plus a disjoint web edit recovers the exported 
   });
   const result = await synchronizeSource(rt, url, serviceCatalog, { markdown: base }, intended, "private.md");
   assert.equal(result.markdown, remote);
+  assert.equal(result.wroteRemote, false);
   assert.deepEqual(paths, ["/document/d/doc/export"]);
   for (const other of ["    * **Different** item  ", "  * **Saved** item  ", "    * *Saved* item  "]) {
     await assert.rejects(synchronizeSource(rt, url, serviceCatalog, { markdown: base }, append(base, other), "private.md"), /changed remotely and locally/);
@@ -2073,7 +2094,8 @@ test("a previously applied plain-label move recovers a later web edit without wr
     const base=md(older), desired=md(newer);let web=md(newer,"Updated elsewhere");
     const rt=runtime(async (_url,init)=>{assert.equal(init.method??"GET","GET");return exportResponse("Doc","md",web);});
     const sync=()=>synchronizeSource(rt,"https://docs.google.com/document/d/doc/edit",serviceCatalog,{markdown:base},desired,"doc.md");
-    assert.equal((await sync()).markdown,web);
+    const result=await sync();
+    assert.equal(result.markdown,web); assert.equal(result.wroteRemote,false);
     web=web.replace("Section","Unknown");
     await assert.rejects(sync(),/changed remotely and locally/);
     web=md(newer,"Updated elsewhere").replace("Child","Other");

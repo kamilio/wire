@@ -50,6 +50,11 @@ export type FetchedDocument = Readonly<{
   data: JsonValue;
 }>;
 
+export type SynchronizedDocument = FetchedDocument & Readonly<{
+  /** Present when the provider knows whether this synchronization wrote to the remote. */
+  wroteRemote?: boolean;
+}>;
+
 export type UploadedDocument = FetchedDocument & Readonly<{
   url: string;
 }>;
@@ -69,7 +74,7 @@ export type Service<FetchInput = never> = Readonly<{
   parse(url: URL): Source;
   fetch(input: FetchInput, url: string, source: Source): Promise<FetchedDocument>;
   download?(input: FetchInput, url: string, source: Source, write: DownloadWriter, addMarkdown?: AddMarkdown): Promise<DownloadedDocument | null>;
-  synchronize?(input: FetchInput, url: string, source: Source, base: JsonValue, markdown: string, markdownPath: string): Promise<FetchedDocument>;
+  synchronize?(input: FetchInput, url: string, source: Source, base: JsonValue, markdown: string, markdownPath: string): Promise<SynchronizedDocument>;
   upload?(input: FetchInput, markdown: string, markdownPath: string): Promise<UploadedDocument>;
 }>;
 
