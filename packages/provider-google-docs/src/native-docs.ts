@@ -1,7 +1,8 @@
 import { createGoogleTokensCapability, googleTokenExpired, parseGoogleToken } from "wire-core";
 import type { RuntimeCapabilities } from "wire-core";
 import { googleRead } from "./google-read.js";
-import { docBlocks, docChanges } from "./doc-blocks.js";
+import { createHash } from "node:crypto";
+import { boundedDeletion, docBlocks, docChanges } from "./doc-blocks.js";
 
 function eligible(scopes: readonly string[] | undefined, requireWrite: boolean): boolean {
   const has = (name: string) => scopes?.includes("https://www.googleapis.com/auth/"+name);
@@ -138,6 +139,64 @@ type Element = { startIndex?: number; endIndex: number; paragraph?: {
   [k: string]: unknown;
 } };
 type Tab = { tabProperties: { tabId: string }; childTabs?: Tab[]; documentTab: { body: { content: Element[] }; namedRanges?: Record<string, {namedRanges?: {ranges: {startIndex: number; endIndex: number}[]}[]}>; lists?: Record<string, { listProperties: { nestingLevels: { glyphType?: string; glyphSymbol?: string; glyphFormat?: string }[] } }> } };
+// Only store digests of addressable repeated paragraphs. Include both neighbors,
+// native formatting and list definitions. Numeric run offsets shift when a
+// separate paragraph changes and are the only fields omitted from the digest.
+const digest = (s: string) => createHash("sha256").update(s).digest("hex");
+const labels = (md: string) => spacedBlocks(md).map(line => {
+  try { return paragraph(line).text; } catch { return ""; }
+});
+const counts = (rows: string[]) => {
+  const map = new Map<string,number>();
+  for (const row of rows) map.set(row,(map.get(row) ?? 0)+1);
+  return map;
+};
+const slot = (rows: string[], freq: Map<string,number>, i: number, target?:string) =>
+  !!rows[i] && (target ? rows[i]===target : freq.get(rows[i]!)! > 1) && !!rows[i-1] && !!rows[i+1]
+    && freq.get(rows[i-1]!) === 1 && freq.get(rows[i+1]!) === 1;
+export function hasDuplicateSlots(md: string): boolean {
+  const rows=labels(md), freq=counts(rows);
+  return rows.some((_,i)=>slot(rows,freq,i));
+}
+type Identity = { revision: string; tab: string; markdown: string; slots: string[] };
+function nativeSlots(tab: Tab, target?: string) {
+  const body=tab.documentTab.body.content;
+  const names=body.map(e=>e.paragraph?.elements.every(run=>run.textRun)
+    ? e.paragraph.elements.map(run=>run.textRun!.content).join("").replace(/\n$/,"") : "");
+  const freq=counts(names);
+  const result=new Map<Element,string>();
+  const canonical=(_key: string,v: unknown) => v && typeof v==="object" && !Array.isArray(v)
+    ? Object.fromEntries(Object.entries(v).sort(([a],[b])=>a<b?-1:a>b?1:0)) : v;
+  for (let i=1;i<body.length-1;i++) {
+    if (!slot(names,freq,i,target)) continue;
+    const triple=body.slice(i-1,i+2);
+    if (triple.some(e=>!e.paragraph || hasSuggestion(e.paragraph) || e.paragraph.elements.some(el=>!el.textRun) ||
+      e.paragraph.bullet && !tab.documentTab.lists?.[e.paragraph.bullet.listId]?.listProperties?.nestingLevels?.[e.paragraph.bullet.nestingLevel??0])) continue;
+    const shape=triple.map(e=>{
+      const {elements,...p}=e.paragraph!;
+      return [p,elements.map(({startIndex,endIndex,...rest})=>rest),p.bullet && tab.documentTab.lists![p.bullet.listId]];
+    });
+    result.set(body[i]!,digest(JSON.stringify(shape,canonical)));
+  }
+  return result;
+}
+export type NativeDocument = {documentId?:string;revisionId?:string;tabs?:Tab[]};
+export function captureDuplicateIdentity(data: NativeDocument, id: string, revision: string, tabId: string|null, md: string): Identity {
+  if (data.documentId!==id || data.revisionId!==revision) throw new StaleDocRevision("Google Docs changed during duplicate paragraph lookup; sync again.");
+  const tabs: Tab[]=[];
+  const visit=(items:Tab[])=>{for (const t of items) { tabs.push(t); visit(t.childTabs??[]); }};
+  visit(data.tabs??[]);
+  const tab=tabId ? tabs.find(t=>t.tabProperties.tabId===tabId) : tabs.length===1 ? tabs[0] : undefined;
+  return {revision,tab:tab?.tabProperties.tabId ?? "",markdown:digest(md),
+    slots:tab?.documentTab?.body?.content ? [...nativeSlots(tab).values()] : []};
+}
+type DeleteContext = {base:string;local:string;identity:Identity | undefined};
+export function duplicateContext(base:string,local:string,revision:unknown,raw:unknown): DeleteContext {
+  const proof=raw as Partial<Identity>|null;
+  const identity=typeof revision==="string" && proof && proof.revision===revision && typeof proof.tab==="string"
+    && proof.markdown===digest(base) && Array.isArray(proof.slots) && proof.slots.every(s=>typeof s==="string" && /^[a-f0-9]{64}$/.test(s)) ? proof as Identity : undefined;
+  return {base,local,identity};
+}
 type DocsRequest = Record<string, unknown>;
 
 // Keep disjoint unchanged runs in place, including their native formatting
@@ -324,7 +383,7 @@ function movePlainLabel(tab: Tab, oldMd: string, newMd: string, guard: (a: numbe
   return dest<from?[cut,...insert]:[...insert,cut];
 }
 
-function plan(tab: Tab, previous: string, desired: string, comments: IndexedRange[], allowDuplicatePosition: boolean): DocsRequest[] {
+function plan(tab: Tab, previous: string, desired: string, comments: IndexedRange[], allowDuplicatePosition: boolean, context?: DeleteContext): DocsRequest[] {
   const named = Object.values(tab.documentTab.namedRanges ?? {}).flatMap(n => n.namedRanges?.flatMap(n => n.ranges) ?? []);
   const protectedRanges = [...named,...comments];
   const guardText = (start: number, end: number) => {
@@ -386,11 +445,35 @@ function plan(tab: Tab, previous: string, desired: string, comments: IndexedRang
     }
     return ordered[i]!;
   }
-  const locate = (i: number) => {
+  let oldLabels: string[] | undefined, oldCounts: Map<string,number> | undefined;
+  function boundedTarget(i: number, candidates: Element[], deleted: number): Element | undefined {
+    if (!context || !deleted) return;
+    const old=oldLabels??=labels(context.base);
+    // before[] excludes blanks, whereas certified slots require no intervening
+    // blank or opaque block. Align by both unique labels, never by array index.
+    const name=paragraph(before[i]!).text;
+    if (((oldCounts??=counts(old)).get(name)??0)<2) return;
+    if (deleted!==1) return unsafe("duplicate paragraph deletion needs an isolated block");
+    const local=labels(context.local), live=labels(previous);
+    const left=before[i-1], right=before[i+1];
+    if (!left || !right) return unsafe("duplicate paragraph deletion needs two unique neighbors");
+    const a=paragraph(left), b=paragraph(right);
+    const pos=old.indexOf(a.text)+1;
+    if (pos<1 || old[pos]!==name || old[pos+1]!==b.text || !boundedDeletion(old,local,live,pos)) return unsafe("duplicate paragraph identity is ambiguous");
+    const proof=context.identity;
+    if (!allowDuplicatePosition && proof?.tab!==tabId) return unsafe("missing baseline for duplicate paragraph deletion");
+    const marks=nativeSlots(tab,name);
+    return candidates.find(e=>{
+      const n=body.indexOf(e), mark=marks.get(e);
+      return mark && (allowDuplicatePosition || proof!.slots.includes(mark)) &&
+        n>0 && n+1<body.length && matches(body[n-1]!,a) && matches(body[n+1]!,b);
+    }) ?? unsafe("native identity of duplicate paragraph changed");
+  }
+  const locate = (i: number, deleted=0) => {
     const block = paragraph(before[i]!);
     const candidates = body.filter(e => matches(e,block));
     if (!candidates.length) return unsafe("paragraph is missing");
-    const e = candidates.length === 1 ? candidates[0]! : byPosition(i);
+    const e = boundedTarget(i,candidates,deleted) ?? (candidates.length === 1 ? candidates[0]! : byPosition(i));
     if (!Number.isInteger(e.startIndex) || e.endIndex - e.startIndex! !== block.text.length + 1) return unsafe("unrecognized paragraph range");
     return { block, e, start: e.startIndex!, end: e.endIndex };
   };
@@ -492,7 +575,7 @@ function plan(tab: Tab, previous: string, desired: string, comments: IndexedRang
     }
   }
   for (const c of [...changes].reverse()) {
-    const old = before.slice(c.start, c.end).map((_line, i) => locate(c.start + i));
+    const old = before.slice(c.start, c.end).map((_line, i) => locate(c.start + i,c.replacement.length ? 0 : c.end-c.start));
     const added = c.replacement.map(paragraph);
     for (const [i,b] of added.entries()) {
       if (b.level === null || b.level === 0 || old.length === added.length && old[i]?.block.level === b.level && old[i]?.block.numbered === b.numbered) continue;
@@ -660,14 +743,17 @@ async function anchoredComments(runtime: RuntimeCapabilities, id: string, header
 // Only raise this when no mutation was sent or Google explicitly rejected it.
 export class StaleDocRevision extends Error {}
 
-export async function tryUploadDocBlocks(runtime: RuntimeCapabilities, documentId: string, key: string | null, tabId: string | null, remoteMarkdown: string, desiredMarkdown: string, confirmRemote: (revision: string) => Promise<string>, onWrite?: (revision: string | undefined) => void, positionRevision?: string): Promise<boolean> {
+export async function tryUploadDocBlocks(runtime: RuntimeCapabilities, documentId: string, key: string | null, tabId: string | null, remoteMarkdown: string, desiredMarkdown: string, confirmRemote: (revision: string) => Promise<string>, onWrite?: (revision: string | undefined) => void, positionRevision?: string, context?: DeleteContext, knownDocument?: NativeDocument): Promise<boolean> {
   const token = (await nativeDocsGrant(runtime))?.token;
   if (!token) return false;
   const url = "https://docs.googleapis.com/v1/documents/" + encodeURIComponent(documentId);
   const headers = { authorization: "Bearer " + token, ...(key && { "X-Goog-Drive-Resource-Keys": documentId + "/" + key }) };
-  const response = await googleRead(runtime, url + "?includeTabsContent=true&suggestionsViewMode=SUGGESTIONS_INLINE", { headers, redirect: "error" });
-  if (!response.ok) throw new Error("Google Docs block read failed: HTTP " + response.status);
-  const data = await response.json() as { documentId?: string; revisionId?: string; tabs?: Tab[] };
+  let data=knownDocument;
+  if (!data) {
+    const response = await googleRead(runtime, url + "?includeTabsContent=true&suggestionsViewMode=SUGGESTIONS_INLINE", { headers, redirect: "error" });
+    if (!response.ok) throw new Error("Google Docs block read failed: HTTP " + response.status);
+    data=await response.json() as NativeDocument;
+  }
   if (data.documentId !== documentId || !data.revisionId) return unsafe("missing document identity or revision");
   const tabs: Tab[] = [];
   function visit(items: Tab[]) { for (const t of items) { tabs.push(t); visit(t.childTabs ?? []); } }
@@ -677,7 +763,7 @@ export async function tryUploadDocBlocks(runtime: RuntimeCapabilities, documentI
   if (!tab?.documentTab?.body?.content) return unsafe("missing target tab");
   const comments = await anchoredComments(runtime,documentId,headers,tab,tabs);
   if (await confirmRemote(data.revisionId) !== remoteMarkdown) throw new StaleDocRevision("Google Docs changed before writing; sync again.");
-  const requests = plan(tab, remoteMarkdown, desiredMarkdown,comments,positionRevision === data.revisionId);
+  const requests = plan(tab, remoteMarkdown, desiredMarkdown,comments,positionRevision === data.revisionId,context);
   if (!requests.length) return true;
   const update = await runtime.http.request(url + ":batchUpdate", { method: "POST", headers: { ...headers, "content-type": "application/json" }, redirect: "error", body: JSON.stringify({ writeControl: { requiredRevisionId: data.revisionId }, requests }) });
   if (!update.ok) {

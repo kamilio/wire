@@ -1,7 +1,7 @@
 import { defineService } from "wire-core";
 import { docBlocks, mergeDocBlocks } from "./doc-blocks.js";
 import { googleRead } from "./google-read.js";
-import { alreadyAppliedPlainLabelMove, nativeDocMarkdownEqual, nativeDocsGrant, StaleDocRevision, tryUploadDocBlocks } from "./native-docs.js";
+import { type NativeDocument, captureDuplicateIdentity, duplicateContext, hasDuplicateSlots, alreadyAppliedPlainLabelMove, nativeDocMarkdownEqual, nativeDocsGrant, StaleDocRevision, tryUploadDocBlocks } from "./native-docs.js";
 import { inflateRawSync } from "node:zlib";
 import type { FetchedDocument, JsonObject, JsonValue, RuntimeCapabilities, Source, SynchronizedDocument } from "wire-core";
 
@@ -681,7 +681,7 @@ export async function googleDocListMarkdown(markdown: string, wordExport: () => 
 
 type GoogleReadResult = FetchedDocument & { readRevision?: string };
 
-async function fetchGoogleDocument(runtime: RuntimeCapabilities, source: Source, previous?: JsonValue): Promise<GoogleReadResult> {
+async function fetchGoogleDocument(runtime: RuntimeCapabilities, source: Source, previous?: JsonValue, reuseNative?: (doc:NativeDocument)=>void): Promise<GoogleReadResult> {
   const id = (source["document_id"] as string | undefined) ?? source.identifier;
   const key = resourceKey(source);
   const gid = source["sheet_gid"] as string | null | undefined;
@@ -709,18 +709,30 @@ async function fetchGoogleDocument(runtime: RuntimeCapabilities, source: Source,
     if (!response.ok) throw new Error("Google Docs export failed: HTTP " + response.status);
     return response;
   };
+  const snapshot = previous === undefined ? {} : objectValue(previous);
+  const identityFor = async (md: string, revision: string) => {
+    if (!grant?.canWrite || !hasDuplicateSlots(md)) return;
+    if (snapshot["position_revision"]===revision && snapshot["document_id"]===id && (snapshot["document_tab"]??null)===tab &&
+        snapshot["markdown"]===md && duplicateContext(md,md,revision,snapshot["duplicate_identity"]).identity) return snapshot["duplicate_identity"];
+    const native=await (await read("https://docs.googleapis.com/v1/documents/"+encodeURIComponent(id)+"?includeTabsContent=true&suggestionsViewMode=SUGGESTIONS_INLINE")).json() as NativeDocument;
+    const identity=captureDuplicateIdentity(native,id,revision,tab,md);
+    reuseNative?.(native);
+    return identity;
+  };
   let readRevision: string | undefined, docTitle: string | undefined, legacyImages: string | undefined;
   if (grant && (previous !== undefined || grant.canWrite)) {
     const url = "https://docs.googleapis.com/v1/documents/" + encodeURIComponent(id) + "?fields=documentId,title,revisionId";
     const meta = await (await read(url)).json() as { documentId?: string; title?: string; revisionId?: string };
     if (meta.documentId !== id || typeof meta.title !== "string") throw new Error("Google Docs export returned unexpected document metadata");
     readRevision = meta.revisionId; docTitle = meta.title;
-    const snapshot = previous === undefined ? {} : objectValue(previous);
     // Only a successfully verified, revision-controlled batch sets this key.
     // Never use Drive's version, ETag, or modifiedTime as a document revision.
     if (readRevision && snapshot["verified_revision"] === readRevision && snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && typeof snapshot["markdown"] === "string") {
-      if (snapshot["original_images"] === true || !snapshot["markdown"].includes("data:image/"))
-        return { title: docTitle, markdown: snapshot["markdown"], readRevision, data: { ...snapshot, title: docTitle } };
+      if (snapshot["original_images"] === true || !snapshot["markdown"].includes("data:image/")) {
+        const identity=await identityFor(snapshot["markdown"],readRevision);
+        return { title: docTitle, markdown: snapshot["markdown"], readRevision, data: { ...snapshot, title: docTitle,
+          ...(identity ? {duplicate_identity:identity,position_revision:readRevision} : {}) } };
+      }
       // Old verified snapshots embedded Google's display-size thumbnails.
       legacyImages = snapshot["markdown"];
     }
@@ -765,11 +777,15 @@ async function fetchGoogleDocument(runtime: RuntimeCapabilities, source: Source,
     const end = await (await read("https://docs.googleapis.com/v1/documents/" + encodeURIComponent(id) + "?fields=revisionId")).json() as { revisionId?: string };
     if (end.revisionId !== readRevision) throw new Error("Google Docs changed during image export; local copy preserved. Sync again.");
   }
-  return { title, markdown, ...(readRevision ? { readRevision } : {}), data: { document_id: id, title, output_path: null, sheet_gid: null, markdown, rows: null, ...(markdown.includes("data:image/") ? { original_images: true } : {}), ...(readRevision ? {position_revision: readRevision} : {}), ...(legacyImages === exported && readRevision ? {verified_revision: readRevision} : {}), ...(tab === null ? {} : { document_tab: tab }) } };
+  // No extra request for ordinary notes or for an idle verified revision.
+  // Fetch the native formats only for a newly observed bounded duplicate.
+  const duplicateIdentity=readRevision ? await identityFor(markdown,readRevision) : undefined;
+  return { title, markdown, ...(readRevision ? { readRevision } : {}), data: { document_id: id, title, output_path: null, sheet_gid: null, markdown, rows: null, ...(duplicateIdentity ? {duplicate_identity:duplicateIdentity,verified_revision:readRevision!} : {}), ...(markdown.includes("data:image/") ? { original_images: true } : {}), ...(readRevision ? {position_revision: readRevision} : {}), ...(legacyImages === exported && readRevision ? {verified_revision: readRevision} : {}), ...(tab === null ? {} : { document_tab: tab }) } };
 }
 
 async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, url: string, source: Source, base: JsonValue, markdown: string, retryStaleRevision = true): Promise<SynchronizedDocument> {
-  const remote = await fetchGoogleDocument(runtime, source, base);
+  let nativeDocument: NativeDocument | undefined;
+  const remote = await fetchGoogleDocument(runtime, source, base, doc=>{nativeDocument=doc;});
   if (source.type === "presentation") {
     const baseMarkdown = objectValue(base)["markdown"];
     if (typeof baseMarkdown !== "string") throw new Error("Google sync base must include markdown");
@@ -820,7 +836,8 @@ async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, url: stri
   try {
     native = await tryUploadDocBlocks(runtime, id, key, tab, remote.markdown, merged,
       async revision => remote.readRevision === revision ? remote.markdown : (await fetchGoogleDocument(runtime, source)).markdown,
-      revision => { wroteRemote = true; writtenRevision = revision; }, typeof positionRevision === "string" ? positionRevision : undefined);
+      revision => { wroteRemote = true; writtenRevision = revision; }, typeof positionRevision === "string" ? positionRevision : undefined,
+      duplicateContext(baseMarkdown,markdown,snapshot["position_revision"],snapshot["document_id"]===id && (snapshot["document_tab"]??null)===tab ? snapshot["duplicate_identity"] : undefined), nativeDocument);
   } catch (error) {
     // Re-read and merge the original draft; never replay old offsets or an uncertain write.
     if (retryStaleRevision && error instanceof StaleDocRevision) return synchronizeGoogleDocument(runtime, url, source, base, markdown, false);

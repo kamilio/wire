@@ -60,6 +60,30 @@ export function docChanges(base: readonly string[], side: readonly string[]): Ch
   return changes;
 }
 
+// With no paragraph IDs, certify only one deletion between two distinct,
+// unchanged, unique neighbors. Never align a run of identical siblings or a
+// moved section by position. The other edit must leave the whole slot intact.
+export function boundedDeletion(base: readonly string[], side: readonly string[], other: readonly string[], i: number): boolean {
+  const left = base[i - 1], value = base[i], right = base[i + 1];
+  if (!left?.trim() || !value?.trim() || !right?.trim() || left === right) return false;
+  const old = occurrences(base, 0, base.length);
+  if (old.get(left) !== i-1 || old.get(right) !== i+1) return false;
+  for (const rows of [side, other]) {
+    const next = occurrences(rows, 0, rows.length);
+    const lo = next.get(left) ?? -1, hi = next.get(right) ?? -1;
+    if (lo < 0 || hi !== lo + (rows === side ? 1 : 2) || rows === other && rows[lo+1] !== value) return false;
+    let last = -1;
+    for (const [line,n] of old) {
+      const j = next.get(line) ?? -1;
+      if (n < 0 || j < 0) continue;
+      if (j <= last) return false;
+      last = j;
+    }
+  }
+  const count = (rows: readonly string[]) => rows.reduce((n,r) => n + Number(r === value), 0);
+  return count(side) === count(base)-1;
+}
+
 function conflict(location = ""): never {
   throw new Error(`Google Docs changed remotely and locally.${location} Resolve the conflict in Google Docs or the local Markdown file before syncing again.`);
 }
@@ -86,8 +110,10 @@ export function mergeDocBlocks(base: string, local: string, remote: string, same
     const sidePositions = occurrences(side, 0, side.length);
     for (const change of changes) {
       if (change.end - change.start === change.replacement.length) continue;
-      if ([...blocks.slice(change.start, change.end), ...change.replacement].some(block =>
-        block.trim() && (positions.get(block) === -1 || (positions.has(block) && sidePositions.get(block) === -1)))) conflict();
+      const repeated = [...blocks.slice(change.start, change.end), ...change.replacement].some(block =>
+        block.trim() && (positions.get(block) === -1 || (positions.has(block) && sidePositions.get(block) === -1)));
+      if (repeated && !(change.end === change.start + 1 && !change.replacement.length &&
+          boundedDeletion(blocks, side, side === localBlocks ? remoteBlocks : localBlocks, change.start))) conflict();
     }
   }
   const all = [...localChanges, ...remoteChanges].sort((a, b) => a.start - b.start || a.end - b.end);

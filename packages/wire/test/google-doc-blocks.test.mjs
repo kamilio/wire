@@ -78,3 +78,16 @@ test("known block conflicts identify local Markdown lines after earlier insertio
     assert.match(err.message, /changed remotely and locally/); assert.doesNotMatch(err.message, /Markdown lines? \d/); return true;
   });
 });
+
+test("a single deleted duplicate is identifiable by two unique unchanged neighbors", () => {
+  const base = "Budget\nPending\nOwner\nPending\nTimeline\nFriday\n";
+  const deleted = base.replace("Budget\nPending", "Budget");
+  for (const [old, replacement] of [["Friday", "Monday"], ["Owner\nPending", "Owner\nResolved"]]) {
+    const web=base.replace(old,replacement);
+    for (const [a,b] of [[deleted,web],[web,deleted]]) assert.equal(mergeDocBlocks(base,a,b),deleted.replace(old,replacement));
+  }
+  for (const other of [base.replace("Budget","Scope"),base.replace("Budget\nPending","Budget\nResolved"),
+      base.replace("Timeline\nFriday","Friday\nTimeline")]) {
+    assert.throws(()=>mergeDocBlocks(base,deleted,other),/conflict/);
+  }
+});

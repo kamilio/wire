@@ -2172,3 +2172,32 @@ test("a previously applied plain-label move recovers a later web edit without wr
       {markdown:base},desired.replace("Tail","More local work"),"doc.md"),/changed remotely and locally/);
   }
 });
+
+test("legacy verified notes warm native duplicate evidence once and idle without writing",async()=>{
+  const url="https://docs.google.com/document/d/doc/edit";
+  for (const scenario of ["plain","separated","no-native-slot"]) {
+    const md=scenario==="plain"?"Budget\nOwner":"Budget\nPending\nOwner\nPending\nTimeline";
+    const calls=[];
+    const rt=docsDriveRuntime(async(input,init)=>{
+      const u=new URL(input);
+      assert.notEqual(init.method,"POST");
+      if (u.searchParams.has("fields")) {calls.push("meta");return response({documentId:"doc",revisionId:"r",title:"Doc"});}
+      assert.equal(u.searchParams.get("includeTabsContent"),"true");calls.push("native");
+      let pos=1;
+      const content=md.split("\n").map(text=>{
+        const startIndex=pos;pos+=text.length+1;
+        return {startIndex,endIndex:pos,paragraph:{elements:[{startIndex,endIndex:pos,textRun:{content:text+"\n"}}]}};
+      });
+      if (scenario==="no-native-slot") for(const i of [4,3,2,1]) content.splice(i,0,{table:{}});
+      return response({documentId:"doc",revisionId:"r",tabs:[{tabProperties:{tabId:"t.0"},documentTab:{body:{content}}}]});
+    });
+    const before={document_id:"doc",markdown:md,position_revision:"r",verified_revision:"r"};
+    const once=await synchronizeSource(rt,url,serviceCatalog,before,md,"doc.md");
+    assert.deepEqual(calls,scenario==="plain"?["meta"]:["meta","native"]);
+    if (scenario!=="plain") assert.equal(once.data.duplicate_identity.slots.length,scenario==="separated"?2:0);
+    assert.equal(once.wroteRemote,false);
+    calls.length=0;
+    const twice=await synchronizeSource(rt,url,serviceCatalog,once.data,md,"doc.md");
+    assert.deepEqual(calls,["meta"]);assert.deepEqual(twice.data,once.data);assert.equal(twice.wroteRemote,false);
+  }
+});

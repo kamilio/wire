@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { nativeDocsGrant, nativeDocMarkdownEqual, tryUploadDocBlocks } from "../../provider-google-docs/dist/native-docs.js";
+import { duplicateContext, captureDuplicateIdentity, nativeDocsGrant, nativeDocMarkdownEqual, tryUploadDocBlocks } from "../../provider-google-docs/dist/native-docs.js";
 
 const drive="https://www.googleapis.com/auth/drive";
 
@@ -345,5 +345,46 @@ test("label relocation refuses overlapping anchors, ambiguous labels, special fo
     if (reason==="different") to.paragraph.elements[0].textRun.content="A different native paragraph\n";
     await assert.rejects(f.write(f.from,reason==="wrong-label"?f.to.replace("Other notes","Other tasks"):f.to), reason==="stale"?/HTTP 400/:/named range|not unique|extra native formatting|does not match|blank paragraph spacing/);
     assert.equal(f.posts.length,reason==="stale"?1:0);
+  }
+});
+
+test("deleting a bounded repeated paragraph verifies native evidence even if its twin changed",async()=>{
+  const base="Budget\nPending\nOwner\nPending\nTimeline\nFriday", local=base.replace("Budget\nPending","Budget");
+  const curr=base.replace("Owner\nPending","Owner\nDone"), wanted=local.replace("Owner\nPending","Owner\nDone");
+  const tab=lines=>({tabProperties:{tabId:"tab-main"},documentTab:{body:{content:nativeParagraphs(lines)}}});
+  const identity=captureDuplicateIdentity({documentId:"doc",revisionId:"r1",tabs:[tab(base.split("\n"))]},"doc","r1",null,base);
+  assert.equal(identity.slots.length,2);
+  const good=duplicateContext(base,local,"r1",identity);
+  for (const mode of ["ok","missing","stale","wrong-markdown","wrong-tab","highlight","named","comment","opaque-between"]) {
+    const lines=curr.split("\n");
+    if (mode==="highlight") lines[1]={text:[{textRun:{content:"Pending\n",textStyle:{backgroundColor:{color:{rgbColor:{red:1}}}}}}]};
+    const f=fixture(lines,{rev:"r2",namedRanges:mode==="named"?{name:{namedRanges:[{ranges:[{startIndex:8,endIndex:10}]}]}}:{},
+      comments:mode==="comment"?[[{anchor:"opaque",quotedFileContent:{value:"Pending",mimeType:"text/plain"}}]]:[[]]});
+    if (mode==="opaque-between") f.content.splice(1,0,{startIndex:7,endIndex:8,table:{}});
+    const ctx=["stale","missing","wrong-markdown","wrong-tab"].includes(mode) ?
+      duplicateContext(base,local,mode==="stale"?"r0":"r1",mode==="missing"?undefined:{...identity,...(mode==="wrong-markdown"?{markdown:"stale"}:mode==="wrong-tab"?{tab:"other"}:{})}):good;
+    const save=()=>tryUploadDocBlocks(f.runtime,"doc",null,null,curr,wanted,async()=>curr,undefined,undefined,ctx);
+    if (mode==="ok") {
+      await save(); assert.deepEqual(f.posts[0].requests,[{deleteContentRange:{range:{startIndex:8,endIndex:16,tabId:"tab-main"}}}]);
+    } else { await assert.rejects(save,/cannot safely/); assert.equal(f.posts.length,0); }
+  }
+});
+
+test("duplicate child deletion requires the original native list ID and definition",async()=>{
+  const base="* Budget\n  * Pending\n* Owner\n  * Pending\nTimeline\nFriday", local=base.replace("  * Pending\n","");
+  const list=(glyphSymbol)=>({listProperties:{nestingLevels:[{glyphSymbol},{glyphSymbol:"○"}]}});
+  const original={a:list("●"),b:list("➤")};
+  const rows=(id)=>[{text:"Budget",bullet:{listId:id}},{text:"Pending",bullet:{listId:id,nestingLevel:1}},
+    {text:"Owner",bullet:{listId:"b"}},{text:"Pending",bullet:{listId:"b",nestingLevel:1}},"Timeline","Friday"];
+  const tab={tabProperties:{tabId:"tab-main"},documentTab:{body:{content:nativeParagraphs(rows("a"))},lists:original}};
+  const proof=captureDuplicateIdentity({documentId:"doc",revisionId:"r1",tabs:[tab]},"doc","r1",null,base);
+  assert.equal(proof.slots.length,2);
+  for (const mode of ["unchanged","new-id","new-preset"]) {
+    const native=rows(mode==="new-id"?"c":"a");native[5]="Monday";
+    const f=fixture(native,{lists:mode==="new-preset"?{...original,a:list("➤")}:mode==="new-id"?{...original,c:original.a}:original,rev:"r2"});
+    const live=base.replace("Friday","Monday");
+    const apply=()=>tryUploadDocBlocks(f.runtime,"doc",null,null,live,local.replace("Friday","Monday"),async()=>live,undefined,undefined,duplicateContext(base,local,"r1",proof));
+    if(mode==="unchanged"){await apply();assert.deepEqual(f.posts[0].requests,[{deleteContentRange:{range:{startIndex:8,endIndex:16,tabId:"tab-main"}}}]);}
+    else{await assert.rejects(apply,/native identity/);assert.equal(f.posts.length,0);}
   }
 });

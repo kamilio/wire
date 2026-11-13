@@ -18416,6 +18416,26 @@ function docChanges(base, side) {
   gap(start, end, s, e);
   return changes;
 }
+function boundedDeletion(base, side, other, i) {
+  const left = base[i - 1], value = base[i], right = base[i + 1];
+  if (!left?.trim() || !value?.trim() || !right?.trim() || left === right) return false;
+  const old = occurrences(base, 0, base.length);
+  if (old.get(left) !== i - 1 || old.get(right) !== i + 1) return false;
+  for (const rows of [side, other]) {
+    const next = occurrences(rows, 0, rows.length);
+    const lo = next.get(left) ?? -1, hi = next.get(right) ?? -1;
+    if (lo < 0 || hi !== lo + (rows === side ? 1 : 2) || rows === other && rows[lo + 1] !== value) return false;
+    let last = -1;
+    for (const [line, n] of old) {
+      const j2 = next.get(line) ?? -1;
+      if (n < 0 || j2 < 0) continue;
+      if (j2 <= last) return false;
+      last = j2;
+    }
+  }
+  const count = (rows) => rows.reduce((n, r) => n + Number(r === value), 0);
+  return count(side) === count(base) - 1;
+}
 function conflict(location = "") {
   throw new Error(`Google Docs changed remotely and locally.${location} Resolve the conflict in Google Docs or the local Markdown file before syncing again.`);
 }
@@ -18436,7 +18456,8 @@ function mergeDocBlocks(base, local, remote, sameRendering = (a, b2) => a === b2
     const sidePositions = occurrences(side, 0, side.length);
     for (const change of changes) {
       if (change.end - change.start === change.replacement.length) continue;
-      if ([...blocks.slice(change.start, change.end), ...change.replacement].some((block) => block.trim() && (positions.get(block) === -1 || positions.has(block) && sidePositions.get(block) === -1))) conflict();
+      const repeated = [...blocks.slice(change.start, change.end), ...change.replacement].some((block) => block.trim() && (positions.get(block) === -1 || positions.has(block) && sidePositions.get(block) === -1));
+      if (repeated && !(change.end === change.start + 1 && !change.replacement.length && boundedDeletion(blocks, side, side === localBlocks ? remoteBlocks : localBlocks, change.start))) conflict();
     }
   }
   const all = [...localChanges, ...remoteChanges].sort((a, b2) => a.start - b2.start || a.end - b2.end);
@@ -18488,6 +18509,7 @@ async function googleRead(runtime2, url, init) {
 }
 
 // ../provider-google-docs/src/native-docs.ts
+var import_node_crypto4 = require("node:crypto");
 function eligible(scopes, requireWrite) {
   const has = (name) => scopes?.includes("https://www.googleapis.com/auth/" + name);
   if (!requireWrite && (has("documents.readonly") || has("documents") || has("drive.readonly"))) return true;
@@ -18618,6 +18640,65 @@ function nativeDocMarkdownEqual(left, right) {
   });
   return JSON.stringify(numberStarts(spacedBlocks(left))) === JSON.stringify(numberStarts(spacedBlocks(right))) && JSON.stringify(normalized(left)) === JSON.stringify(normalized(right));
 }
+var digest = (s) => (0, import_node_crypto4.createHash)("sha256").update(s).digest("hex");
+var labels = (md) => spacedBlocks(md).map((line) => {
+  try {
+    return paragraph(line).text;
+  } catch {
+    return "";
+  }
+});
+var counts = (rows) => {
+  const map = /* @__PURE__ */ new Map();
+  for (const row of rows) map.set(row, (map.get(row) ?? 0) + 1);
+  return map;
+};
+var slot = (rows, freq, i, target) => !!rows[i] && (target ? rows[i] === target : freq.get(rows[i]) > 1) && !!rows[i - 1] && !!rows[i + 1] && freq.get(rows[i - 1]) === 1 && freq.get(rows[i + 1]) === 1;
+function hasDuplicateSlots(md) {
+  const rows = labels(md), freq = counts(rows);
+  return rows.some((_2, i) => slot(rows, freq, i));
+}
+function nativeSlots(tab, target) {
+  const body2 = tab.documentTab.body.content;
+  const names = body2.map((e) => e.paragraph?.elements.every((run) => run.textRun) ? e.paragraph.elements.map((run) => run.textRun.content).join("").replace(/\n$/, "") : "");
+  const freq = counts(names);
+  const result = /* @__PURE__ */ new Map();
+  const canonical = (_key, v2) => v2 && typeof v2 === "object" && !Array.isArray(v2) ? Object.fromEntries(Object.entries(v2).sort(([a], [b2]) => a < b2 ? -1 : a > b2 ? 1 : 0)) : v2;
+  for (let i = 1; i < body2.length - 1; i++) {
+    if (!slot(names, freq, i, target)) continue;
+    const triple = body2.slice(i - 1, i + 2);
+    if (triple.some((e) => !e.paragraph || hasSuggestion(e.paragraph) || e.paragraph.elements.some((el) => !el.textRun) || e.paragraph.bullet && !tab.documentTab.lists?.[e.paragraph.bullet.listId]?.listProperties?.nestingLevels?.[e.paragraph.bullet.nestingLevel ?? 0])) continue;
+    const shape = triple.map((e) => {
+      const { elements, ...p } = e.paragraph;
+      return [p, elements.map(({ startIndex, endIndex, ...rest }) => rest), p.bullet && tab.documentTab.lists[p.bullet.listId]];
+    });
+    result.set(body2[i], digest(JSON.stringify(shape, canonical)));
+  }
+  return result;
+}
+function captureDuplicateIdentity(data, id, revision, tabId, md) {
+  if (data.documentId !== id || data.revisionId !== revision) throw new StaleDocRevision("Google Docs changed during duplicate paragraph lookup; sync again.");
+  const tabs = [];
+  const visit = (items2) => {
+    for (const t of items2) {
+      tabs.push(t);
+      visit(t.childTabs ?? []);
+    }
+  };
+  visit(data.tabs ?? []);
+  const tab = tabId ? tabs.find((t) => t.tabProperties.tabId === tabId) : tabs.length === 1 ? tabs[0] : void 0;
+  return {
+    revision,
+    tab: tab?.tabProperties.tabId ?? "",
+    markdown: digest(md),
+    slots: tab?.documentTab?.body?.content ? [...nativeSlots(tab).values()] : []
+  };
+}
+function duplicateContext(base, local, revision, raw) {
+  const proof = raw;
+  const identity = typeof revision === "string" && proof && proof.revision === revision && typeof proof.tab === "string" && proof.markdown === digest(base) && Array.isArray(proof.slots) && proof.slots.every((s) => typeof s === "string" && /^[a-f0-9]{64}$/.test(s)) ? proof : void 0;
+  return { base, local, identity };
+}
 function characters(block) {
   let pos = 0, span = 0;
   return Array.from(block.text, (text3) => {
@@ -18735,9 +18816,9 @@ function movePlainLabel(tab, oldMd, newMd, guard) {
   const { left, right, label, group, text: text3, forward } = move;
   const body2 = tab.documentTab.body.content;
   const contents = (e) => e.paragraph?.elements.map((run) => run.textRun?.content).join("");
-  const labels = body2.map((e, i) => contents(e) === text3 + "\n" ? i : -1).filter((i) => i !== -1);
-  if (labels.length !== 1) return unsafe("section label is not unique");
-  const middle = labels[0], first = middle - 1, cells = body2.slice(first, first + 3);
+  const labels2 = body2.map((e, i) => contents(e) === text3 + "\n" ? i : -1).filter((i) => i !== -1);
+  if (labels2.length !== 1) return unsafe("section label is not unique");
+  const middle = labels2[0], first = middle - 1, cells = body2.slice(first, first + 3);
   const region = [left, ...(forward ? label.concat(group) : group.concat(label)).filter((v2) => v2 !== ""), right];
   const start = first - 1 - (forward ? 0 : group.length);
   if (start < 0 || !region.every((line, j2) => {
@@ -18770,7 +18851,7 @@ function movePlainLabel(tab, oldMd, newMd, guard) {
   ];
   return dest < from ? [cut, ...insert] : [...insert, cut];
 }
-function plan(tab, previous, desired, comments, allowDuplicatePosition) {
+function plan(tab, previous, desired, comments, allowDuplicatePosition, context) {
   const named = Object.values(tab.documentTab.namedRanges ?? {}).flatMap((n) => n.namedRanges?.flatMap((n2) => n2.ranges) ?? []);
   const protectedRanges = [...named, ...comments];
   const guardText = (start, end) => {
@@ -18828,11 +18909,32 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
     }
     return ordered[i];
   }
-  const locate = (i) => {
+  let oldLabels, oldCounts;
+  function boundedTarget(i, candidates, deleted) {
+    if (!context || !deleted) return;
+    const old = oldLabels ??= labels(context.base);
+    const name = paragraph(before[i]).text;
+    if (((oldCounts ??= counts(old)).get(name) ?? 0) < 2) return;
+    if (deleted !== 1) return unsafe("duplicate paragraph deletion needs an isolated block");
+    const local = labels(context.local), live = labels(previous);
+    const left = before[i - 1], right = before[i + 1];
+    if (!left || !right) return unsafe("duplicate paragraph deletion needs two unique neighbors");
+    const a = paragraph(left), b2 = paragraph(right);
+    const pos = old.indexOf(a.text) + 1;
+    if (pos < 1 || old[pos] !== name || old[pos + 1] !== b2.text || !boundedDeletion(old, local, live, pos)) return unsafe("duplicate paragraph identity is ambiguous");
+    const proof = context.identity;
+    if (!allowDuplicatePosition && proof?.tab !== tabId) return unsafe("missing baseline for duplicate paragraph deletion");
+    const marks = nativeSlots(tab, name);
+    return candidates.find((e) => {
+      const n = body2.indexOf(e), mark = marks.get(e);
+      return mark && (allowDuplicatePosition || proof.slots.includes(mark)) && n > 0 && n + 1 < body2.length && matches(body2[n - 1], a) && matches(body2[n + 1], b2);
+    }) ?? unsafe("native identity of duplicate paragraph changed");
+  }
+  const locate = (i, deleted = 0) => {
     const block = paragraph(before[i]);
     const candidates = body2.filter((e2) => matches(e2, block));
     if (!candidates.length) return unsafe("paragraph is missing");
-    const e = candidates.length === 1 ? candidates[0] : byPosition(i);
+    const e = boundedTarget(i, candidates, deleted) ?? (candidates.length === 1 ? candidates[0] : byPosition(i));
     if (!Number.isInteger(e.startIndex) || e.endIndex - e.startIndex !== block.text.length + 1) return unsafe("unrecognized paragraph range");
     return { block, e, start: e.startIndex, end: e.endIndex };
   };
@@ -18914,7 +19016,7 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
     }
   }
   for (const c of [...changes].reverse()) {
-    const old = before.slice(c.start, c.end).map((_line, i) => locate(c.start + i));
+    const old = before.slice(c.start, c.end).map((_line, i) => locate(c.start + i, c.replacement.length ? 0 : c.end - c.start));
     const added = c.replacement.map(paragraph);
     for (const [i, b2] of added.entries()) {
       if (b2.level === null || b2.level === 0 || old.length === added.length && old[i]?.block.level === b2.level && old[i]?.block.numbered === b2.numbered) continue;
@@ -19085,14 +19187,17 @@ async function anchoredComments(runtime2, id, headers, tab, tabs) {
 }
 var StaleDocRevision = class extends Error {
 };
-async function tryUploadDocBlocks(runtime2, documentId, key2, tabId, remoteMarkdown, desiredMarkdown, confirmRemote, onWrite, positionRevision) {
+async function tryUploadDocBlocks(runtime2, documentId, key2, tabId, remoteMarkdown, desiredMarkdown, confirmRemote, onWrite, positionRevision, context, knownDocument) {
   const token = (await nativeDocsGrant(runtime2))?.token;
   if (!token) return false;
   const url = "https://docs.googleapis.com/v1/documents/" + encodeURIComponent(documentId);
   const headers = { authorization: "Bearer " + token, ...key2 && { "X-Goog-Drive-Resource-Keys": documentId + "/" + key2 } };
-  const response = await googleRead(runtime2, url + "?includeTabsContent=true&suggestionsViewMode=SUGGESTIONS_INLINE", { headers, redirect: "error" });
-  if (!response.ok) throw new Error("Google Docs block read failed: HTTP " + response.status);
-  const data = await response.json();
+  let data = knownDocument;
+  if (!data) {
+    const response = await googleRead(runtime2, url + "?includeTabsContent=true&suggestionsViewMode=SUGGESTIONS_INLINE", { headers, redirect: "error" });
+    if (!response.ok) throw new Error("Google Docs block read failed: HTTP " + response.status);
+    data = await response.json();
+  }
   if (data.documentId !== documentId || !data.revisionId) return unsafe("missing document identity or revision");
   const tabs = [];
   function visit(items2) {
@@ -19107,7 +19212,7 @@ async function tryUploadDocBlocks(runtime2, documentId, key2, tabId, remoteMarkd
   if (!tab?.documentTab?.body?.content) return unsafe("missing target tab");
   const comments = await anchoredComments(runtime2, documentId, headers, tab, tabs);
   if (await confirmRemote(data.revisionId) !== remoteMarkdown) throw new StaleDocRevision("Google Docs changed before writing; sync again.");
-  const requests = plan(tab, remoteMarkdown, desiredMarkdown, comments, positionRevision === data.revisionId);
+  const requests = plan(tab, remoteMarkdown, desiredMarkdown, comments, positionRevision === data.revisionId, context);
   if (!requests.length) return true;
   const update = await runtime2.http.request(url + ":batchUpdate", { method: "POST", headers: { ...headers, "content-type": "application/json" }, redirect: "error", body: JSON.stringify({ writeControl: { requiredRevisionId: data.revisionId }, requests }) });
   if (!update.ok) {
@@ -19739,7 +19844,7 @@ async function googleDocListMarkdown(markdown, wordExport) {
     return text3 && outer.has(text3) && !other.has(text3) ? line.slice(2) : line;
   }).join("\n");
 }
-async function fetchGoogleDocument(runtime2, source, previous) {
+async function fetchGoogleDocument(runtime2, source, previous, reuseNative) {
   const id = source["document_id"] ?? source.identifier;
   const key2 = resourceKey(source);
   const gid2 = source["sheet_gid"];
@@ -19766,6 +19871,15 @@ async function fetchGoogleDocument(runtime2, source, previous) {
     if (!response.ok) throw new Error("Google Docs export failed: HTTP " + response.status);
     return response;
   };
+  const snapshot = previous === void 0 ? {} : objectValue(previous);
+  const identityFor = async (md, revision) => {
+    if (!grant?.canWrite || !hasDuplicateSlots(md)) return;
+    if (snapshot["position_revision"] === revision && snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && snapshot["markdown"] === md && duplicateContext(md, md, revision, snapshot["duplicate_identity"]).identity) return snapshot["duplicate_identity"];
+    const native = await (await read("https://docs.googleapis.com/v1/documents/" + encodeURIComponent(id) + "?includeTabsContent=true&suggestionsViewMode=SUGGESTIONS_INLINE")).json();
+    const identity = captureDuplicateIdentity(native, id, revision, tab, md);
+    reuseNative?.(native);
+    return identity;
+  };
   let readRevision, docTitle, legacyImages;
   if (grant && (previous !== void 0 || grant.canWrite)) {
     const url = "https://docs.googleapis.com/v1/documents/" + encodeURIComponent(id) + "?fields=documentId,title,revisionId";
@@ -19773,10 +19887,15 @@ async function fetchGoogleDocument(runtime2, source, previous) {
     if (meta.documentId !== id || typeof meta.title !== "string") throw new Error("Google Docs export returned unexpected document metadata");
     readRevision = meta.revisionId;
     docTitle = meta.title;
-    const snapshot = previous === void 0 ? {} : objectValue(previous);
     if (readRevision && snapshot["verified_revision"] === readRevision && snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && typeof snapshot["markdown"] === "string") {
-      if (snapshot["original_images"] === true || !snapshot["markdown"].includes("data:image/"))
-        return { title: docTitle, markdown: snapshot["markdown"], readRevision, data: { ...snapshot, title: docTitle } };
+      if (snapshot["original_images"] === true || !snapshot["markdown"].includes("data:image/")) {
+        const identity = await identityFor(snapshot["markdown"], readRevision);
+        return { title: docTitle, markdown: snapshot["markdown"], readRevision, data: {
+          ...snapshot,
+          title: docTitle,
+          ...identity ? { duplicate_identity: identity, position_revision: readRevision } : {}
+        } };
+      }
       legacyImages = snapshot["markdown"];
     }
   }
@@ -19817,10 +19936,14 @@ async function fetchGoogleDocument(runtime2, source, previous) {
     const end = await (await read("https://docs.googleapis.com/v1/documents/" + encodeURIComponent(id) + "?fields=revisionId")).json();
     if (end.revisionId !== readRevision) throw new Error("Google Docs changed during image export; local copy preserved. Sync again.");
   }
-  return { title: title2, markdown, ...readRevision ? { readRevision } : {}, data: { document_id: id, title: title2, output_path: null, sheet_gid: null, markdown, rows: null, ...markdown.includes("data:image/") ? { original_images: true } : {}, ...readRevision ? { position_revision: readRevision } : {}, ...legacyImages === exported && readRevision ? { verified_revision: readRevision } : {}, ...tab === null ? {} : { document_tab: tab } } };
+  const duplicateIdentity = readRevision ? await identityFor(markdown, readRevision) : void 0;
+  return { title: title2, markdown, ...readRevision ? { readRevision } : {}, data: { document_id: id, title: title2, output_path: null, sheet_gid: null, markdown, rows: null, ...duplicateIdentity ? { duplicate_identity: duplicateIdentity, verified_revision: readRevision } : {}, ...markdown.includes("data:image/") ? { original_images: true } : {}, ...readRevision ? { position_revision: readRevision } : {}, ...legacyImages === exported && readRevision ? { verified_revision: readRevision } : {}, ...tab === null ? {} : { document_tab: tab } } };
 }
 async function synchronizeGoogleDocument(runtime2, url, source, base, markdown, retryStaleRevision = true) {
-  const remote = await fetchGoogleDocument(runtime2, source, base);
+  let nativeDocument;
+  const remote = await fetchGoogleDocument(runtime2, source, base, (doc) => {
+    nativeDocument = doc;
+  });
   if (source.type === "presentation") {
     const baseMarkdown2 = objectValue(base)["markdown"];
     if (typeof baseMarkdown2 !== "string") throw new Error("Google sync base must include markdown");
@@ -19879,7 +20002,9 @@ Prefix it with an apostrophe or rewrite it as plain text before syncing.`);
         wroteRemote = true;
         writtenRevision = revision;
       },
-      typeof positionRevision === "string" ? positionRevision : void 0
+      typeof positionRevision === "string" ? positionRevision : void 0,
+      duplicateContext(baseMarkdown, markdown, snapshot["position_revision"], snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab ? snapshot["duplicate_identity"] : void 0),
+      nativeDocument
     );
   } catch (error) {
     if (retryStaleRevision && error instanceof StaleDocRevision) return synchronizeGoogleDocument(runtime2, url, source, base, markdown, false);
@@ -20085,7 +20210,7 @@ var googleDocsProvider = Object.freeze({
 });
 
 // ../provider-notion/src/notion-sync.ts
-var import_node_crypto4 = require("node:crypto");
+var import_node_crypto5 = require("node:crypto");
 var import_node_path5 = require("node:path");
 function object4(value) {
   return value;
@@ -20115,7 +20240,7 @@ function compact(value) {
   return stableJsonCompact(value);
 }
 function hash(value) {
-  return `sha256:${(0, import_node_crypto4.createHash)("sha256").update(compact(value)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto5.createHash)("sha256").update(compact(value)).digest("hex")}`;
 }
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -20602,7 +20727,7 @@ function tableColumnOrder(remote, local) {
   const remoteColumns = object4(remote["format"])["table_block_column_order"];
   const used = /* @__PURE__ */ new Set();
   return localColumns.map((column, index) => {
-    const value = index < remoteColumns.length ? remoteColumns[index] : used.has(column) ? `column_${index}_${(0, import_node_crypto4.randomUUID)().replaceAll("-", "")}` : column;
+    const value = index < remoteColumns.length ? remoteColumns[index] : used.has(column) ? `column_${index}_${(0, import_node_crypto5.randomUUID)().replaceAll("-", "")}` : column;
     used.add(value);
     return value;
   });
@@ -20623,7 +20748,7 @@ function parserBlockToNotionBlock(block, id, parentId, parentTable, spaceId, use
   if (["header", "sub_header", "sub_sub_header"].includes(block.type)) return { ...base, properties: { title: block.rich_text }, ...block.properties["format"] === void 0 ? {} : { format: block.properties["format"] } };
   return { ...base, properties: { title: block.rich_text } };
 }
-function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTime, createId = () => (0, import_node_crypto4.randomUUID)(), initialTableColumnOrder) {
+function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTime, createId = () => (0, import_node_crypto5.randomUUID)(), initialTableColumnOrder) {
   const operations = [];
   const topLevelIds = [];
   const lastAtIndent = /* @__PURE__ */ new Map();
@@ -20710,7 +20835,7 @@ function localTree(blocks) {
   return roots;
 }
 function outputNode(node, remoteNode, parentId, remote, currentTime, columnOrder) {
-  const id = remoteNode?.id ?? formatBlockId((0, import_node_crypto4.randomUUID)().replaceAll("-", ""));
+  const id = remoteNode?.id ?? formatBlockId((0, import_node_crypto5.randomUUID)().replaceAll("-", ""));
   const block = parserBlockToNotionBlock(node.block, id, parentId, "block", remote.spaceId, remote.userId, currentTime, node.block.type === "table" ? tableColumnOrder(remoteNode?.block, node.block) : node.block.type === "table_row" ? columnOrder : void 0);
   const nextColumnOrder = block["type"] === "table" ? object4(block["format"])["table_block_column_order"] : columnOrder;
   return { id, block, children: node.children.map((child, index) => outputNode(child, remoteNode?.children[index], id, remote, currentTime, nextColumnOrder)) };
@@ -21163,7 +21288,7 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
   const spaceView = object4(object4(spaces[userId])["space_view"]);
   if (Object.keys(spaceView).length !== 1) throw new Error("Notion upload requires an explicit target workspace.");
   const spaceId = object4(spaceView[Object.keys(spaceView)[0]])["spaceId"];
-  const pageId = (0, import_node_crypto4.randomUUID)();
+  const pageId = (0, import_node_crypto5.randomUUID)();
   const compactPageId = pageId.replaceAll("-", "");
   const currentTime = runtime2.clock.now().getTime();
   const headers = { "x-notion-active-user-header": userId, "x-notion-space-id": spaceId, referer: `https://www.notion.so/${compactPageId}`, ...csrf === void 0 ? {} : { "x-csrf-token": csrf } };
@@ -21192,7 +21317,7 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
   const emailMentions = {};
   await resolveNotionEmailMentions(runtime2, localBlocks, cookie, spaceId, headers, emailMentions);
   const operations = [pageOperation, ...buildNotionCreateOperations(localBlocks, pageId, spaceId, userId, currentTime).operations];
-  await notionPost(runtime2, "saveTransactionsFanout", cookie, { requestId: (0, import_node_crypto4.randomUUID)(), transactions: [{ id: (0, import_node_crypto4.randomUUID)(), spaceId, operations }] }, headers);
+  await notionPost(runtime2, "saveTransactionsFanout", cookie, { requestId: (0, import_node_crypto5.randomUUID)(), transactions: [{ id: (0, import_node_crypto5.randomUUID)(), spaceId, operations }] }, headers);
   const pageTree = {
     id: pageId,
     block: pageOperation.args,
@@ -21243,7 +21368,7 @@ ${split.body}`;
     }
     const titleRich2 = split.title === "" ? object4(remote.tree.block["properties"])["title"] : titleRichText(split.title);
     const titleChanged = split.title !== "" && compact(object4(remote.tree.block["properties"])["title"]) !== compact(titleRich2);
-    if (titleChanged) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto4.randomUUID)(), transactions: [{ id: (0, import_node_crypto4.randomUUID)(), spaceId: remote.spaceId, operations: [{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: titleRich2 } } }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime2.clock.now().getTime() }] }] }, remote.headers);
+    if (titleChanged) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto5.randomUUID)(), transactions: [{ id: (0, import_node_crypto5.randomUUID)(), spaceId: remote.spaceId, operations: [{ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: titleRich2 } } }, { pointer: pointer(remote.tree.id, remote.spaceId), path: ["last_edited_time"], command: "set", args: runtime2.clock.now().getTime() }] }] }, remote.headers);
     const outputTree2 = { ...remote.tree, block: { ...remote.tree.block, properties: { ...object4(remote.tree.block["properties"]), title: titleRich2 } } };
     return notionDocument(remote.tree.id, outputTree2, mentions, emailMentions, remote.comments);
   }
@@ -21262,7 +21387,7 @@ ${split.body}`;
   const operations = [...diffResult.operations];
   const titleRich = split.title === "" ? object4(remote.tree.block["properties"])["title"] : titleRichText(split.title);
   if (split.title !== "" && compact(object4(remote.tree.block["properties"])["title"]) !== compact(titleRich)) operations.unshift({ pointer: pointer(remote.tree.id, remote.spaceId), path: ["properties", "title"], command: "updateBlockPropertyValue", args: { primitiveOp: { command: "set", args: titleRich } } });
-  if (operations.length > 0) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto4.randomUUID)(), transactions: [{ id: (0, import_node_crypto4.randomUUID)(), spaceId: remote.spaceId, operations }] }, remote.headers);
+  if (operations.length > 0) await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto5.randomUUID)(), transactions: [{ id: (0, import_node_crypto5.randomUUID)(), spaceId: remote.spaceId, operations }] }, remote.headers);
   const outputTree = { id: remote.tree.id, block: { ...remote.tree.block, properties: { ...object4(remote.tree.block["properties"]), title: titleRich } }, children: localTree(localBlocks).map((node, index) => outputNode(node, remote.tree.children[index], remote.tree.id, remote, ambient.currentTime)) };
   return notionDocument(remote.tree.id, outputTree, mentions, emailMentions, remote.comments);
 }
@@ -21973,7 +22098,7 @@ var slackProvider = Object.freeze({
 });
 
 // ../provider-zoom/src/zoom-hub.ts
-var import_node_crypto5 = require("node:crypto");
+var import_node_crypto6 = require("node:crypto");
 var import_node_path6 = require("node:path");
 var import_promises7 = require("node:timers/promises");
 var userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
@@ -22223,8 +22348,8 @@ async function scrapeZoom(runtime2, directory) {
     (token2) => body2 === void 0 ? { headers: hubHeaders(token2) } : { method: "POST", headers: hubHeaders(token2, "application/json"), body: JSON.stringify(body2) }
   ), path);
   const seen = /* @__PURE__ */ new Set();
-  const counts = { downloaded: 0, unchanged: 0, unavailable: 0, locallyModified: 0 };
-  const digest = (text3) => (0, import_node_crypto5.createHash)("sha256").update(text3).digest("hex");
+  const counts2 = { downloaded: 0, unchanged: 0, unavailable: 0, locallyModified: 0 };
+  const digest2 = (text3) => (0, import_node_crypto6.createHash)("sha256").update(text3).digest("hex");
   const sync = async (file) => {
     const id = file["id"];
     const notes = file["meetingNotes"];
@@ -22237,20 +22362,20 @@ async function scrapeZoom(runtime2, directory) {
     if (await runtime2.filesystem.exists(path)) {
       const contents = await runtime2.filesystem.readText(path);
       const marker = /\n\n<!-- wire:zoom (\S+) ([a-f0-9]{64})(?: ([a-f0-9]{64}))? -->\n$/.exec(contents);
-      if (!marker || digest(contents.slice(0, marker.index)) !== marker[2]) {
-        counts.locallyModified++;
+      if (!marker || digest2(contents.slice(0, marker.index)) !== marker[2]) {
+        counts2.locallyModified++;
         return;
       }
-      if (hasJson && digest(await runtime2.filesystem.readText(jsonPath)) !== marker[3]) {
-        counts.locallyModified++;
+      if (hasJson && digest2(await runtime2.filesystem.readText(jsonPath)) !== marker[3]) {
+        counts2.locallyModified++;
         return;
       }
       if (hasJson && version === marker[1]) {
-        counts.unchanged++;
+        counts2.unchanged++;
         return;
       }
     } else if (hasJson) {
-      counts.locallyModified++;
+      counts2.locallyModified++;
       return;
     }
     let doc;
@@ -22258,20 +22383,20 @@ async function scrapeZoom(runtime2, directory) {
       doc = await transcript(runtime2, client, id, file);
     } catch (error) {
       if (!(error instanceof UnavailableDocument)) throw error;
-      counts.unavailable++;
+      counts2.unavailable++;
       return;
     }
     if (!doc.archive || !doc.document.data.transcript) {
-      counts.unavailable++;
+      counts2.unavailable++;
       return;
     }
     const json = JSON.stringify(doc.archive, null, 2) + "\n";
     await runtime2.filesystem.writeText(path, doc.document.markdown + `
 
-<!-- wire:zoom ${version} ${digest(doc.document.markdown)} ${digest(json)} -->
+<!-- wire:zoom ${version} ${digest2(doc.document.markdown)} ${digest2(json)} -->
 `);
     await runtime2.filesystem.writeText(jsonPath, json);
-    counts.downloaded++;
+    counts2.downloaded++;
   };
   let token = "";
   const tokens = /* @__PURE__ */ new Set();
@@ -22300,7 +22425,7 @@ async function scrapeZoom(runtime2, directory) {
     }
     end = start - 1;
   }
-  return counts;
+  return counts2;
 }
 
 // ../provider-zoom/src/index.ts
