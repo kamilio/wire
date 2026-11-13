@@ -2,7 +2,7 @@ import { readSheetTabs, sheetMarkdown } from "./sheet-markdown.js";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
-import { googleDocOriginalImages } from "provider-google-docs";
+import { googleDocListMarkdown, googleDocOriginalImages } from "provider-google-docs";
 const docxType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const google = "application/vnd.google-apps.";
 const formats = {
@@ -52,6 +52,9 @@ async function checkDocImage(folder, name) {
     if (!info.isFile() || digest(await readFile(path)) !== hash)
         throw new Error("Local attachment changed: " + path);
     return true;
+}
+async function docLists(runtime, id, text) {
+    return googleDocListMarkdown(text, async () => new Uint8Array(await (await drive(runtime, "/" + id + "/export", { mimeType: docxType })).arrayBuffer()));
 }
 async function extractDocImages(runtime, id, full, text) {
     const labels = new Set([...text.matchAll(imageDefinition)].map(m => m[1]));
@@ -136,8 +139,10 @@ export async function previewDrive(runtime, url) {
             : item.mimeType === google + "presentation"
                 ? "text/plain"
                 : undefined;
-    if (format)
-        return (await drive(runtime, "/" + id + "/export", { mimeType: format })).text();
+    if (format) {
+        const text = await (await drive(runtime, "/" + id + "/export", { mimeType: format })).text();
+        return format === "text/markdown" ? docLists(runtime, id, text) : text;
+    }
     if (item.mimeType === "application/pdf" || /\.pdf$/i.test(item.name)) {
         const response = await drive(runtime, "/" + id, { alt: "media", supportsAllDrives: "true" });
         return ((await import("./drive-pdf.js")).pdfMarkdown(new Uint8Array(await response.arrayBuffer())) ??
@@ -323,6 +328,15 @@ export async function scrapeDrive(runtime, cwd, url, deleteVerifiedPdfs = false,
                         current = false;
                 }
                 if (current && f.mimeType === google + "document") {
+                    if (original && !original.listMarkdown) {
+                        const old = await readFile(full, "utf8");
+                        const normalized = await docLists(runtime, f.id, old);
+                        if (old !== normalized) {
+                            await save(full, normalized);
+                            original.hash = digest(Buffer.from(normalized));
+                        }
+                        original.listMarkdown = true;
+                    }
                     if (original?.images?.length) {
                         const dir = await docImageDir(full, false);
                         for (const image of original.images)
@@ -355,7 +369,7 @@ export async function scrapeDrive(runtime, cwd, url, deleteVerifiedPdfs = false,
                     ? await drive(runtime, "/" + f.id + "/export", { mimeType: format[1] })
                     : await drive(runtime, "/" + f.id, { alt: "media", supportsAllDrives: "true" });
                 const raw = new Uint8Array(await response.arrayBuffer());
-                const doc = f.mimeType === google + "document" ? await extractDocImages(runtime, f.id, full, Buffer.from(raw).toString("utf8")) : undefined;
+                const doc = f.mimeType === google + "document" ? await extractDocImages(runtime, f.id, full, await docLists(runtime, f.id, Buffer.from(raw).toString("utf8"))) : undefined;
                 const bytes = doc?.bytes ?? raw;
                 const table = spreadsheet ? Buffer.from(sheetMarkdown((f.id === source ? rootTabs : undefined) ?? await readSheetTabs(runtime, f.id))) : undefined;
                 await save(full, bytes);
@@ -363,7 +377,7 @@ export async function scrapeDrive(runtime, cwd, url, deleteVerifiedPdfs = false,
                     await save(join(cwd, markdownPath()), table);
                     state.entries[key(markdownPath())] = { id: f.id, version: f.version, hash: digest(table) };
                 }
-                state.entries[key(path)] = { id: f.id, path, version: f.version, hash: digest(bytes), ...(doc ? { images: doc.images, originalImages: true } : {}) };
+                state.entries[key(path)] = { id: f.id, path, version: f.version, hash: digest(bytes), ...(doc ? { images: doc.images, originalImages: true, listMarkdown: true } : {}) };
                 if (pdf || docx) {
                     const text = docx ? await (await import("./drive-docx.js")).docxMarkdown(bytes)
                         : (await import("./drive-pdf.js")).pdfMarkdown(bytes);

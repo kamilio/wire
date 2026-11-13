@@ -7,7 +7,7 @@ import { basename, join } from "node:path";
 import test from "node:test";
 import { PdfDocument } from "@poe-platform/safe-bash/pdf-ast";
 import { pdfMarkdown } from "../dist/adapters/drive-pdf.js";
-import { scrapeDrive } from "../dist/adapters/gdrive.js";
+import { previewDrive, scrapeDrive } from "../dist/adapters/gdrive.js";
 
 test("review scale options stay separate from the selected answer and visibility note", () => {
   const doc = PdfDocument.create();
@@ -378,4 +378,37 @@ test("legacy smart chips can span displayed titles, with distinct URLs per chip"
     { startIndex: 8, chip: { richLinkProperties: { uri: "https://example.com/prior" } } },
   ] };
   assert.match(sheetMarkdown([{ properties: { title: "Notes" }, data: [{ rowData: [{ values: [cell] }] }] }]), /\[Current\]\(https:\/\/example.com\/current\)<br>\[Prior\]\(https:\/\/example.com\/prior\)/);
+});
+
+test("Drive preview, scrape and refresh of legacy notes preserve native list hierarchy", async () => {
+  const dir = await mkdtemp(join(import.meta.dirname, "gdrive-"));
+  const raw = "> * Parent  \n  * Child\n\n> Actual quote\n";
+  const fixed = raw.slice(2);
+  const word = zip({ "word/document.xml": '<w:document><w:body><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/></w:numPr></w:pPr><w:r><w:t>Parent</w:t></w:r></w:p></w:body></w:document>' });
+  let wordRequests = 0;
+  const runtime = {
+    googleFormsTokens: { load: async () => ({ token: "saved" }) },
+    http: { request: async (input) => {
+      const u = new URL(input);
+      const doc = { id: "doc", name: "Notes", mimeType: "application/vnd.google-apps.document", version: "1" };
+      if (u.pathname.endsWith("/export")) {
+        if (u.searchParams.get("mimeType") === "text/markdown") return new Response(raw);
+        wordRequests++; return new Response(word);
+      }
+      if (u.pathname.endsWith("/source")) return Response.json({ name: basename(dir), mimeType: "application/vnd.google-apps.folder" });
+      return Response.json(u.pathname.endsWith("/doc") ? doc : { files: [doc] });
+    } },
+  };
+  try {
+    assert.equal(await previewDrive(runtime, "https://drive.google.com/file/d/doc/view"), fixed);
+    const path = join(dir, "Notes.md"), manifest = join(dir, ".wire-gdrive.json");
+    await scrapeDrive(runtime, dir, "https://drive.google.com/drive/folders/source");
+    assert.equal(await readFile(path, "utf8"), fixed);
+    const state = JSON.parse(await readFile(manifest, "utf8")), entry = Object.values(state.entries)[0];
+    delete entry.listMarkdown; entry.hash = createHash("sha256").update(raw).digest("hex");
+    await writeFile(manifest, JSON.stringify(state)); await writeFile(path, raw);
+    await scrapeDrive(runtime, dir); await scrapeDrive(runtime, dir);
+    assert.equal(await readFile(path, "utf8"), fixed);
+    assert.equal(wordRequests, 3);
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });

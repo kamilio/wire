@@ -2494,3 +2494,32 @@ test("zoom scrape paces requests, retries 429, and honors a saved Retry-After ac
   await assert.rejects(zoomProvider.scrape(rt, "/archive"), /rate limited; retry after/);
   assert.equal(times.length, 3);
 });
+
+test("Google Docs keeps nested bullets across repeated edits and leaves quoted and fenced examples alone", async () => {
+  let child = "initial";
+  const md = () => `> * Parent  \n  * ${child}  \n    * Grandchild\n> 1. Second\n\n> * Quoted\n\n\`\`\`\n> * Parent\n\`\`\`\n`;
+  const expected = () => md().replace(/^> \* Parent/, "* Parent").replace("> 1. Second", "1. Second");
+  const para = (level, text) => `<w:p><w:pPr>${level === undefined ? '<w:pStyle w:val="Quote"/>' : `<w:numPr><w:ilvl w:val="${level}"/></w:numPr>`}</w:pPr><w:r><w:t>${text}</w:t></w:r></w:p>`;
+  const url = "https://docs.google.com/document/d/doc/edit", path = "/workspace/doc.md";
+  let saves = 0, next = "";
+  const rt = runtime(async (input, init = {}) => {
+    const u = new URL(input);
+    if (u.searchParams.get("format") === "docx") return exportResponse("Doc", "docx", zip({ "word/document.xml": `<w:document><w:body>${[para(0,"Parent"),para(1,child),para(2,"Grandchild"),para(0,"Second"),para(undefined,"Quoted")].join("")}</w:body></w:document>` }));
+    if (u.pathname.endsWith("/edit")) return docsHtml(`Parent\n${child}\nGrandchild\nSecond\nQuoted\n`);
+    if (u.pathname.endsWith("/save")) {
+      const [{ commands }] = JSON.parse(new URLSearchParams(init.body).get("bundles"));
+      for (const c of commands) assert.ok(c.ty === "is" ? !c.s.includes("\n") : c.ty === "ds" && c.si >= 8 && c.ei < 8 + child.length);
+      child = next; saves++;
+      return response({}, ")]}'\n{\"revisionRanges\":[[8,8]]}");
+    }
+    return exportResponse("Doc", "md", md());
+  });
+  let base = await fetchSource(rt, url, serviceCatalog);
+  assert.equal(base.markdown, expected());
+  for (next of ["updated", "revised"]) {
+    base = await synchronizeSource(rt, url, serviceCatalog, base.data, base.markdown.replace(child, next), path);
+    assert.equal(base.markdown, expected());
+  }
+  await assert.rejects(synchronizeSource(rt, url, serviceCatalog, base.data, base.markdown.replace("  * revised", "    * different"), path), /change the list structure in Google Docs/);
+  assert.equal(saves, 2);
+});

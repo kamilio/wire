@@ -1,4 +1,4 @@
-export { googleDocOriginalImages, googleDocsService } from "./google-docs.js";
+export { googleDocListMarkdown, googleDocOriginalImages, googleDocsService } from "./google-docs.js";
 export { googleFormsService } from "./google-forms.js";
 export declare const googleDocsProvider: Readonly<{
     services: readonly [Readonly<{

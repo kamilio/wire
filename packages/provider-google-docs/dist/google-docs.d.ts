@@ -3,6 +3,7 @@ export declare function googleDocOriginalImages(bytes: Uint8Array): {
     data: Uint8Array<ArrayBufferLike>;
     ext: string;
 }[];
+export declare function googleDocListMarkdown(markdown: string, wordExport: () => Promise<Uint8Array>): Promise<string>;
 export declare const googleDocsService: Readonly<{
     name: string;
     matches(url: URL): boolean;

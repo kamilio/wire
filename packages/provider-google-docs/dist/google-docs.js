@@ -635,6 +635,38 @@ function markdownCombinedEmphasis(value) {
 function markdownText(value) {
     return markdownEntities(markdownHtmlTags(markdownCombinedEmphasis(value.replace(/[ \t]{2,}(?=\r?\n|$)/g, "").replace(/(?:^[ \t]*\|.*\|[ \t]*(?:\r?\n|$)){2,}/gm, markdownDocTable).replace(/^```[^\n]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gm, "$1").replace(/^[ \t]*!\[[^\]\n]*\]\([^)]+\)[ \t]*(?:\r?\n)?/gm, "").replace(/^[ \t]{0,3}\[[^\]\n]+\]:[ \t]+[^\n]*(?:\r?\n)?/gm, "").replace(/^[ \t]{0,3}(?:-{3,}|\*{3,}|_{3,})[ \t]*(?:\r?\n)*/gm, "").replace(/[ \t]*!\[[^\]\n]*\]\([^)]+\)[ \t]*/g, " ").replace(/[ \t]*!\[[^\]\n]*\]\[[^\]\n]*\][ \t]*/g, " ").replace(/\\([\\`*_{}\[\]()#+\-.!|=~])/g, "$1").replace(/^[ \t]*>+[ \t]?/gm, "").replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+/gm, "").replace(/^\[(?: |x|X)\][ \t]+/gm, "").replace(/`([^`\n]+)`/g, "$1").replace(/~~([^~\n]+)~~/g, "$1").replace(/\*\*([^*\n]+)\*\*/g, "$1").replace(/\*([^*\n]+)\*/g, "$1").replace(/(^|[^\w])__([^_\n]+?)__(?=[^\w]|$)/g, "$1$2").replace(/(^|[^\w])_([^_\n]+?)_(?=[^\w]|$)/g, "$1$2").replace(/^#+ /gm, "").replace(/<((?:https?|mailto):[^>\s]+)>/g, "$1").replace(/\[([^\]\n]+)\]\[[^\]\n]*\]/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1"))));
 }
+// Docs can export a real outer bullet as "> *" while leaving its children
+// unquoted. A Markdown quote looks identical, so consult the native paragraphs.
+export async function googleDocListMarkdown(markdown, wordExport) {
+    if (!/^> (?:\*|\d+\.) /m.test(markdown))
+        return markdown;
+    const doc = parseXml(zipText(unzipFiles(await wordExport()), "word/document.xml"));
+    const outer = new Set(), other = new Set();
+    const key = (s) => s.replace(/\s+/g, " ").trim();
+    for (const p of xmlDescendants(doc, "w:p")) {
+        const props = xmlChildren(p, "w:pPr")[0];
+        const numbering = props && xmlChildren(props, "w:numPr")[0];
+        const level = numbering && xmlChildren(numbering, "w:ilvl")[0]?.attributes.get("w:val");
+        const style = props && xmlChildren(props, "w:pStyle")[0]?.attributes.get("w:val");
+        const text = key(xmlDescendants(p, "w:t").map(xmlText).join(""));
+        (level === "0" && !/quote/i.test(style ?? "") ? outer : other).add(text);
+    }
+    let fence = "";
+    return markdown.split("\n").map(line => {
+        const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+        if (marker) {
+            if (!fence)
+                fence = marker[1];
+            else if (marker[1].startsWith(fence) && !marker[2].trim())
+                fence = "";
+            return line;
+        }
+        if (fence || !/^> (?:\*|\d+\.) /.test(line))
+            return line;
+        const text = key(markdownText(line));
+        return text && outer.has(text) && !other.has(text) ? line.slice(2) : line;
+    }).join("\n");
+}
 function comparableDocMarkdown(value) {
     return markdownEntities(markdownHtmlTags(markdownCombinedEmphasis(value.replace(/[ \t]{2,}(?=\r?\n|$)/g, "").replace(/\\([\\`*_{}\[\]()#+\-.!|=~])/g, "$1").replace(/\s+$/g, ""))));
 }
@@ -769,6 +801,13 @@ function docTextRange(text, edit) {
 }
 async function uploadDocText(runtime, documentId, key, tab, baseMarkdown, localMarkdown) {
     const edits = textEdits(baseMarkdown, localMarkdown);
+    // The editor endpoint writes text only. Never let a multiline replacement
+    // recreate list paragraphs without their original list and nesting metadata.
+    const prefixes = (s) => s.match(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+/gm) ?? [];
+    if (prefixes(baseMarkdown).join("\n") !== prefixes(localMarkdown).join("\n") ||
+        edits.some(edit => [edit.base, edit.local].some(s => /\n[ \t]*(?:[-*+]|\d+[.)])[ \t]+/.test(s)))) {
+        throw new Error("Google Docs sync cannot preserve formatting in edited text: change the list structure in Google Docs");
+    }
     if (edits.some((edit) => editTouchesMarkdownSpan(edit.before, baseMarkdown, edit.base) || editTouchesMarkdownSpan(edit.localBefore, localMarkdown, edit.local)))
         throw new Error("Google Docs sync cannot preserve formatting in edited text");
     const editUrl = docEditUrl(documentId, key, tab);
@@ -834,7 +873,11 @@ async function fetchGoogleDocument(runtime, source) {
     }
     const exported = await googleExport(runtime, exportUrl, label);
     const rows = source["sheet_gid"] === undefined ? null : parseCsv(exported.text);
-    const markdown = rows === null ? exported.text : sheetMarkdown(rows);
+    const markdown = rows === null ? await googleDocListMarkdown(exported.text, async () => {
+        const word = new URL(exportUrl);
+        word.searchParams.set("format", "docx");
+        return (await googleExportBytes(runtime, word.toString(), "Docs Word export")).bytes;
+    }) : sheetMarkdown(rows);
     const tab = source["sheet_gid"] === undefined ? documentTab(source) : null;
     return Object.freeze({ title: exported.title, markdown, data: { document_id: documentId, title: exported.title, output_path: null, sheet_gid: sheetGid, markdown, rows, ...(tab === null ? {} : { document_tab: tab }) } });
 }
