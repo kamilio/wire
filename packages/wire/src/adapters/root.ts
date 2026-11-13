@@ -206,6 +206,7 @@ function wireUserErrorMessage(message: string): boolean {
     || /^Resource path is not registered: /.test(message)
     || /^Resource (path |identifier |URL )?not found: /.test(message)
     || /^Ambiguous resource path /.test(message)
+    || /^(Unresolved Wire conflict|Working file changed since the conflict|Stale shell edit|No saved conflict|Unknown document revision|No saved (?:base|local|remote) revision|Linked Markdown is missing|Another Wire operation owns this document|Local file changed during (?:sync|detach)|This registry does not provide durable document history|This provider cannot conditionally publish|Resolve and sync the Wire draft before detaching|Notion cannot condition a save|Google Sheets cannot condition a save)/.test(message)
     || /^Login not saved$/.test(message)
     || /authentication (is missing|is missing or expired|failed|expired).*Run `wire (ashby|asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.test(message)
     || /^Asana API /.test(message)
@@ -470,6 +471,9 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
     handler: ({ params }) => userFacing(() => wire.sync(params.resource, currentDirectory)),
     render: wirePresentation.sync,
   });
+  const resource = S.String({ description: "Registered resource URL, resource ID, or Markdown path." });
+  const historyStatusText = (status: Awaited<ReturnType<Wire["historyStatus"]>>) =>
+    `${status.path}: ${status.conflict ? "conflict" : status.modified ? "local changes" : "clean"}`;
   const authCommand = (service: (typeof authServices)[number]) => {
     const title = serviceTitle(service);
     const group = authGroup(service, `Manage ${title} login.`, "Capture cookies once; normal commands reuse saved cookies.", auth!, readInput, options);
@@ -659,6 +663,63 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
         render: wirePresentation.switchBackend,
       }),
       sync,
+      defineCommand({
+        name: "status", scope: ["cli"], description: "Show local changes or conflicts for one tracked document.",
+        positional: ["resource"], params: S.Object({ resource }),
+        handler: ({ params }) => userFacing(() => wire.historyStatus(params.resource, currentDirectory)),
+        render: render(historyStatusText),
+      }),
+      defineCommand({
+        name: "history", scope: ["cli"], description: "List local revisions, newest first.",
+        positional: ["resource"], params: S.Object({ resource }),
+        handler: ({ params }) => userFacing(() => wire.historyLog(params.resource, currentDirectory)),
+        render: render<Awaited<ReturnType<Wire["historyLog"]>>>(revisions =>
+          revisions.map(r => `${r.id}  ${r.at}  ${r.kind}`).join("\n") || "No revisions recorded."),
+      }),
+      defineCommand({
+        name: "diff", scope: ["cli"], description: "Compare two versions. Defaults to the last sync and working copy.",
+        positional: ["resource"], params: S.Object({ resource,
+          from: S.Optional(S.String({ description: "Revision ID or base, working, local, remote." })),
+          to: S.Optional(S.String({ description: "Revision ID or base, working, local, remote." })),
+        }),
+        handler: ({ params }) => userFacing(async () => {
+          const d = await wire.historyDiff(params.resource, currentDirectory, params.from, params.to);
+          const { documentDiff } = await import("./document-shell.js");
+          return { from: d.from, to: d.to, diff: await documentDiff(d.from, d.to, d.before, d.after) };
+        }),
+        render: render<{ diff: string }>(result => result.diff || "No changes."),
+      }),
+      defineCommand({
+        name: "conflicts", scope: ["cli"], description: "Show the base, local and remote revisions of an unresolved conflict.",
+        positional: ["resource"], params: S.Object({ resource }),
+        handler: ({ params }) => userFacing(async () => (await wire.historyStatus(params.resource, currentDirectory)).conflict),
+        render: render<Awaited<ReturnType<Wire["historyStatus"]>>["conflict"]>(c => c ?
+          `base: ${c.base}\nlocal: ${c.local}\nremote: ${c.remote}\nCompare with wire diff <resource> --from local --to remote, then wire resolve <resource> <choice>.` : "No conflicts."),
+      }),
+      defineCommand({
+        name: "resolve", scope: ["cli"], description: "Resolve a conflict locally. Sync to publish.",
+        positional: ["resource", "choice"], params: S.Object({ resource,
+          choice: S.Enum(["local", "remote", "working"] as const, { description: "Use saved local or remote content, or the edited working file." }),
+        }),
+        handler: ({ params }) => userFacing(() => wire.resolveConflict(params.resource, currentDirectory, params.choice)),
+        render: render(historyStatusText),
+      }),
+      defineCommand({
+        name: "shell", scope: ["cli"], description: "Run a quoted safe-bash script on /document.md. Successful edits stay local until sync.",
+        positional: ["resource", "script"], params: S.Object({ resource,
+          script: S.String({ description: "Shell script; /document.md is the only tracked file in the in-memory filesystem." }),
+        }),
+        handler: ({ params }) => userFacing(async () => {
+          const d = await wire.historyDiff(params.resource, currentDirectory, "working", "working");
+          const { editDocument } = await import("./document-shell.js");
+          const { edited, stdout, stderr } = await editDocument(d.before, params.script).catch(error => { throw new UserError(thrownMessage(error)); });
+          const changed = edited !== d.before;
+          if (changed) await wire.checkpoint(params.resource, currentDirectory, d.before, edited, d.token);
+          return { changed, stdout, stderr };
+        }),
+        render: render<{ changed: boolean; stdout: string; stderr: string }>(r =>
+          [r.stdout.trimEnd(), r.stderr.trimEnd(), r.changed ? "Saved locally. Run wire sync to publish." : "No changes."].filter(Boolean).join("\n")),
+      }),
       defineCommand({
         name: "download",
         description: "Download a source URL as local Markdown without tracking it.",

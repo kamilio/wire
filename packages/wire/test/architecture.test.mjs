@@ -92,6 +92,7 @@ test("public entry point imports without runtime capabilities", async () => {
   assert.deepEqual(JSON.parse(stdout), [
     "FileRegistry",
     "SqliteRegistry",
+    "WireMergeConflict",
     "addAsanaComment",
     "asanaChanges",
     "asanaConflicts",
@@ -273,6 +274,7 @@ test("packed package installs and runs outside the repository", async (context) 
   for (const path of [
     "bin/wire-mcp.mjs",
     "bin/wire.mjs",
+    "dist/document-shell-engine.mjs",
     "package.json",
     "node_modules/provider-asana/dist/index.js",
     "node_modules/provider-chatgpt/dist/index.js",
@@ -393,7 +395,7 @@ test("packed package installs and runs outside the repository", async (context) 
   await context.test("fake runtime", () => assert.deepEqual(consumer.viewed.data, { runtime: "Consumer document" }));
   await context.test("direct operation calls", () => {
     assert.deepEqual(consumer.writes, [["/workspace/consumer-document.md", "# page\n"]]);
-    assert.deepEqual(consumer.operations, ["attach", "create", "detach", "download", "downloadSource", "init", "listResources", "openResource", "showResource", "switchBackend", "sync", "syncAll", "unlink", "view", "watch"]);
+    assert.deepEqual(consumer.operations, ["adopt", "attach", "checkpoint", "create", "detach", "download", "downloadSource", "historyDiff", "historyLog", "historyStatus", "init", "listResources", "openResource", "resolveConflict", "showResource", "switchBackend", "sync", "syncAll", "unlink", "view", "watch"]);
   });
   await context.test("CLI embedding", async () => {
     const execution = await execFileAsync(process.execPath, ["--eval", `globalThis.WIRE_CONSUMER_CLI = "1"; await import(${JSON.stringify(join(consumerRoot, "dist", "consumer.js"))});`], { cwd: consumerRoot, env: { NO_COLOR: "1" } });
@@ -402,7 +404,7 @@ test("packed package installs and runs outside the repository", async (context) 
   await context.test("MCP construction", () => {
     assert.equal(consumer.server, "function");
     assert.equal(consumer.unchanged, true);
-    assert.deepEqual(consumer.commands, ["attach", "init", "preview", "switch-db", "sync", "download", "detach", "watch", "open", "sync-all"]);
+    assert.deepEqual(consumer.commands, ["attach", "init", "preview", "switch-db", "sync", "status", "history", "diff", "conflicts", "resolve", "shell", "download", "detach", "watch", "open", "sync-all"]);
   });
   assert.equal(consumer.executable, "function");
   assert.deepEqual(consumer.environment, []);
@@ -418,6 +420,27 @@ test("packed package installs and runs outside the repository", async (context) 
   assert.doesNotMatch(cli.stdout, /^\s+show <resource>\s+Show registered resource details without opening the source URL\./m);
   assert.doesNotMatch(cli.stdout, /--path/);
   assert.doesNotMatch(cli.stdout, /switch-db|lattice scrape/);
+  await context.test("installed shell checkpoints tracked Markdown without provider access", async () => {
+    const id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const text = "# Note\n";
+    const note = {
+      id: "notion:" + id, type: "document", identifiers: [{ service: "notion", identifier: id }],
+      urls: ["https://www.notion.so/" + id], filesystem_links: [{ path: "Note.md", role: "primary", data: {} }],
+      data: [{ namespace: "wire", key: "title", value: "Note" }, { namespace: "notion", key: "snapshot", value: { markdown: text } }], relationships: [],
+    };
+    await writeFile(join(consumerRoot, "Note.md"), text);
+    const seed = `import {initializeWire, openWireRegistry} from '@kamilio/wire';
+      const cwd = process.cwd(); await initializeWire(cwd, 'files', 'records');
+      const registry = await openWireRegistry(cwd, cwd); await registry.put(${JSON.stringify(note)});`;
+    await execFileAsync(process.execPath, ["--input-type=module", "--eval", seed], { cwd: consumerRoot, env: environment });
+    const installedWire = join(consumerRoot, "node_modules", ".bin", "wire");
+    const run = async args => JSON.parse((await execFileAsync(installedWire, [...args, "--json"], { cwd: consumerRoot, env: environment })).stdout);
+    assert.equal((await run(["shell", "Note.md", 'sed -i "s/Note/Edited/" document.md'])).changed, true);
+    assert.equal(await readFile(join(consumerRoot, "Note.md"), "utf8"), "# Edited\n");
+    assert.match((await run(["diff", "Note.md"])).diff, /-# Note\n\+# Edited/);
+    assert.equal((await run(["status", "Note.md"])).modified, true);
+    assert.ok((await run(["history", "Note.md"])).some(revision => revision.kind === "local"));
+  });
   const latticeHelp = await execFileAsync(join(consumerRoot, "node_modules", ".bin", "wire"), ["lattice", "--help"], {cwd: consumerRoot, env: environment});
   assert.doesNotMatch(latticeHelp.stdout, /scrape/);
   assert.deepEqual(await mcpTools(join(consumerRoot, "node_modules", ".bin", "wire-mcp"), consumerRoot, environment), ["attach", "init", "preview", "sync", "download", "detach", "open", "sync_all", "ashby__status", "ashby__login", "ashby__logout", "ashby__interviews", "ashby__pending", "ashby__latest", "ashby__prep", "ashby__template", "ashby__sync", "asana__status", "asana__login", "asana__logout", "asana__users__lookup", "asana__projects__list", "asana__projects__show", "asana__tasks__list", "asana__tasks__show", "asana__tasks__create", "asana__tasks__edit", "asana__tasks__move", "asana__tasks__comment", "asana__comments__edit", "chatgpt__status", "chatgpt__login", "chatgpt__logout", "gmail__status", "gmail__login", "gmail__logout", "google_docs__status", "google_docs__login", "google_docs__logout", "notion__status", "notion__login", "notion__logout", "notion__users__lookup", "slack__preview", "slack__attach", "slack__sync", "slack__status", "slack__login", "slack__logout", "slack__users__lookup", "slack__send", "slack__edit", "zoom__status", "zoom__login", "zoom__logout"]);

@@ -113,6 +113,12 @@ function normalizeBareDebugArgv(argv) {
 }
 const fixedCommandPositionals = Object.freeze({
     attach: Object.freeze({ expected: 1, name: "url" }),
+    conflicts: Object.freeze({ expected: 1, name: "resource" }),
+    diff: Object.freeze({ expected: 1, name: "resource" }),
+    history: Object.freeze({ expected: 1, name: "resource" }),
+    resolve: Object.freeze({ expected: 2, name: "choice" }),
+    shell: Object.freeze({ expected: 2, name: "script" }),
+    status: Object.freeze({ expected: 1, name: "resource" }),
     detach: Object.freeze({ expected: 1, name: "resource" }),
     download: Object.freeze({ expected: 1, name: "url" }),
     init: Object.freeze({ expected: 0, name: "" }),
@@ -282,7 +288,7 @@ function missingPositionals(argv) {
     const positional = fixedCommandPositionals[command];
     if (words.length - 1 >= positional.expected || positional.expected === 0)
         return null;
-    return Object.freeze({ commandPath: command, name: positional.name });
+    return Object.freeze({ commandPath: command, name: words.length === 1 && positional.expected === 2 ? "resource" : positional.name });
 }
 function renderMissingPositionals(argv) {
     const missing = missingPositionals(argv);

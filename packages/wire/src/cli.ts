@@ -110,6 +110,12 @@ function normalizeBareDebugArgv(argv: readonly string[]): readonly string[] {
 
 const fixedCommandPositionals = Object.freeze({
   attach: Object.freeze({ expected: 1, name: "url" }),
+  conflicts: Object.freeze({ expected: 1, name: "resource" }),
+  diff: Object.freeze({ expected: 1, name: "resource" }),
+  history: Object.freeze({ expected: 1, name: "resource" }),
+  resolve: Object.freeze({ expected: 2, name: "choice" }),
+  shell: Object.freeze({ expected: 2, name: "script" }),
+  status: Object.freeze({ expected: 1, name: "resource" }),
   detach: Object.freeze({ expected: 1, name: "resource" }),
   download: Object.freeze({ expected: 1, name: "url" }),
   init: Object.freeze({ expected: 0, name: "" }),
@@ -267,7 +273,7 @@ function missingPositionals(argv: readonly string[]): Readonly<{ commandPath: st
   if (!(command in fixedCommandPositionals)) return null;
   const positional = fixedCommandPositionals[command as keyof typeof fixedCommandPositionals];
   if (words.length - 1 >= positional.expected || positional.expected === 0) return null;
-  return Object.freeze({ commandPath: command, name: positional.name });
+  return Object.freeze({ commandPath: command, name: words.length === 1 && positional.expected === 2 ? "resource" : positional.name });
 }
 
 function renderMissingPositionals(argv: readonly string[]): boolean {

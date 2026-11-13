@@ -57,6 +57,33 @@ wire detach <resource>   # download once, then stop tracking it
 wire watch <file>        # sync a file whenever it changes
 ```
 
+## Local editing and history
+
+Use a registered document’s Markdown path, resource ID, or URL:
+
+```sh
+wire shell Notes.md 'sed -i "s/Old heading/New heading/" document.md'
+wire status Notes.md
+wire diff Notes.md
+wire history Notes.md
+wire sync Notes.md
+```
+
+The shell gets a private in-memory copy at `/document.md`. Quote the script so redirections run inside that shell. It can read and edit text with commands such as `cat`, `grep`, `sed`, and `printf`. Only the final contents of `/document.md` are saved, and only if the script succeeds and the working copy has not changed. Other virtual files disappear. No commit message or review comment is needed. A running `wire watch` can trigger sync automatically.
+
+A shell edit is published only if the provider can check that the remote revision still matches. Google Docs supports this with write access. For a Notion page, Sheet, or another provider without this check, Wire keeps the local draft and refuses the upload. You can copy the intended changes into the provider yourself.
+
+If sync reports a conflict, compare both saved versions, then choose which content to keep:
+
+```sh
+wire conflicts Notes.md
+wire diff Notes.md --from local --to remote
+wire resolve Notes.md working    # use the file after editing it yourself
+wire sync Notes.md
+```
+
+Use `local` or `remote` instead of `working` to select a saved side. Resolution updates the local file. `wire diff` defaults to the last sync versus the working copy. Pass revision IDs from `wire history` to compare older versions.
+
 For a Notion page with subpages, `wire download <url>` saves a directory with an `index.md` for each page. Open the root index and follow the local links. Ordinary links and mentions stay remote. Pages without subpages still download as one Markdown file.
 
 Run `wire --help` for the full CLI.
