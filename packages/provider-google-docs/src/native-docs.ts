@@ -9,7 +9,7 @@ function eligible(scopes: readonly string[] | undefined, requireWrite: boolean):
   return !!(has("drive") || has("drive.file") || (has("documents") && has("drive.readonly")));
 }
 
-export async function nativeDocsToken(runtime: RuntimeCapabilities, readOnly = false): Promise<string | null> {
+export async function nativeDocsGrant(runtime: RuntimeCapabilities, readOnly = false): Promise<{ token: string; driveExport: boolean } | null> {
   const optional = (key: string) => runtime.configuration.getOptional?.(key);
   for (const requireWrite of readOnly ? [true, false] : [true]) for (const name of ["GOOGLE_DOCS_TOKEN_FILE", "GOOGLE_FORMS_TOKEN_FILE"]) {
     const path = optional(name);
@@ -27,7 +27,7 @@ export async function nativeDocsToken(runtime: RuntimeCapabilities, readOnly = f
       if (!eligible(grant.scopes,requireWrite)) continue;
     }
     if (!grant.token) throw new Error("Google Docs OAuth token is missing.");
-    return grant.token;
+    return { token: grant.token, driveExport: !!grant.scopes?.some(scope => ["drive", "drive.file", "drive.readonly"].some(name => scope === "https://www.googleapis.com/auth/" + name)) };
   }
   return null;
 }
@@ -380,8 +380,8 @@ async function anchoredComments(runtime: RuntimeCapabilities, id: string, header
   return found;
 }
 
-export async function tryUploadDocBlocks(runtime: RuntimeCapabilities, documentId: string, key: string | null, tabId: string | null, remoteMarkdown: string, desiredMarkdown: string, confirmRemote: () => Promise<string>): Promise<boolean> {
-  const token = await nativeDocsToken(runtime);
+export async function tryUploadDocBlocks(runtime: RuntimeCapabilities, documentId: string, key: string | null, tabId: string | null, remoteMarkdown: string, desiredMarkdown: string, confirmRemote: (revision: string) => Promise<string>, wroteRevision?: (revision: string) => void): Promise<boolean> {
+  const token = (await nativeDocsGrant(runtime))?.token;
   if (!token) return false;
   const url = "https://docs.googleapis.com/v1/documents/" + encodeURIComponent(documentId);
   const headers = { authorization: "Bearer " + token, ...(key && { "X-Goog-Drive-Resource-Keys": documentId + "/" + key }) };
@@ -397,9 +397,13 @@ export async function tryUploadDocBlocks(runtime: RuntimeCapabilities, documentI
   if (!tab?.documentTab?.body?.content) return unsafe("missing target tab");
   const comments = await anchoredComments(runtime,documentId,headers,tab,tabs);
   const requests = plan(tab, remoteMarkdown, desiredMarkdown,comments);
-  if (await confirmRemote() !== remoteMarkdown) throw new Error("Google Docs changed before writing; sync again.");
+  if (await confirmRemote(data.revisionId) !== remoteMarkdown) throw new Error("Google Docs changed before writing; sync again.");
   if (!requests.length) return true;
   const update = await runtime.http.request(url + ":batchUpdate", { method: "POST", headers: { ...headers, "content-type": "application/json" }, redirect: "error", body: JSON.stringify({ writeControl: { requiredRevisionId: data.revisionId }, requests }) });
   if (!update.ok) throw new Error("Google Docs block update failed: HTTP " + update.status + ". Sync again to check the current revision.");
+  if (wroteRevision) {
+    const ack = await update.json() as { writeControl?: { requiredRevisionId?: string } };
+    if (typeof ack.writeControl?.requiredRevisionId === "string") wroteRevision(ack.writeControl.requiredRevisionId);
+  }
   return true;
 }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { nativeDocsToken, nativeDocMarkdownEqual, tryUploadDocBlocks } from "../../provider-google-docs/dist/native-docs.js";
+import { nativeDocsGrant, nativeDocMarkdownEqual, tryUploadDocBlocks } from "../../provider-google-docs/dist/native-docs.js";
 
 const drive="https://www.googleapis.com/auth/drive";
 
@@ -52,19 +52,19 @@ function fixture(lines,{scopes=[drive],comments=[[]],writeCode=200,retryRead=fal
 
 test("only existing write-scoped grants can use the official Docs transport",async()=>{
   const f=fixture(["one"],{scopes:["https://www.googleapis.com/auth/forms.body","https://www.googleapis.com/auth/drive.readonly"]});
-  assert.equal(await nativeDocsToken(f.runtime),null);
+  assert.equal(await nativeDocsGrant(f.runtime),null);
   assert.equal(await f.write("one","two"),false);
   assert.deepEqual(f.seen,[]);
 });
 
 test("read grants are independent and complete grants take precedence across configured sources",async()=>{
   const f=fixture(["one"],{scopes:[drive+".readonly"]});
-  assert.equal(await nativeDocsToken(f.runtime),null);
-  assert.equal(await nativeDocsToken(f.runtime,true),"testBearer");
+  assert.equal(await nativeDocsGrant(f.runtime),null);
+  assert.equal((await nativeDocsGrant(f.runtime,true))?.token,"testBearer");
   f.runtime.configuration.getOptional=k=>k==="GOOGLE_DOCS_TOKEN_FILE"?"/read":k==="GOOGLE_FORMS_TOKEN_FILE"?"/drive":undefined;
   f.runtime.filesystem.readText=async path=>JSON.stringify({token:path,scopes:[path==="/read"?drive+".readonly":drive],expiry:"2070-01-01"});
-  assert.equal(await nativeDocsToken(f.runtime,true),"/drive");
-  assert.equal(await nativeDocsToken(f.runtime),"/drive");
+  assert.equal((await nativeDocsGrant(f.runtime,true))?.token,"/drive");
+  assert.equal((await nativeDocsGrant(f.runtime))?.token,"/drive");
 });
 
 test("unscoped multi-tab export is never mapped to a default tab",async()=>{

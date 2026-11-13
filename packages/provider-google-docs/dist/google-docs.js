@@ -1,7 +1,7 @@
 import { defineService } from "wire-core";
 import { mergeDocBlocks } from "./doc-blocks.js";
 import { googleRead } from "./google-read.js";
-import { nativeDocMarkdownEqual, nativeDocsToken, tryUploadDocBlocks } from "./native-docs.js";
+import { nativeDocMarkdownEqual, nativeDocsGrant, tryUploadDocBlocks } from "./native-docs.js";
 import { inflateRawSync } from "node:zlib";
 async function cookieHeader(runtime) {
     const cookies = await runtime.cookies.loadSaved("google-docs");
@@ -670,60 +670,87 @@ export async function googleDocListMarkdown(markdown, wordExport) {
         return text && outer.has(text) && !other.has(text) ? line.slice(2) : line;
     }).join("\n");
 }
-async function fetchGoogleDocument(runtime, source) {
-    const documentId = source["document_id"] ?? source.identifier;
-    let sheetGid = null;
-    let exportUrl;
-    let label;
-    if (source["sheet_gid"] !== undefined) {
-        const gid = source["sheet_gid"];
-        const query = new URLSearchParams({ format: "csv" });
-        if (gid !== null)
+async function fetchGoogleDocument(runtime, source, previous) {
+    const id = source["document_id"] ?? source.identifier;
+    const key = resourceKey(source);
+    const gid = source["sheet_gid"];
+    const tab = documentTab(source);
+    const query = new URLSearchParams();
+    if (gid !== undefined || source.type === "presentation") {
+        const slide = source.type === "presentation";
+        query.set("format", slide ? "pptx" : "csv");
+        if (gid != null)
             query.set("gid", gid);
-        const key = resourceKey(source);
-        if (key !== null)
+        if (key)
             query.set("resourcekey", key);
-        exportUrl = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(documentId)}/export?${query}`;
-        label = "Sheets CSV export";
-        sheetGid = gid;
+        const url = `https://docs.google.com/${slide ? "presentation" : "spreadsheets"}/d/${encodeURIComponent(id)}/export?${query}`;
+        if (slide) {
+            const { bytes, title } = await googleExportBytes(runtime, url, "Slides PPTX export");
+            const markdown = slidesMarkdown(bytes);
+            return { title, markdown, data: { document_id: id, title, output_path: null, sheet_gid: null, markdown, rows: null, presentation: true } };
+        }
+        const { text, title } = await googleExport(runtime, url, "Sheets CSV export");
+        const rows = parseCsv(text), markdown = sheetMarkdown(rows);
+        return { title, markdown, data: { document_id: id, title, output_path: null, sheet_gid: gid ?? null, markdown, rows } };
     }
-    else if (source.type === "presentation") {
-        const query = new URLSearchParams({ format: "pptx" });
-        const key = resourceKey(source);
-        if (key !== null)
-            query.set("resourcekey", key);
-        exportUrl = `https://docs.google.com/presentation/d/${encodeURIComponent(documentId)}/export?${query}`;
-        label = "Slides PPTX export";
+    const grant = await nativeDocsGrant(runtime, true);
+    const read = async (url) => {
+        const response = await googleRead(runtime, url, { headers: { Authorization: "Bearer " + grant.token, ...(key && { "X-Goog-Drive-Resource-Keys": id + "/" + key }) }, redirect: "error" });
+        if (!response.ok)
+            throw new Error("Google Docs export failed: HTTP " + response.status);
+        return response;
+    };
+    let readRevision, docTitle;
+    if (grant && previous !== undefined) {
+        const url = "https://docs.googleapis.com/v1/documents/" + encodeURIComponent(id) + "?fields=documentId,title,revisionId";
+        const meta = await (await read(url)).json();
+        if (meta.documentId !== id || typeof meta.title !== "string")
+            throw new Error("Google Docs export returned unexpected document metadata");
+        readRevision = meta.revisionId;
+        docTitle = meta.title;
+        const snapshot = objectValue(previous);
+        // Only a successfully verified, revision-controlled batch sets this key.
+        // Never use Drive's version, ETag, or modifiedTime as a document revision.
+        if (readRevision && snapshot["verified_revision"] === readRevision && snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && typeof snapshot["markdown"] === "string") {
+            return { title: docTitle, markdown: snapshot["markdown"], readRevision, data: { ...snapshot, title: docTitle } };
+        }
+    }
+    let title, markdown;
+    if (grant?.driveExport && tab === null) {
+        // Drive export is unscoped and includes every tab. Never route an explicit
+        // tab, including t.0, through this endpoint.
+        const url = "https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(id);
+        if (docTitle !== undefined)
+            title = docTitle;
+        else {
+            const meta = await (await read(url + "?fields=id,name&supportsAllDrives=true")).json();
+            if (meta.id !== id || typeof meta.name !== "string")
+                throw new Error("Google Docs export returned unexpected Drive file metadata");
+            title = meta.name;
+        }
+        const format = (mime) => read(url + "/export?" + new URLSearchParams({ mimeType: mime }));
+        const text = await (await format("text/markdown")).text();
+        markdown = await googleDocListMarkdown(text, async () => new Uint8Array(await (await format("application/vnd.openxmlformats-officedocument.wordprocessingml.document")).arrayBuffer()));
     }
     else {
-        const query = new URLSearchParams({ format: "md" });
-        const key = resourceKey(source);
-        if (key !== null)
+        query.set("format", "md");
+        if (key)
             query.set("resourcekey", key);
-        const tab = documentTab(source);
-        if (tab !== null)
+        if (tab)
             query.set("tab", tab);
-        exportUrl = `https://docs.google.com/document/d/${encodeURIComponent(documentId)}/export?${query}`;
-        label = "Docs Markdown export";
+        const url = `https://docs.google.com/document/d/${encodeURIComponent(id)}/export?${query}`;
+        const exp = await googleExport(runtime, url, "Docs Markdown export", grant?.token ?? null);
+        title = exp.title;
+        markdown = await googleDocListMarkdown(exp.text, async () => {
+            const word = new URL(url);
+            word.searchParams.set("format", "docx");
+            return (await googleExportBytes(runtime, word.toString(), "Docs Word export", grant?.token ?? null)).bytes;
+        });
     }
-    if (source.type === "presentation") {
-        const exported = await googleExportBytes(runtime, exportUrl, label);
-        const markdown = slidesMarkdown(exported.bytes);
-        return Object.freeze({ title: exported.title, markdown, data: { document_id: documentId, title: exported.title, output_path: null, sheet_gid: sheetGid, markdown, rows: null, presentation: true } });
-    }
-    const token = source["sheet_gid"] === undefined ? await nativeDocsToken(runtime, true) : null;
-    const exported = await googleExport(runtime, exportUrl, label, token);
-    const rows = source["sheet_gid"] === undefined ? null : parseCsv(exported.text);
-    const markdown = rows === null ? await googleDocListMarkdown(exported.text, async () => {
-        const word = new URL(exportUrl);
-        word.searchParams.set("format", "docx");
-        return (await googleExportBytes(runtime, word.toString(), "Docs Word export", token)).bytes;
-    }) : sheetMarkdown(rows);
-    const tab = source["sheet_gid"] === undefined ? documentTab(source) : null;
-    return Object.freeze({ title: exported.title, markdown, data: { document_id: documentId, title: exported.title, output_path: null, sheet_gid: sheetGid, markdown, rows, ...(tab === null ? {} : { document_tab: tab }) } });
+    return { title, markdown, ...(readRevision ? { readRevision } : {}), data: { document_id: id, title, output_path: null, sheet_gid: null, markdown, rows: null, ...(tab === null ? {} : { document_tab: tab }) } };
 }
 async function synchronizeGoogleDocument(runtime, _url, source, base, markdown) {
-    const remote = await fetchGoogleDocument(runtime, source);
+    const remote = await fetchGoogleDocument(runtime, source, base);
     if (source.type === "presentation") {
         const baseMarkdown = objectValue(base)["markdown"];
         if (typeof baseMarkdown !== "string")
@@ -775,12 +802,16 @@ async function synchronizeGoogleDocument(runtime, _url, source, base, markdown) 
         return remote;
     const id = source["document_id"] ?? source.identifier;
     const key = resourceKey(source), tab = documentTab(source);
-    const native = await tryUploadDocBlocks(runtime, id, key, tab, remote.markdown, merged, async () => (await fetchGoogleDocument(runtime, source)).markdown);
+    let writtenRevision;
+    const native = await tryUploadDocBlocks(runtime, id, key, tab, remote.markdown, merged, async (revision) => remote.readRevision === revision ? remote.markdown : (await fetchGoogleDocument(runtime, source)).markdown, revision => { writtenRevision = revision; });
     if (!native)
         throw new Error("Google Docs uploads require an OAuth token with drive, drive.file, or both documents and drive.readonly scopes. Set GOOGLE_DOCS_TOKEN_FILE or GOOGLE_FORMS_TOKEN_FILE. Browser login supports downloads only.");
-    const uploaded = await fetchGoogleDocument(runtime, source);
+    const uploaded = await fetchGoogleDocument(runtime, source, {});
     if (!nativeDocMarkdownEqual(uploaded.markdown, merged))
         throw new Error("Google Docs save verification failed");
+    if (writtenRevision && writtenRevision === uploaded.readRevision) {
+        return { ...uploaded, data: { ...objectValue(uploaded.data), verified_revision: writtenRevision } };
+    }
     return uploaded;
 }
 export const googleDocsService = defineService({

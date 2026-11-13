@@ -1875,3 +1875,58 @@ test("Google Docs retries a throttled export but stops when Retry-After exceeds 
   await assert.rejects(fetchSource(runtime(async () => { calls++; return new Response("", { status: 429, headers: { "retry-after": "120" } }); }), url, serviceCatalog), /retry after 120 seconds/);
   assert.equal(calls, 1);
 });
+
+function docsDriveRuntime(handler) {
+  const rt = runtime(handler);
+  return { ...rt, configuration: { getOptional: key => key === "GOOGLE_FORMS_TOKEN_FILE" ? "/grant" : undefined }, filesystem: {
+    ...rt.filesystem, readText: async () => JSON.stringify({ token: "grant", expiry: "2070-01-01", scopes: ["https://www.googleapis.com/auth/drive"] })
+  } };
+}
+
+test("unscoped OAuth Docs use official Drive exports for Markdown and native list verification", async () => {
+  const formats = [];
+  const rt = docsDriveRuntime(async (input, init) => {
+    const u = new URL(input);
+    assert.equal(u.hostname, "www.googleapis.com");
+    assert.equal(init.headers.Authorization, "Bearer grant");
+    assert.equal(init.headers["X-Goog-Drive-Resource-Keys"], "doc/private");
+    assert.equal(init.redirect, "error");
+    if (!u.pathname.endsWith("/export")) return response({ id: "doc", name: "Combined tabs.md" });
+    const format = u.searchParams.get("mimeType"); formats.push(format);
+    if (format === "text/markdown") return new Response("> * Parent\nSecond tab\n");
+    return new Response(zip({ "word/document.xml": '<w:document><w:body><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/></w:numPr></w:pPr><w:r><w:t>Parent</w:t></w:r></w:p></w:body></w:document>' }));
+  });
+  const doc = await fetchSource(rt, "https://docs.google.com/document/d/doc/edit?resourcekey=private", serviceCatalog);
+  assert.equal(doc.title, "Combined tabs.md"); assert.equal(doc.markdown, "* Parent\nSecond tab\n");
+  assert.deepEqual(formats, ["text/markdown", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]);
+});
+
+test("only a verified Docs batch revision can skip later exports; native revision or tab changes invalidate it", async () => {
+  let text = "Old", rev = "rev1", exports = 0, posts = 0;
+  const rt = docsDriveRuntime(async (input, init) => {
+    const u = new URL(input);
+    if (u.pathname.endsWith("/export")) { exports++; return new Response(text); }
+    if (u.pathname.endsWith("/comments")) return response({ comments: [] });
+    if (u.pathname.endsWith(":batchUpdate")) {
+      assert.equal(JSON.parse(init.body).writeControl.requiredRevisionId, rev);
+      text = "New"; rev = "rev2"; posts++;
+      return response({ writeControl: { requiredRevisionId: rev } });
+    }
+    if (u.hostname === "www.googleapis.com") return response({ id: "doc", name: "Private" });
+    if (u.searchParams.has("fields")) return response({ documentId: "doc", title: "Private", revisionId: rev });
+    return response({ documentId: "doc", revisionId: rev, tabs: [{tabProperties:{tabId:"t.0"},documentTab:{body:{content:[
+      {startIndex:1,endIndex:text.length+2,paragraph:{paragraphStyle:{namedStyleType:"NORMAL_TEXT"},elements:[{startIndex:1,endIndex:text.length+2,textRun:{content:text+"\n"}}]}}
+    ]}}}] });
+  });
+  const url = "https://docs.google.com/document/d/doc/edit";
+  const uploaded = await synchronizeSource(rt, url, serviceCatalog, { markdown: "Old" }, "New", "local.md");
+  assert.equal(posts, 1); assert.equal(exports, 2); assert.equal(uploaded.data.verified_revision, "rev2");
+  const same = await synchronizeSource(rt, url, serviceCatalog, uploaded.data, "New", "local.md");
+  assert.equal(same.markdown, "New"); assert.equal(exports, 2);
+  const wrongTab = { ...uploaded.data, document_tab: "t.0", markdown: "Another tab" };
+  await synchronizeSource(rt, url, serviceCatalog, wrongTab, wrongTab.markdown, "local.md");
+  assert.equal(exports, 3);
+  rev = "rev3"; text = "Changed in Docs";
+  const changed = await synchronizeSource(rt, url, serviceCatalog, same.data, "New", "local.md");
+  assert.equal(changed.markdown, text); assert.equal(exports, 4); assert.equal(changed.data.verified_revision, undefined);
+});
