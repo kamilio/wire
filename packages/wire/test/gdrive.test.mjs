@@ -369,3 +369,13 @@ test("spreadsheet tables preserve displayed values, embedded breaks, blank colum
   ] }] }, { properties: { title: "Empty" } }]);
   assert.equal(md, "## Summary\n\n| Cost &#124; units |  | Notes |\n| --- | --- | --- |\n| $1,000.00 |  | [A](https://a.test/a%28b%29)+[B](https://b.test)<br>&lt;C&gt; |\n\n## Empty\n\n|  |\n| --- |\n");
 });
+
+test("legacy smart chips can span displayed titles, with distinct URLs per chip", async () => {
+  const { sheetMarkdown } = await import("../dist/adapters/sheet-markdown.js");
+  const text = "Current\nPrior";
+  const cell = { formattedValue: text, userEnteredValue: { stringValue: text }, chipRuns: [
+    { chip: { richLinkProperties: { uri: "https://example.com/current" } } }, { startIndex: 7 },
+    { startIndex: 8, chip: { richLinkProperties: { uri: "https://example.com/prior" } } },
+  ] };
+  assert.match(sheetMarkdown([{ properties: { title: "Notes" }, data: [{ rowData: [{ values: [cell] }] }] }]), /\[Current\]\(https:\/\/example.com\/current\)<br>\[Prior\]\(https:\/\/example.com\/prior\)/);
+});

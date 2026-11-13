@@ -23,6 +23,14 @@ function cellText(cell) {
     const formulaLink = /^=HYPERLINK\(\s*"([^"]+)"/i.exec(cell.userEnteredValue?.formulaValue ?? "")?.[1];
     const entered = cell.userEnteredValue?.stringValue;
     const chips = (cell.chipRuns ?? []).filter(r => r.chip?.richLinkProperties?.uri);
+    if (chips.length && entered === text) {
+        // Some older Sheets use chip start/end runs over the full displayed title.
+        const runs = cell.chipRuns;
+        let result = literal(text.slice(0, runs[0]?.startIndex ?? 0));
+        for (const [i, run] of runs.entries())
+            result += linked(text.slice(run.startIndex ?? 0, runs[i + 1]?.startIndex ?? text.length), run.chip?.richLinkProperties?.uri);
+        return result;
+    }
     if (chips.length && entered !== undefined) {
         // Chips occupy one @ in the raw string but expand to a title in the displayed value.
         // Use the text between chips as boundaries; preserve the display text on ambiguity.
