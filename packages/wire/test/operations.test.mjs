@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { access, mkdir, readFile, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, rm, stat, symlink, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
@@ -661,6 +661,71 @@ test("sync conflict leaves edited Markdown and stored snapshot unchanged", async
   assert.deepEqual(stored.data.find((item) => item.namespace === "sync" && item.key === "snapshot").value, { revision: 1, markdown: "# Remote\n" });
 });
 
+test("a sync with unchanged Markdown leaves its modification time alone", async () => {
+  const project = join(testRoot, "unchanged-mtime");
+  await mkdir(project);
+  await initializeWire(project, "sqlite", "registry.sqlite3");
+  const wire = createSynchronizingWire(project, async (_url, _source, _base, markdown) => ({ title: "Project", markdown, data: { revision: 2 } }));
+  const created = await wire.attach("https://sync.test/project", project);
+  await utimes(created.path, 1, 1);
+  await wire.sync(created.path, project);
+  assert.equal((await stat(created.path)).mtimeMs, 1000);
+});
+
+test("an edit during upload survives and the retry uses the committed Markdown as base", async () => {
+  const project = join(testRoot, "edit-during-sync");
+  await mkdir(project);
+  await initializeWire(project, "sqlite", "registry.sqlite3");
+  let remote = "# Remote\n", requests = 0;
+  const wire = createSynchronizingWire(project, async (_url, _source, base, markdown, path) => {
+    assert.equal(base.markdown, remote);
+    remote = markdown;
+    if (++requests === 1) await writeFile(path, "# More typing\n");
+    return { title: "Project", markdown: remote, data: { revision: requests + 1 } };
+  });
+  const created = await wire.attach("https://sync.test/project", project);
+  await writeFile(created.path, "# First edit\n");
+  await assert.rejects(() => wire.sync(created.path, project), /changed during sync/i);
+  assert.equal(await readFile(created.path, "utf8"), "# More typing\n");
+  assert.equal(remote, "# First edit\n");
+  await wire.sync(created.path, project);
+  assert.equal(remote, "# More typing\n");
+});
+
+test("an edit during the initial upload keeps the local Markdown and registers the created URL", async () => {
+  const project = join(testRoot, "new-file-upload-race");
+  await mkdir(project);
+  await initializeWire(project, "files", "records");
+  const path = join(project, "draft.md");
+  await writeFile(path, "# Draft\n");
+  const wire = createWire(project, async () => { throw new Error("Unexpected fetch"); }, [], async (markdown) => {
+    await writeFile(path, "# Still writing\n");
+    return { title: "Draft", markdown, url: "https://notion.test/new", data: { revision: 1 } };
+  });
+  await assert.rejects(() => wire.sync(path, project), /changed during sync/i);
+  assert.equal((await wire.showResource(path, project)).urls[0], "https://notion.test/new");
+  assert.equal(await readFile(path, "utf8"), "# Still writing\n");
+});
+
+test("an unseen remote change is not recorded as the local base when an editor saves or deletes during sync", async () => {
+  for (const deletion of [false, true]) {
+    const project = join(testRoot, `change-during-pull-${deletion}`);
+    await mkdir(project);
+    await initializeWire(project, "sqlite", "registry.sqlite3");
+    const wire = createSynchronizingWire(project, async (_url, _source, _base, _markdown, path) => {
+      if (deletion) await unlink(path);
+      else await writeFile(path, "# Local draft\n");
+      return { title: "Project", markdown: "# Remote changed too\n", data: { revision: 2 } };
+    });
+    const created = await wire.attach("https://sync.test/project", project);
+    await assert.rejects(() => wire.sync(created.path, project), /changed during sync/i);
+    if (deletion) await assert.rejects(() => readFile(created.path), { code: "ENOENT" });
+    else assert.equal(await readFile(created.path, "utf8"), "# Local draft\n");
+    const stored = await wire.showResource(created.path, project);
+    assert.equal(stored.data.find((item) => item.key === "snapshot").value.markdown, "# Remote\n");
+  }
+});
+
 test("sync-all invokes service synchronization for every registered resource", async () => {
   const project = join(testRoot, "service-sync-all");
   await mkdir(project);
@@ -764,6 +829,41 @@ test("watch two-way syncs debounced file changes and polls", async () => {
   await session.closed;
   assert.deepEqual(harness.fileWatchers.map((watcher) => watcher.closed), [true]);
   assert.deepEqual(harness.intervals.map((interval) => interval.closed), [true]);
+});
+
+test("watch serializes overlapping poll and edit events and recovers after an interrupted sync", async () => {
+  const project = join(testRoot, "watch-overlap");
+  await mkdir(project);
+  await initializeWire(project, "sqlite", "registry.sqlite3");
+  await writeFile(join(project, ".wire", "config.json"), JSON.stringify({ backend: "sqlite", path: "registry.sqlite3", watch: { debounceMs: 1 } }));
+  const harness = watchHarness();
+  const edits = [];
+  let releaseFirst;
+  const firstRequest = new Promise((resolve) => { releaseFirst = resolve; });
+  const wire = createSynchronizingWire(project, async (_url, _source, base, markdown) => {
+    edits.push(markdown);
+    if (edits.length === 1) await firstRequest;
+    return { title: "Project", markdown, data: { revision: base.revision + 1 } };
+  }, harness.capability);
+  const created = await wire.attach("https://sync.test/project", project);
+  const session = await wire.watch(created.path, project);
+  try {
+    const tick = harness.tick();
+    await waitUntil(() => edits.length === 1);
+    await writeFile(created.path, "# Next edit\n");
+    await harness.triggerFile(created.path);
+    const overlapping = [harness.tick(), harness.tick()];
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.deepEqual(edits, ["# Remote\n"]);
+    releaseFirst();
+    await Promise.all([tick, ...overlapping]);
+    assert.deepEqual(edits, ["# Remote\n", "# Next edit\n"]);
+    assert.equal(await readFile(created.path, "utf8"), "# Next edit\n");
+  } finally {
+    releaseFirst();
+    session.close();
+    await session.closed;
+  }
 });
 
 test("watch recreates deleted registered Markdown before watching", async () => {

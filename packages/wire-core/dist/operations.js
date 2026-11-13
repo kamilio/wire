@@ -120,14 +120,22 @@ export function composeWire(dependencies) {
             outputPath = await availableMarkdownPath(path, fetched.title, source.service, source.identifier, async (candidate) => await dependencies.filesystem.exists(candidate) || (await registry.findByPath(dependencies.workspace.relativePath(candidate, root))).length > 0);
         }
         const relativePath = dependencies.workspace.relativePath(outputPath, root);
-        const previous = previousMarkdown === null ? await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "" : previousMarkdown;
+        const onDisk = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
+        const previous = (previousMarkdown === undefined ? onDisk : previousMarkdown) ?? "";
+        const concurrentEdit = previousMarkdown !== undefined && onDisk !== previousMarkdown && onDisk !== fetched.markdown;
+        const retry = `Local file changed during sync: ${relativePath}. Local changes were preserved. Run wire sync again.`;
+        // Only advance the common base if the editor saw that version. Otherwise a retry
+        // could mistake remote additions that never reached disk for local deletions.
+        if (concurrentEdit && current !== null && fetched.markdown !== previousMarkdown)
+            throw new Error(retry);
         if (action === "attached" && current !== null) {
             const snapshot = current.data.find((item) => item.namespace === source.service && item.key === "snapshot").value;
             const baseMarkdown = markdownSnapshot(syncBase(source.service, snapshot, current.data));
             if (baseMarkdown !== null && previous !== baseMarkdown)
                 throw new Error(`Local edits exist for ${primaryLink(current).path}. Run \`wire sync ${primaryLink(current).path}\` before attaching this URL again.`);
         }
-        await dependencies.filesystem.writeText(outputPath, fetched.markdown);
+        if (!concurrentEdit && onDisk !== fetched.markdown)
+            await dependencies.filesystem.writeText(outputPath, fetched.markdown);
         const id = resourceId(source);
         const primary = current?.filesystem_links.find((link) => link.path === relativePath && link.role === "primary");
         const resource = {
@@ -150,13 +158,15 @@ export function composeWire(dependencies) {
             relationships: extractRelationships(fetched.markdown, id, dependencies.catalog),
         };
         const stored = await registry.put(resource);
+        if (concurrentEdit)
+            throw new Error(retry);
         const changes = changeSummary(summaryMarkdown ?? previous, summaryAfterMarkdown);
         const resolvedAction = action === "attached" && current !== null && previous !== "" ? changes.added === 0 && changes.modified === 0 && changes.removed === 0 ? "synced" : "downloaded" : action;
         return { resource: stored, path: outputPath, markdown: fetched.markdown, summary: { action: resolvedAction, ...changes, remote: url, local: outputPath } };
     };
     const attach = async (url, path) => {
         const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
-        return store(url, path, fetched, null, "attached", undefined, undefined, fetched.markdown);
+        return store(url, path, fetched, undefined, "attached", undefined, undefined, fetched.markdown);
     };
     const create = attach;
     const view = (url) => fetchSource(dependencies.fetchInput, url, dependencies.catalog);
@@ -275,7 +285,7 @@ export function composeWire(dependencies) {
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
         const resource = await resolveResource(registry, value, root, path);
         const outputPath = join(dirname(root), primaryLink(resource).path);
-        const markdown = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
+        const markdown = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
         const fetched = await fetchSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog);
         return store(resource.urls[0], dirname(outputPath), fetched, markdown, "downloaded", undefined, undefined, fetched.markdown);
     };
@@ -311,23 +321,45 @@ export function composeWire(dependencies) {
         let resolveClosed;
         const closed = new Promise((resolveClosedPromise) => { resolveClosed = resolveClosedPromise; });
         const handles = [];
-        const synchronize = async () => {
-            const result = config.mode === "download" ? await runWatchHooks(hooks, "download", await download(value, path)) : await runWatchHooks(hooks, "sync", await sync(value, path));
-            lastSyncedMarkdown = result.markdown;
+        let active = false, pending = false, poll = false, stopped = false;
+        const synchronize = async (forcePoll) => {
+            if (stopped)
+                return;
+            pending = true;
+            poll ||= forcePoll;
+            if (active)
+                return;
+            active = true;
+            try {
+                while (pending && !stopped) {
+                    const checkRemote = poll;
+                    pending = poll = false;
+                    try {
+                        if (!checkRemote && await dependencies.filesystem.readText(outputPath) === lastSyncedMarkdown)
+                            continue;
+                        const result = config.mode === "download" ? await runWatchHooks(hooks, "download", await download(value, path)) : await runWatchHooks(hooks, "sync", await sync(value, path));
+                        lastSyncedMarkdown = result.markdown;
+                    }
+                    catch (error) {
+                        console.warn(`Wire watch: ${errorMessage(error)}`);
+                    }
+                }
+            }
+            finally {
+                active = false;
+                if (stopped)
+                    resolveClosed();
+            }
         };
-        const schedule = () => {
-            if (debounce !== undefined)
-                clearTimeout(debounce);
-            debounce = setTimeout(() => {
-                debounce = undefined;
-                void synchronize();
-            }, config.debounceMs);
-        };
-        handles.push(dependencies.watch.every(config.pollMs, synchronize));
+        handles.push(dependencies.watch.every(config.pollMs, () => synchronize(true)));
         if (config.mode === "two-way") {
-            handles.push(dependencies.watch.watchFile(outputPath, async () => {
-                if (await dependencies.filesystem.readText(outputPath) !== lastSyncedMarkdown)
-                    schedule();
+            handles.push(dependencies.watch.watchFile(outputPath, () => {
+                if (debounce !== undefined)
+                    clearTimeout(debounce);
+                debounce = setTimeout(() => {
+                    debounce = undefined;
+                    void synchronize(false);
+                }, config.debounceMs);
             }));
         }
         return Object.freeze({
@@ -338,11 +370,13 @@ export function composeWire(dependencies) {
             pollMs: config.pollMs,
             closed,
             close: () => {
+                stopped = true;
                 if (debounce !== undefined)
                     clearTimeout(debounce);
                 for (const handle of handles)
                     handle.close();
-                resolveClosed();
+                if (!active)
+                    resolveClosed();
             },
         });
     };
