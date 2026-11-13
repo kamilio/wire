@@ -2,7 +2,7 @@ export type { AddMarkdown, DownloadedDocument, DownloadWriter, FetchedDocument, 
 export type { ClockCapability, ConfigurationCapability, Cookie, CookiesCapability, FilesystemCapability, GoogleTokenDocument, GoogleTokensCapability, HttpCapability, InitializedWire, OpenFilesCapability, ProcessCapability, ProcessResult, RuntimeCapabilities, SecretsCapability, SwitchedWireBackend, WatchCapability, WatchHandle, WireBackend, WireConfig, WireWatchConfig, WireWatchMode, WireWorkspace } from "./ports.js";
 export { stableJsonCompact, stableJsonPretty } from "./core/json.js";
 export { normalizeResource, resourceId } from "./core/resource.js";
-export { createServiceRegistry, defineService, defineServiceCatalog, fetchSource, parseSourceUrl, synchronizeSource, uploadSource } from "./core/source.js";
+export { WireMergeConflict, createServiceRegistry, defineService, defineServiceCatalog, fetchSource, parseSourceUrl, synchronizeSource, uploadSource } from "./core/source.js";
 export type { ServiceProvider, ServiceRegistry } from "./core/source.js";
 export { extractRelationships, formatAsanaTask, gmailMessageBody, markdownFilename, slackText, slackTitle } from "./core/transform.js";
 export { cookiesFile, createCookiesCapability, detectCookieFormat, parseCookieHeader, parseJsonCookies, parseNetscapeCookies, parsePastedCookieMetadata, parsePastedCookies, repositoryCookiesFile, serializeNetscapeCookies } from "./runtime/cookies.js";

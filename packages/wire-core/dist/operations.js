@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { FileRegistry, SqliteRegistry } from "./storage/registry.js";
+import { DocumentHistory, withHistoryLock, working } from "./storage/history.js";
+import { assertWireOwner } from "./core/owner.js";
 import { stableJsonCompact } from "./core/json.js";
 import { extractRelationships, markdownFilename } from "./core/transform.js";
 import { resourceId } from "./core/resource.js";
-import { fetchSource, parseSourceUrl, synchronizeSource, uploadSource } from "./core/source.js";
+import { fetchSource, parseSourceUrl, synchronizeSource, uploadSource, WireMergeConflict } from "./core/source.js";
 export const wireWatchHooks = Symbol("wireWatchHooks");
 async function wireRoot(dependencies, path) {
     const configured = await dependencies.workspace.configuredRoot(path, dependencies.home);
@@ -130,8 +133,19 @@ function errorMessage(error) {
         return JSON.stringify(error);
     return String(error);
 }
+export { withHistoryLock };
+export const sourceLock = (source) => source.service === "google-docs" && source.type === "document" ? "google-docs:" + String(source["document_id"] ?? source.identifier.split("#tab=")[0]) : resourceId(source);
 export function composeWire(dependencies) {
-    const store = async (url, path, fetched, previousMarkdown, action, fixedOutputPath, summaryMarkdown, summaryAfterMarkdown) => {
+    const durable = (registry) => registry instanceof FileRegistry || registry instanceof SqliteRegistry;
+    const locked = async (root, registry, key, fn) => durable(registry) ? withHistoryLock(root, key, fn) : fn();
+    const owner = async (registry, source, url) => assertWireOwner(await registry.listResources(), source, dependencies.catalog.find(s => s.matches(new URL(url))));
+    const historyFor = async (root, registry, source) => durable(registry) ? DocumentHistory.load(root, resourceId(source), dependencies.now) : null;
+    const restore = async (root, registry, source, path) => {
+        const history = await historyFor(root, registry, source);
+        await history?.recover(path, r => registry.put(r));
+        return history;
+    };
+    const store = async (url, path, fetched, previousMarkdown, action, fixedOutputPath, summaryMarkdown, summaryAfterMarkdown, history) => {
         const source = parseSourceUrl(url, dependencies.catalog);
         const root = await wireRoot(dependencies, path);
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
@@ -147,22 +161,27 @@ export function composeWire(dependencies) {
             outputPath = await availableMarkdownPath(path, fetched.title, source.service, source.identifier, async (candidate) => await dependencies.filesystem.exists(candidate) || (await registry.findByPath(dependencies.workspace.relativePath(candidate, root))).length > 0);
         }
         const relativePath = dependencies.workspace.relativePath(outputPath, root);
-        const onDisk = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
+        const onDisk = history ? await working(outputPath) : await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
+        if (!current && fixedOutputPath === undefined && onDisk !== null)
+            throw new Error("Another file appeared at the proposed attachment path; retry attach.");
         const previous = (previousMarkdown === undefined ? onDisk : previousMarkdown) ?? "";
         const concurrentEdit = previousMarkdown !== undefined && onDisk !== previousMarkdown && onDisk !== fetched.markdown;
         const retry = `Local file changed during sync: ${relativePath}. Local changes were preserved. Run wire sync again.`;
         // Only advance the common base if the editor saw that version. Otherwise a retry
         // could mistake remote additions that never reached disk for local deletions.
-        if (concurrentEdit && current !== null && fetched.markdown !== previousMarkdown)
+        if (concurrentEdit && current !== null && fetched.markdown !== previousMarkdown) {
+            if (history) {
+                await history.observe(fetched);
+                await history.save();
+            }
             throw new Error(retry);
+        }
         if (action === "attached" && current !== null) {
             const snapshot = current.data.find((item) => item.namespace === source.service && item.key === "snapshot").value;
-            const baseMarkdown = markdownSnapshot(syncBase(source.service, snapshot, current.data));
+            const baseMarkdown = markdownSnapshot(syncBase(source.service, snapshot, current.data)) ?? (history?.refs.base ? await history.text(history.refs.base) : null);
             if (baseMarkdown !== null && previous !== baseMarkdown)
                 throw new Error(`Local edits exist for ${primaryLink(current).path}. Run \`wire sync ${primaryLink(current).path}\` before attaching this URL again.`);
         }
-        if (!concurrentEdit && onDisk !== fetched.markdown)
-            await dependencies.filesystem.writeText(outputPath, fetched.markdown);
         const id = resourceId(source);
         const primary = current?.filesystem_links.find((link) => link.path === relativePath && link.role === "primary");
         const resource = {
@@ -184,7 +203,51 @@ export function composeWire(dependencies) {
             ],
             relationships: extractRelationships(fetched.markdown, id, dependencies.catalog),
         };
-        const stored = await registry.put(resource);
+        let stored;
+        if (history) {
+            if (history.refs.conflict)
+                throw new Error("Unresolved Wire conflict. Review the saved revisions and use wire resolve.");
+            const currentBase = history.refs.base;
+            if (onDisk !== null && currentBase !== null && onDisk !== await history.text(currentBase) && (previousMarkdown === undefined || previousMarkdown === onDisk))
+                await history.captureLocal(onDisk);
+            const draft = history.refs.draft;
+            let next;
+            if (currentBase === null) {
+                const input = previousMarkdown === undefined || previousMarkdown === null || previousMarkdown === fetched.markdown ? null : await history.revision("local", previousMarkdown, []);
+                next = await history.revision("attach", fetched.markdown, [input]);
+            }
+            else if (draft !== null && draft !== currentBase && action !== "downloaded") {
+                const remote = history.refs.remote;
+                next = await history.revision(remote !== null && remote !== currentBase ? "merge" : "local", fetched.markdown, remote !== null && remote !== currentBase ? [draft, remote] : [draft]);
+            }
+            else
+                next = await history.observe(fetched);
+            const refs = { ...history.refs, base: next, remote: next, draft: null, strict: false, resolution: null, resolutionParent: null, conflict: null };
+            // A confirmed push of the exact draft the editor already saw is safe to
+            // acknowledge even if another save arrived while it was in flight.
+            if (concurrentEdit && previousMarkdown === fetched.markdown) {
+                await history.publish(outputPath, onDisk ?? "", onDisk ?? "", refs, resource, r => registry.put(r), true);
+                stored = await registry.get(resource.id);
+            }
+            else if (concurrentEdit) {
+                if (current !== null)
+                    throw new Error(retry);
+                refs.base = previousMarkdown == null ? next : await history.revision("local", previousMarkdown, []);
+                refs.resolution = fetched;
+                refs.resolutionParent = next;
+                await history.publish(outputPath, onDisk ?? "", onDisk ?? "", refs, resource, r => registry.put(r), true);
+                stored = await registry.get(resource.id);
+            }
+            else {
+                await history.publish(outputPath, onDisk, fetched.markdown, refs, resource, r => registry.put(r));
+                stored = await registry.get(resource.id);
+            }
+        }
+        else {
+            if (!concurrentEdit && onDisk !== fetched.markdown)
+                await dependencies.filesystem.writeText(outputPath, fetched.markdown);
+            stored = await registry.put(resource);
+        }
         if (concurrentEdit)
             throw new Error(retry);
         const changes = changeSummary(summaryMarkdown ?? previous, summaryAfterMarkdown);
@@ -192,8 +255,30 @@ export function composeWire(dependencies) {
         return { resource: stored, path: outputPath, markdown: fetched.markdown, summary: { action: resolvedAction, ...changes, remote: url, local: outputPath } };
     };
     const attach = async (url, path) => {
-        const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
-        return store(url, path, fetched, undefined, "attached", undefined, undefined, fetched.markdown);
+        return attachAt(url, path);
+    };
+    const attachAt = async (url, path, fixed) => {
+        const root = await wireRoot(dependencies, path), registry = await dependencies.workspace.openRegistry(root, dependencies.home);
+        const source = parseSourceUrl(url, dependencies.catalog);
+        return locked(root, registry, sourceLock(source), async () => {
+            await owner(registry, source, url);
+            const h = await restore(root, registry, source);
+            const current = findResource(await registry.listResources(), source, dependencies.catalog);
+            if (current && fixed !== undefined && join(dirname(root), primaryLink(current).path) !== fixed)
+                throw new Error("This URL is already attached at another path.");
+            if (fixed !== undefined && (await registry.findByPath(dependencies.workspace.relativePath(fixed, root))).some(r => r.id !== resourceId(source)))
+                throw new Error("This file already has another registration.");
+            if (h && current)
+                await h.seed(markdownSnapshot(current.data.find(i => i.namespace === source.service && i.key === "snapshot")?.value ?? null));
+            if (h?.refs.conflict)
+                throw new Error("Unresolved Wire conflict. Use wire resolve.");
+            if (h?.refs.strict)
+                throw new Error("Sync the pending Wire draft before attaching again.");
+            const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
+            if (fixed !== undefined && (h ? await working(fixed) : await dependencies.filesystem.readText(fixed)) !== fetched.markdown)
+                throw new Error("Cannot adopt: the existing file differs from the remote document.");
+            return store(url, path, fetched, fixed === undefined ? undefined : fetched.markdown, "attached", fixed, undefined, fetched.markdown, h);
+        });
     };
     const create = attach;
     const view = (url) => fetchSource(dependencies.fetchInput, url, dependencies.catalog);
@@ -283,31 +368,43 @@ export function composeWire(dependencies) {
             throw new Error(`Resource path not found: ${value}`);
         return registry.get(value);
     };
-    const sync = async (value, path) => {
+    const syncInner = async (value, path) => {
         const candidatePath = resolve(path, value);
         const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
         const relativePath = dependencies.workspace.relativePath(candidatePath, root);
         const pathResources = await registry.findByPath(relativePath);
         if (pathResources.length === 0 && await dependencies.filesystem.exists(candidatePath)) {
-            const markdown = await dependencies.filesystem.readText(candidatePath);
+            const markdown = durable(registry) ? await working(candidatePath) : await dependencies.filesystem.readText(candidatePath);
+            if (markdown === null)
+                throw new Error("Cannot upload a missing Markdown file.");
             const uploaded = await uploadSource(dependencies.fetchInput, dependencies.catalog, markdown, candidatePath);
-            return store(uploaded.url, dirname(candidatePath), uploaded, markdown, "uploaded", candidatePath, undefined, uploaded.markdown);
+            const source = parseSourceUrl(uploaded.url, dependencies.catalog);
+            return locked(root, registry, sourceLock(source), async () => store(uploaded.url, dirname(candidatePath), uploaded, markdown, "uploaded", candidatePath, undefined, uploaded.markdown, await restore(root, registry, source)));
         }
-        const resource = await resolveResource(registry, value, root, path);
+        let resource = await resolveResource(registry, value, root, path);
         const outputPath = join(dirname(root), primaryLink(resource).path);
         const outputDirectory = dirname(outputPath);
         const source = legacyDefaultTab(resource, dependencies.catalog) ?? parseSourceUrl(resource.urls[0], dependencies.catalog);
+        await owner(registry, source, resource.urls[0]);
+        const history = await restore(root, registry, source, outputPath);
+        resource = await registry.get(resource.id);
+        if (history?.refs.conflict)
+            throw new Error("Unresolved Wire conflict. Inspect wire conflicts and use wire resolve.");
         const snapshot = resource.data.find((item) => item.namespace === source.service && item.key === "snapshot")?.value;
         if (snapshot === undefined)
             throw new Error(`Missing saved snapshot for ${primaryLink(resource).path}. Keep the local file and download a separate copy to reconcile before syncing.`);
         if (!(await dependencies.filesystem.exists(outputPath)))
             throw new Error(`Linked file missing: ${primaryLink(resource).path} - restore it or run wire detach`);
-        const markdown = await dependencies.filesystem.readText(outputPath);
-        const base = syncBase(source.service, snapshot, resource.data);
-        const baseMarkdown = markdownSnapshot(base);
+        const markdown = history ? await working(outputPath) : await dependencies.filesystem.readText(outputPath);
+        if (markdown === null)
+            throw new Error("Linked file missing: " + outputPath);
+        const base = history?.refs.resolution ? storedSnapshot(history.refs.resolution) : syncBase(source.service, snapshot, resource.data);
+        if (history)
+            await history.seed(markdownSnapshot(snapshot));
+        const baseMarkdown = markdownSnapshot(base) ?? (history?.refs.base ? await history.text(history.refs.base) : null);
         const localChanged = baseMarkdown !== null && markdown !== baseMarkdown;
-        if (localChanged && !serviceCanSynchronize(resource.urls[0], dependencies.catalog))
+        if (localChanged && !history?.refs.strict && !serviceCanSynchronize(resource.urls[0], dependencies.catalog))
             throw new Error(`${source.service} is download-only and the local file has edits. Run \`wire download ${primaryLink(resource).path}\` to discard them.`);
         if (source.service === "google-docs" && source["document_tab"] === "t.0") {
             const registered = findResource(await registry.listResources(), source, dependencies.catalog);
@@ -321,33 +418,108 @@ export function composeWire(dependencies) {
                 await registry.rekey(registered, { service: source.service, identifier: source.identifier });
             }
         }
-        const fetched = await synchronizeSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog, base, markdown, outputPath);
+        if (history && (localChanged || history.refs.draft !== null))
+            await history.captureLocal(markdown);
+        const strict = history?.refs.strict === true && localChanged;
+        if (history && strict && source.service !== "notion" && !(source.service === "google-docs" && source.type === "document")) {
+            const remote = await fetchSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog);
+            await history.observe(remote);
+            await history.save();
+            if (remote.markdown !== markdown)
+                throw new Error("This provider cannot conditionally publish a Wire draft. The local revision was kept. Apply it in the provider, then sync to verify.");
+            return store(resource.urls[0], outputDirectory, remote, markdown, "synced", undefined, undefined, remote.markdown, history);
+        }
+        const observed = {};
+        let observations = Promise.resolve();
+        const fork = history?.refs.resolution ? history.refs.resolutionParent : history?.refs.base;
+        let fetched;
+        try {
+            fetched = await synchronizeSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog, base, markdown, outputPath, remote => {
+                observed.remote = remote;
+                observations = observations.then(async () => { if (history) {
+                    await history.observe(remote);
+                    await history.save();
+                } });
+                return observations;
+            }, strict);
+            await observations;
+        }
+        catch (error) {
+            await observations;
+            if (history && error instanceof WireMergeConflict && observed.remote && history.refs.draft && history.refs.remote) {
+                if (fork) {
+                    history.refs.conflict = { base: fork, local: history.refs.draft, remote: history.refs.remote };
+                    history.refs.resolution = observed.remote;
+                    history.refs.resolutionParent = history.refs.remote;
+                    await history.save();
+                    throw new Error("Unresolved Wire conflict. " + error.message + " Inspect wire conflicts and use wire resolve.", { cause: error });
+                }
+            }
+            throw error;
+        }
+        if (history && !observed.remote && fetched.markdown !== markdown) {
+            await history.observe(fetched);
+            await history.save();
+        }
         const uploaded = fetched.wroteRemote ?? (localChanged && fetched.markdown !== baseMarkdown);
         const action = uploaded ? "uploaded" : fetched.markdown === markdown || (localChanged && fetched.markdown === baseMarkdown) ? "synced" : "downloaded";
-        return store(resource.urls[0], outputDirectory, fetched, markdown, action, undefined, action === "uploaded" && baseMarkdown !== null ? baseMarkdown : undefined, action === "uploaded" ? markdown : fetched.markdown);
+        return store(resource.urls[0], outputDirectory, fetched, markdown, action, undefined, action === "uploaded" && baseMarkdown !== null ? baseMarkdown : undefined, action === "uploaded" ? markdown : fetched.markdown, history);
     };
-    const download = async (value, path) => {
+    const underResourceLock = async (value, path, fn) => {
+        const candidate = resolve(path, value);
+        const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidate) ? candidate : path), registry = await dependencies.workspace.openRegistry(root, dependencies.home);
+        const ids = await registry.findByPath(dependencies.workspace.relativePath(candidate, root));
+        const key = !ids.length && await dependencies.filesystem.exists(candidate) ? "path:" + dependencies.workspace.relativePath(candidate, root) : sourceLock(parseSourceUrl((await resolveResource(registry, value, root, path)).urls[0], dependencies.catalog));
+        return locked(root, registry, key, fn);
+    };
+    const sync = (v, p) => underResourceLock(v, p, () => syncInner(v, p));
+    const downloadInner = async (value, path) => {
         const candidatePath = resolve(path, value);
         const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
         const resource = await resolveResource(registry, value, root, path);
         const outputPath = join(dirname(root), primaryLink(resource).path);
-        const markdown = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
+        const source = parseSourceUrl(resource.urls[0], dependencies.catalog);
+        await owner(registry, source, resource.urls[0]);
+        const h = await restore(root, registry, source, outputPath);
+        await h?.seed(markdownSnapshot(resource.data.find(i => i.namespace === source.service && i.key === "snapshot")?.value ?? null));
+        if (h?.refs.conflict)
+            throw new Error("Unresolved Wire conflict. Use wire resolve.");
+        const markdown = h ? await working(outputPath) : await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
+        if (h?.refs.strict && h.refs.draft)
+            throw new Error("Sync the pending Wire draft before downloading over it.");
         const fetched = await fetchSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog);
-        return store(resource.urls[0], dirname(outputPath), fetched, markdown, "downloaded", undefined, undefined, fetched.markdown);
+        return store(resource.urls[0], dirname(outputPath), fetched, markdown, "downloaded", undefined, undefined, fetched.markdown, h);
     };
-    const detach = async (value, path) => {
+    const download = (v, p) => underResourceLock(v, p, () => downloadInner(v, p));
+    const detachInner = async (value, path) => {
         const candidatePath = resolve(path, value);
         const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
         const resource = await resolveResource(registry, value, root, path);
         const outputPath = join(dirname(root), primaryLink(resource).path);
         const previous = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
+        const source = parseSourceUrl(resource.urls[0], dependencies.catalog);
+        await owner(registry, source, resource.urls[0]);
+        const h = await restore(root, registry, source, outputPath);
+        if (h?.refs.conflict || h?.refs.strict)
+            throw new Error("Resolve and sync the Wire draft before detaching.");
         const fetched = await fetchSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog);
-        await dependencies.filesystem.writeText(outputPath, fetched.markdown);
+        if (h) {
+            const onDisk = await working(outputPath);
+            if (onDisk !== null && onDisk !== previous)
+                throw new Error("Local file changed during detach; retry.");
+            if (onDisk !== null)
+                await h.captureLocal(onDisk);
+            const next = await h.observe(fetched);
+            await h.publish(outputPath, onDisk, fetched.markdown, { ...h.refs, base: next, remote: next, draft: null }, null, r => registry.put(r));
+        }
+        else
+            await dependencies.filesystem.writeText(outputPath, fetched.markdown);
         await registry.delete(resource.id);
         return { resource, path: outputPath, markdown: fetched.markdown, summary: { action: "detached", ...changeSummary(previous, fetched.markdown), remote: resource.urls[0], local: outputPath } };
     };
+    const detach = (v, p) => underResourceLock(v, p, () => detachInner(v, p));
     const unlink = detach;
     const runWatchHooks = async (hooks, command, result) => {
         let current = result;
@@ -466,8 +638,67 @@ export function composeWire(dependencies) {
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
         return resolveResource(registry, value, root, path);
     };
+    const withDocument = async (v, p, run) => underResourceLock(v, p, async () => {
+        const candidate = resolve(p, v), root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidate) ? candidate : p);
+        const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
+        let r = await resolveResource(registry, v, root, p);
+        const path = join(dirname(root), primaryLink(r).path);
+        const source = parseSourceUrl(r.urls[0], dependencies.catalog);
+        const h = await restore(root, registry, source, path);
+        if (!h)
+            throw new Error("This registry does not provide durable document history.");
+        r = await registry.get(r.id);
+        await h.seed(markdownSnapshot(r.data.find(i => i.namespace === source.service && i.key === "snapshot")?.value ?? null));
+        return run(h, path, registry, r);
+    });
+    const historyStatus = (v, p) => withDocument(v, p, (h, path) => h.status(path));
+    const historyLog = (v, p) => withDocument(v, p, async (h) => h.refs.revisions.map(({ blob: _, ...entry }) => entry).reverse());
+    const historyDiff = (v, p, from = "base", to = "working") => withDocument(v, p, async (h, path) => {
+        const current = await working(path);
+        const text = async (ref) => {
+            if (ref === "working") {
+                if (current === null)
+                    throw new Error("Linked Markdown is missing.");
+                return current;
+            }
+            const id = ref === "base" ? (h.refs.conflict?.base ?? h.refs.base) : ref === "remote" ? h.refs.remote : ref === "local" ? h.refs.conflict?.local ?? h.refs.draft ?? h.refs.base : ref;
+            if (!id)
+                throw new Error("No saved " + ref + " revision.");
+            return h.text(id);
+        };
+        return { from, to, before: await text(from), after: await text(to), token: h.token() };
+    });
+    const checkpoint = (v, p, expected, markdown, token) => withDocument(v, p, async (h, path, reg) => {
+        if (await working(path) !== expected || token !== h.token())
+            throw new Error("Stale shell edit. The document changed; rerun the command.");
+        if (expected !== markdown) {
+            const prior = await h.captureLocal(expected);
+            const draft = await h.revision("local", markdown, [prior]);
+            await h.publish(path, expected, markdown, { ...h.refs, draft, strict: true }, null, r => reg.put(r));
+        }
+        return h.status(path);
+    });
+    const resolveConflict = (v, p, choice) => withDocument(v, p, async (h, path, reg) => {
+        const conflict = h.refs.conflict;
+        if (!conflict || !h.refs.resolution)
+            throw new Error("No saved conflict for this document.");
+        const current = await working(path);
+        if (current === null)
+            throw new Error("Linked Markdown is missing.");
+        const local = await h.text(conflict.local), remote = await h.text(conflict.remote);
+        if (choice !== "working" && current !== local)
+            throw new Error("Working file changed since the conflict. Choose working to retain those edits.");
+        if (!["working", "local", "remote"].includes(choice))
+            throw new Error("Choose local, remote or working.");
+        const next = choice === "working" ? current : choice === "local" ? local : remote;
+        const draft = await h.revision("resolve", next, [conflict.local, conflict.remote]);
+        await h.publish(path, current, next, { ...h.refs, draft, strict: true, conflict: null }, null, r => reg.put(r));
+        return h.status(path);
+    });
     return Object.freeze({
         attach,
+        adopt: (url, path) => attachAt(url, dirname(resolve(path)), resolve(path)),
+        historyStatus, historyDiff, historyLog, checkpoint, resolveConflict,
         create,
         view,
         downloadSource,

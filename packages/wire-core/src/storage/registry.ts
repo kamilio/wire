@@ -298,9 +298,15 @@ export class FileRegistry implements Registry {
     }
     const tempPath = join(this.path, randomUUID());
     const handle = await open(tempPath, "wx", 0o600);
-    await handle.writeFile(`${stableJsonPretty(normalized)}\n`, "utf8");
-    await handle.close();
-    await rename(tempPath, this.resourcePath(normalized.id));
+    try {
+      try { await handle.writeFile(`${stableJsonPretty(normalized)}\n`, "utf8"); await handle.sync(); }
+      finally { await handle.close(); }
+      await rename(tempPath, this.resourcePath(normalized.id));
+      const directory = await open(this.path, "r");
+      try { await directory.sync(); } finally { await directory.close(); }
+    } finally {
+      await unlink(tempPath).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
+    }
     return normalized;
   }
 

@@ -1,4 +1,5 @@
-import type { FetchedDocument, Resource, ServiceCatalog } from "./core/model.js";
+import { withHistoryLock, type HistoryDiff, type HistoryEntry, type HistoryStatus } from "./storage/history.js";
+import type { FetchedDocument, Resource, ServiceCatalog, Source } from "./core/model.js";
 import type { InitializedWire, SwitchedWireBackend, WatchCapability, WireBackend, WireWatchConfig, WireWorkspace } from "./ports.js";
 export type { WireWorkspace } from "./ports.js";
 export type WireFilesystem = Readonly<{
@@ -52,6 +53,12 @@ export type WireWatchSyncHook = (command: WireWatchSyncCommand, result: WireResu
 export declare const wireWatchHooks: unique symbol;
 export type Wire = Readonly<{
     attach(url: string, path: string): Promise<WireResult>;
+    adopt(url: string, existingFilePath: string): Promise<WireResult>;
+    historyStatus(value: string, path: string): Promise<HistoryStatus>;
+    historyLog(value: string, path: string): Promise<readonly HistoryEntry[]>;
+    historyDiff(value: string, path: string, from?: string, to?: string): Promise<HistoryDiff>;
+    resolveConflict(value: string, path: string, choice: "local" | "remote" | "working"): Promise<HistoryStatus>;
+    checkpoint(value: string, path: string, expected: string, markdown: string, token: string): Promise<HistoryStatus>;
     create(url: string, path: string): Promise<WireResult>;
     view(url: string): Promise<FetchedDocument>;
     downloadSource(url: string, path: string): Promise<WireResult>;
@@ -67,5 +74,7 @@ export type Wire = Readonly<{
     init(path: string, backend: WireBackend, registryPath: string): Promise<InitializedWire>;
     switchBackend(path: string): Promise<SwitchedWireBackend>;
 }>;
+export { withHistoryLock };
+export declare const sourceLock: (source: Source) => string;
 export declare function composeWire<FetchInput>(dependencies: WireDependencies<FetchInput>): Wire;
 //# sourceMappingURL=operations.d.ts.map

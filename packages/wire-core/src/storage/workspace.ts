@@ -24,6 +24,11 @@ function canonicalPath(path: string): string {
   return join(canonicalPath(dirname(resolved)), basename(resolved));
 }
 
+function protectHistory(root: string, path: string) {
+  const history = canonicalPath(join(root, "history")), registry = canonicalPath(path);
+  if (registry === history || registry.startsWith(history + sep) || history.startsWith(registry + sep)) throw new Error("The Wire registry must not overlap private document history.");
+}
+
 export async function discoverWireRoot(path: string, home: string): Promise<string> {
   const homePath = canonicalPath(home);
   let currentPath = canonicalPath(path);
@@ -55,6 +60,7 @@ export async function openWireRegistry(path: string, home: string): Promise<Regi
   const wireRoot = await discoverWireRoot(path, home);
   const config = await loadWireConfig(wireRoot);
   const registryPath = join(wireRoot, config.path);
+  protectHistory(wireRoot, registryPath);
   if (config.backend === "sqlite") return new SqliteRegistry(registryPath);
   if (config.backend === "files") return new FileRegistry(registryPath);
   throw new Error(config.backend);
@@ -63,6 +69,7 @@ export async function openWireRegistry(path: string, home: string): Promise<Regi
 export async function initializeWire(path: string, backend: WireBackend, registryPath: string): Promise<InitializedWire> {
   const wireRoot = join(canonicalPath(path), ".wire");
   await mkdir(wireRoot, { recursive: true });
+  protectHistory(wireRoot, join(wireRoot, registryPath));
   const configPath = join(wireRoot, "config.json");
   if (existsSync(configPath) && statSync(configPath).isFile()) {
     const existing = await loadWireConfig(wireRoot);
@@ -82,6 +89,7 @@ export async function switchWireBackend(path: string, home: string): Promise<Swi
   const wireRoot = await discoverWireRoot(path, home);
   const config = await loadWireConfig(wireRoot);
   const fromPath = join(wireRoot, config.path);
+  protectHistory(wireRoot, fromPath);
   const source = config.backend === "sqlite" ? new SqliteRegistry(fromPath) : new FileRegistry(fromPath);
   const resources = await source.listResources();
   const to = config.backend === "sqlite" ? "files" : "sqlite";
@@ -89,6 +97,7 @@ export async function switchWireBackend(path: string, home: string): Promise<Swi
   const toPath = join(wireRoot, targetRelativePath);
   const canonicalSource = canonicalPath(fromPath);
   const canonicalTarget = canonicalPath(toPath);
+  protectHistory(wireRoot, toPath);
   if (canonicalSource === canonicalTarget || canonicalSource.startsWith(`${canonicalTarget}${sep}`) || canonicalTarget.startsWith(`${canonicalSource}${sep}`)) {
     throw new Error(`Cannot switch storage backends because registry paths overlap: ${fromPath} and ${toPath}. Move the source registry and update config.json before switching.`);
   }

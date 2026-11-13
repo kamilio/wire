@@ -11,6 +11,9 @@ export declare function defineServiceCatalog<FetchInput>(services: readonly Serv
 export declare function createServiceRegistry<FetchInput>(): ServiceRegistry<FetchInput>;
 export declare function parseSourceUrl<FetchInput>(value: string, catalog: ServiceCatalog<FetchInput>): Source;
 export declare function fetchSource<FetchInput>(input: FetchInput, value: string, catalog: ServiceCatalog<FetchInput>): Promise<FetchedDocument>;
-export declare function synchronizeSource<FetchInput>(input: FetchInput, value: string, catalog: ServiceCatalog<FetchInput>, base: import("./model.js").JsonValue, markdown: string, markdownPath: string): Promise<SynchronizedDocument>;
+export declare function synchronizeSource<FetchInput>(input: FetchInput, value: string, catalog: ServiceCatalog<FetchInput>, base: import("./model.js").JsonValue, markdown: string, markdownPath: string, observeRemote?: (remote: FetchedDocument) => void | Promise<void>, requireConditionalWrite?: boolean): Promise<SynchronizedDocument>;
 export declare function uploadSource<FetchInput>(input: FetchInput, catalog: ServiceCatalog<FetchInput>, markdown: string, markdownPath: string): Promise<UploadedDocument>;
+/** Concurrent changes that the provider cannot combine without a user decision. */
+export declare class WireMergeConflict extends Error {
+}
 //# sourceMappingURL=source.d.ts.map

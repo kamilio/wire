@@ -57,11 +57,13 @@ export function synchronizeSource<FetchInput>(
   base: import("./model.js").JsonValue,
   markdown: string,
   markdownPath: string,
+  observeRemote?: (remote: FetchedDocument) => void | Promise<void>,
+  requireConditionalWrite?: boolean,
 ): Promise<SynchronizedDocument> {
   const url = new URL(value);
   const service = serviceForUrl(url, catalog);
   const source = service.parse(url);
-  return service.synchronize === undefined ? service.fetch(input, value, source) : service.synchronize(input, value, source, base, markdown, markdownPath);
+  return service.synchronize === undefined ? service.fetch(input, value, source) : service.synchronize(input, value, source, base, markdown, markdownPath, observeRemote, requireConditionalWrite);
 }
 
 export function uploadSource<FetchInput>(
@@ -70,7 +72,14 @@ export function uploadSource<FetchInput>(
   markdown: string,
   markdownPath: string,
 ): Promise<UploadedDocument> {
+  const header = /^(?:\uFEFF)?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(markdown)?.[1];
+  if (header && /^google_doc:/m.test(header) && /^google_drive_folder:/m.test(header)) {
+    throw new Error("This file is already bound to Google Drive. Use its existing sync owner.");
+  }
   const service = catalog.find((item) => item.name === "notion" && item.upload !== undefined);
   if (service === undefined || service.upload === undefined) throw new Error("No Notion upload service configured");
   return service.upload(input, markdown, markdownPath);
 }
+
+/** Concurrent changes that the provider cannot combine without a user decision. */
+export class WireMergeConflict extends Error {}

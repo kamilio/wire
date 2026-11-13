@@ -70,11 +70,12 @@ export type DownloadedDocument = FetchedDocument & Readonly<{
 
 export type Service<FetchInput = never> = Readonly<{
   name: string;
+  owner?: string;
   matches(url: URL): boolean;
   parse(url: URL): Source;
   fetch(input: FetchInput, url: string, source: Source): Promise<FetchedDocument>;
   download?(input: FetchInput, url: string, source: Source, write: DownloadWriter, addMarkdown?: AddMarkdown): Promise<DownloadedDocument | null>;
-  synchronize?(input: FetchInput, url: string, source: Source, base: JsonValue, markdown: string, markdownPath: string): Promise<SynchronizedDocument>;
+  synchronize?(input: FetchInput, url: string, source: Source, base: JsonValue, markdown: string, markdownPath: string, observeRemote?: (remote: FetchedDocument) => void | Promise<void>, requireConditionalWrite?: boolean): Promise<SynchronizedDocument>;
   upload?(input: FetchInput, markdown: string, markdownPath: string): Promise<UploadedDocument>;
 }>;
 
