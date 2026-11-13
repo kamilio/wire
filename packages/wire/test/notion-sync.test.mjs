@@ -699,6 +699,16 @@ test("notion sync refuses conflicting body edits before writing anything", async
 });
 
 
+test("Notion submits no operation when persisting the observed parent fails", async () => {
+  const submitted = [], runtime = notionRuntime(remoteTree("Original", "Page"), submitted);
+  await assert.rejects(synchronizeNotionDocument(runtime, "https://www.notion.so/" + notionSource.identifier, notionSource,
+    { markdown: "# Page\n\nOriginal" }, "# Page\n\nLocal", "page.md", async () => {
+      await Promise.resolve();
+      throw new Error("history write failed");
+    }), /history write failed/);
+  assert.equal(submitted.length, 0);
+});
+
 test("Notion strict pushes cannot overwrite a same-block edit made after the read", async () => {
   for (const requireConditionalWrite of [true, false]) {
     const page = remoteTree("Original", "Page");

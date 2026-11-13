@@ -2075,6 +2075,20 @@ test("Docs replans once after a known stale revision and never replays an uncert
   }
 });
 
+test("Docs submits no batch if the observed revision could not be saved", async () => {
+  const rt = docsDriveRuntime(async input => {
+    const u = new URL(input);
+    if (u.searchParams.has("fields")) return response({documentId:"doc",title:"Test",revisionId:"1"});
+    assert.ok(u.pathname.endsWith("/export"));
+    return new Response("Before");
+  });
+  await assert.rejects(synchronizeSource(rt, "https://docs.google.com/document/d/doc/edit", serviceCatalog,
+    {markdown:"Before"}, "After", "doc.md", async () => {
+      await Promise.resolve();
+      throw new Error("history write failed");
+    }, true), /history write failed/);
+});
+
 test("Docs receipts distinguish an empty native plan from a successful batch without a revision receipt", async () => {
   let text = "Fruit.", posts = 0;
   const rt = docsDriveRuntime(async (input, init) => {

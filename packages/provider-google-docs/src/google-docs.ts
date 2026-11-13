@@ -784,7 +784,7 @@ async function fetchGoogleDocument(runtime: RuntimeCapabilities, source: Source,
   return { title, markdown, ...(readRevision ? { readRevision } : {}), data: { document_id: id, title, output_path: null, sheet_gid: null, markdown, rows: null, ...(duplicateIdentity ? {duplicate_identity:duplicateIdentity,verified_revision:readRevision!} : {}), ...(markdown.includes("data:image/") ? { original_images: true } : {}), ...(readRevision ? {position_revision: readRevision} : {}), ...(legacyImages === exported && readRevision ? {verified_revision: readRevision} : {}), ...(tab === null ? {} : { document_tab: tab }) } };
 }
 
-async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, url: string, source: Source, base: JsonValue, markdown: string, observeRemote?: (remote: FetchedDocument) => void, requireConditionalWrite = false, retryStaleRevision = true): Promise<SynchronizedDocument> {
+async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, url: string, source: Source, base: JsonValue, markdown: string, observeRemote?: (remote: FetchedDocument) => void | Promise<void>, requireConditionalWrite = false, retryStaleRevision = true): Promise<SynchronizedDocument> {
   const verifyRevision = observeRemote !== undefined || requireConditionalWrite;
   let nativeDocument: NativeDocument | undefined;
   const retry = () => synchronizeGoogleDocument(runtime, url, source, base, markdown, observeRemote, requireConditionalWrite, false);
@@ -795,7 +795,7 @@ async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, url: stri
     if (retryStaleRevision && error instanceof StaleDocRevision && verifyRevision) return retry();
     throw error;
   }
-  observeRemote?.(remote);
+  await observeRemote?.(remote);
   if (source.type === "presentation") {
     const baseMarkdown = objectValue(base)["markdown"];
     if (typeof baseMarkdown !== "string") throw new Error("Google sync base must include markdown");

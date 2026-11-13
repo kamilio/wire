@@ -1182,7 +1182,7 @@ function splitTitle(markdown: string): Readonly<{ title: string; body: string }>
   return { title: "", body: markdown };
 }
 
-export async function synchronizeNotionDocument(runtime: RuntimeCapabilities, url: string, source: Source, base: JsonValue, markdown: string, _markdownPath: string, observeRemote?: (remote: FetchedDocument) => void, requireConditionalWrite = false): Promise<SynchronizedDocument> {
+export async function synchronizeNotionDocument(runtime: RuntimeCapabilities, url: string, source: Source, base: JsonValue, markdown: string, _markdownPath: string, observeRemote?: (remote: FetchedDocument) => void | Promise<void>, requireConditionalWrite = false): Promise<SynchronizedDocument> {
   const remote = await fetchTree(runtime, url, source);
   const save = async (operations: readonly NotionOperation[]) => {
     if (operations.length === 0) return;
@@ -1194,7 +1194,7 @@ export async function synchronizeNotionDocument(runtime: RuntimeCapabilities, ur
   const mentions = baseUserMentions(baseObject);
   const emailMentions = { ...(baseObject["email_mentions"] as EmailMentions | undefined) };
   const observed = notionDocument(remote.tree.id, remote.tree, mentions, { ...emailMentions }, remote.comments);
-  observeRemote?.(observed);
+  await observeRemote?.(observed);
   const currentMarkdown = withoutComments(observed.markdown);
   const baseMarkdown = baseObject["markdown"] === undefined ? undefined : withoutComments(baseObject["markdown"] as string);
   let split = splitTitle(withoutComments(markdown));

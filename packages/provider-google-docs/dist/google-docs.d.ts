@@ -9,6 +9,7 @@ export declare function googleDocOriginalImages(bytes: Uint8Array): {
 export declare function googleDocListMarkdown(markdown: string, wordExport: () => Promise<Uint8Array>): Promise<string>;
 export declare const googleDocsService: Readonly<{
     name: string;
+    owner?: string;
     matches(url: URL): boolean;
     parse(url: URL): Source;
     fetch(input: RuntimeCapabilities, url: string, source: Readonly<{
@@ -36,7 +37,7 @@ export declare const googleDocsService: Readonly<{
         title: string;
         markdown: string;
         data: JsonValue;
-    }>) => void, requireConditionalWrite?: boolean): Promise<SynchronizedDocument>;
+    }>) => void | Promise<void>, requireConditionalWrite?: boolean): Promise<SynchronizedDocument>;
     upload?(input: RuntimeCapabilities, markdown: string, markdownPath: string): Promise<import("wire-core").UploadedDocument>;
 }>;
 //# sourceMappingURL=google-docs.d.ts.map

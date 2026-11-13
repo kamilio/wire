@@ -54,6 +54,6 @@ export declare function lookupNotionUsers(runtime: RuntimeCapabilities, query: s
 export declare function fetchNotionDocument(runtime: RuntimeCapabilities, url: string, source: Source): Promise<FetchedDocument>;
 export declare function downloadNotionDirectory(runtime: RuntimeCapabilities, url: string, source: Source, write: DownloadWriter): Promise<DownloadedDocument | null>;
 export declare function uploadNotionDocument(runtime: RuntimeCapabilities, markdown: string, _markdownPath: string): Promise<UploadedDocument>;
-export declare function synchronizeNotionDocument(runtime: RuntimeCapabilities, url: string, source: Source, base: JsonValue, markdown: string, _markdownPath: string, observeRemote?: (remote: FetchedDocument) => void, requireConditionalWrite?: boolean): Promise<SynchronizedDocument>;
+export declare function synchronizeNotionDocument(runtime: RuntimeCapabilities, url: string, source: Source, base: JsonValue, markdown: string, _markdownPath: string, observeRemote?: (remote: FetchedDocument) => void | Promise<void>, requireConditionalWrite?: boolean): Promise<SynchronizedDocument>;
 export {};
 //# sourceMappingURL=notion-sync.d.ts.map

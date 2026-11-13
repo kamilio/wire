@@ -859,7 +859,7 @@ async function synchronizeGoogleDocument(runtime, url, source, base, markdown, o
             return retry();
         throw error;
     }
-    observeRemote?.(remote);
+    await observeRemote?.(remote);
     if (source.type === "presentation") {
         const baseMarkdown = objectValue(base)["markdown"];
         if (typeof baseMarkdown !== "string")

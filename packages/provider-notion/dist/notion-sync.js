@@ -1270,7 +1270,7 @@ export async function synchronizeNotionDocument(runtime, url, source, base, mark
     const mentions = baseUserMentions(baseObject);
     const emailMentions = { ...baseObject["email_mentions"] };
     const observed = notionDocument(remote.tree.id, remote.tree, mentions, { ...emailMentions }, remote.comments);
-    observeRemote?.(observed);
+    await observeRemote?.(observed);
     const currentMarkdown = withoutComments(observed.markdown);
     const baseMarkdown = baseObject["markdown"] === undefined ? undefined : withoutComments(baseObject["markdown"]);
     let split = splitTitle(withoutComments(markdown));
