@@ -55,3 +55,26 @@ test("after a lost acknowledgment only later unpublished paragraph edits remain 
   const remote = base.replace("* Parent\n", "* Parent  \n  * Child\n").replace("Remote old", "Remote new");
   assert.equal(mergeDocBlocks(base, local, remote, nativeDocMarkdownEqual), remote.replace("Local old", "Local new"));
 });
+
+test("known block conflicts identify local Markdown lines after earlier insertions, without echoing content", () => {
+  const base = "Intro\nHeading\nSecret paragraph\n\n```\nsecret rows\n```\nTail\n";
+  const local = base.replace("Heading", "Inserted\nMore inserted\nHeading");
+  for (const [old, changed, expected] of [
+    ["Secret paragraph", "Private edit", "Local Markdown line 5."],
+    ["secret rows", "another\nprivate value", "Local Markdown lines 7-10."],
+  ]) {
+    assert.throws(() => mergeDocBlocks(base, local.replace(old, changed), base.replace(old, "Online change")), err => {
+      assert.ok(err.message.includes(expected)); assert.doesNotMatch(err.message, /secret|private|online change/i); return true;
+    });
+  }
+  const code = "Intro\n```\n" + "x\n".repeat(12) + "```\n";
+  assert.throws(() => mergeDocBlocks(code, code.replace("x", "local"), code.replace("x", "web")), /Local Markdown line 2 \(start of block\)/);
+  for (const [base, local, remote] of [
+    ["A\nA\n", "Local\nA\n", "Web\nA\n"],
+    ["A\nA", "Local\nA", "Web\nA"],
+    ["A\nOld\nLocal\n", "A\nLocal\nLocal\n", "A\nWeb\nLocal\n"],
+    ["A\nOld\n", "A\n", "A\nWeb\n"],
+  ]) assert.throws(() => mergeDocBlocks(base, local, remote), err => {
+    assert.match(err.message, /changed remotely and locally/); assert.doesNotMatch(err.message, /Markdown lines? \d/); return true;
+  });
+});

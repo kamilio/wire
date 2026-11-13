@@ -935,6 +935,28 @@ test("watch serializes overlapping poll and edit events and recovers after an in
   }
 });
 
+test("watch reports a Google Docs conflict location without exposing either version", async (t) => {
+  const project = join(testRoot, "watch-doc-conflict");
+  await mkdir(project);
+  await initializeWire(project, "sqlite", "registry.sqlite3");
+  const harness = watchHarness(), url = "https://docs.google.com/document/d/doc/edit";
+  const warnings = t.mock.method(console, "warn", () => {});
+  const rt = {configuration:{}, cookies:{loadSaved:async () => []}, http:{request:async () => new Response("Private web version\n", {headers:{"content-disposition": 'attachment; filename="doc.md"'}})}};
+  const wire = createSynchronizingWire(project, async (_url, _source, base, markdown) =>
+    googleDocsService.synchronize(rt, url, googleDocsService.parse(new URL(url)), base, markdown), harness.capability);
+  const attached = await wire.attach("https://sync.test/project", project);
+  const session = await wire.watch(attached.path, project);
+  try {
+    await writeFile(attached.path, "Private local version\n");
+    await harness.tick();
+    assert.equal(warnings.mock.callCount(), 1);
+    const message = warnings.mock.calls[0].arguments[0];
+    assert.match(message, /Wire watch: Google Docs changed remotely and locally\. Local Markdown line 1\./);
+    assert.doesNotMatch(message, /private/i);
+    assert.equal(await readFile(attached.path, "utf8"), "Private local version\n");
+  } finally { session.close(); await session.closed; }
+});
+
 test("watch recreates deleted registered Markdown before watching", async () => {
   const project = join(testRoot, "watch-missing-file");
   await mkdir(project);

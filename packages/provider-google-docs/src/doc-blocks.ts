@@ -60,8 +60,8 @@ export function docChanges(base: readonly string[], side: readonly string[]): Ch
   return changes;
 }
 
-function conflict(): never {
-  throw new Error("Google Docs changed remotely and locally. Resolve the conflict in Google Docs or the local Markdown file before syncing again.");
+function conflict(location = ""): never {
+  throw new Error(`Google Docs changed remotely and locally.${location} Resolve the conflict in Google Docs or the local Markdown file before syncing again.`);
 }
 
 export function mergeDocBlocks(base: string, local: string, remote: string, sameRendering: (local: string, remote: string) => boolean = (a, b) => a === b): string {
@@ -94,7 +94,24 @@ export function mergeDocBlocks(base: string, local: string, remote: string, same
   let pos = 0, previous: Change | undefined;
   const result: string[] = [];
   for (const change of all) {
-    if (change.start < pos || (previous && previous.start === previous.end && change.start === change.end && previous.start === change.start)) conflict();
+    if (change.start < pos || (previous && previous.start === previous.end && change.start === change.end && previous.start === change.start)) {
+      // Report a line only when both edits target one identifiable original
+      // block and its local replacement is unambiguous in the current file.
+      if (previous?.start === change.start && previous.end === change.end && change.end === change.start + 1) {
+        const unique = (rows: readonly string[], i: number) => i >= 0 && rows.every((row, n) => n === i || !sameRendering(row.replace(/\r?\n$/, ""), rows[i]!.replace(/\r?\n$/, "")));
+        const replacement = localChanges.find(c => c.start === change.start)?.replacement;
+        if (replacement?.length === 1 && unique(blocks, change.start)) {
+          const block = replacement[0]!, index = localBlocks.indexOf(block);
+          if (unique(localBlocks, index)) {
+            const first = 1 + localBlocks.slice(0, index).reduce((n, b) => n + b.split("\n").length - 1, 0);
+            const last = first + block.replace(/\n$/, "").split("\n").length - 1;
+            if (last - first > 5) conflict(` Local Markdown line ${first} (start of block).`);
+            conflict(first === last ? ` Local Markdown line ${first}.` : ` Local Markdown lines ${first}-${last}.`);
+          }
+        }
+      }
+      conflict();
+    }
     result.push(blocks.slice(pos, change.start).join(""), change.replacement.join(""));
     pos = change.end; previous = change;
   }

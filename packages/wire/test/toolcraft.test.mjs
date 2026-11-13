@@ -1136,6 +1136,7 @@ test("CLI invalid output errors honor the last valid output format", async () =>
 
 test("CLI Google sync conflicts are user-facing", async () => {
   for (const [message, patterns, rawPattern] of [
+    ["Google Docs changed remotely and locally. Local Markdown lines 7-10. Resolve the conflict in Google Docs or the local Markdown file before syncing again.", [/sync conflict/, /source: Google Docs/, /local Markdown lines: 7-10/, /resolve: edit Google Docs or local Markdown, then sync again/], /Google Docs changed remotely and locally/],
     ["Google Docs changed remotely and locally. Resolve the conflict in Google Docs or the local Markdown file before syncing again.", [/sync conflict/, /service: Google Docs\/Sheets/, /source: Google Docs/, /resolve: edit Google Docs or local Markdown, then sync again/], /Google Docs changed remotely and locally/],
     ["Google Sheets changed remotely and locally. Resolve the conflict in Google Sheets or the local Markdown file before syncing again.", [/sync conflict/, /service: Google Docs\/Sheets/, /source: Google Sheets/, /resolve: edit Google Sheets or local Markdown, then sync again/], /Google Sheets changed remotely and locally/],
   ]) await assert.rejects(

@@ -241,9 +241,9 @@ function wireUserErrorDisplayMessage(message) {
     const googleSaveVerification = /^Google (Docs|Sheets) save verification failed$/.exec(message);
     if (googleSaveVerification !== null)
         return `save verification failed\nservice: Google Docs/Sheets/Slides\nsource: Google ${googleSaveVerification[1]}`;
-    const googleConflict = /^Google (Docs|Sheets|Slides) changed remotely and locally\. Resolve the conflict in Google (Docs|Sheets|Slides) or the local Markdown file before syncing again\.$/.exec(message);
+    const googleConflict = /^Google (Docs|Sheets|Slides) changed remotely and locally\.(?: Local Markdown (lines?) (\d+(?:-\d+)?(?: \(start of block\))?)\.)? Resolve the conflict in Google (Docs|Sheets|Slides) or the local Markdown file before syncing again\.$/.exec(message);
     if (googleConflict !== null)
-        return `sync conflict\nservice: Google Docs/Sheets/Slides\nsource: Google ${googleConflict[1]}\nresolve: edit Google ${googleConflict[2]} or local Markdown, then sync again`;
+        return `sync conflict\nservice: Google Docs/Sheets/Slides\nsource: Google ${googleConflict[1]}${googleConflict[2] ? `\nlocal Markdown ${googleConflict[2]}: ${googleConflict[3]}` : ""}\nresolve: edit Google ${googleConflict[4]} or local Markdown, then sync again`;
     const googleDocsMapping = /^Google Docs local edit cannot be mapped to the live document text$/.exec(message);
     if (googleDocsMapping !== null)
         return "local edit not mappable\nservice: Google Docs/Sheets/Slides\nsource: Google Docs\nresolve: edit Google Docs or simplify local Markdown";
