@@ -19384,6 +19384,72 @@ function unzipFiles(bytes) {
   }
   return files;
 }
+function googleDocOriginalImages(bytes) {
+  const files = unzipFiles(bytes);
+  const pages = [...files.keys()].filter((name) => /\.html?$/i.test(name));
+  if (pages.length !== 1) throw new Error("Expected one page in Google Docs HTML export");
+  const html = new TextDecoder().decode(files.get(pages[0]));
+  return [...html.matchAll(/(?:<span\b((?:[^>"']|"[^"]*"|'[^']*')*)>\s*)?<img\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi)].map((match) => {
+    const attrs = parseAttributes(match[2].replace(/\/\s*$/, ""));
+    const path = decodeURIComponent(attrs.get("src") ?? "");
+    const data = files.get(path);
+    const ext = /\.(png|jpe?g|gif|webp)$/i.exec(path)?.[1]?.toLowerCase();
+    if (!data || !ext) throw new Error("Missing or unsupported original image in Google Docs HTML export: " + path);
+    return {
+      data,
+      ext: ext === "jpg" ? "jpeg" : ext,
+      alt: attrs.get("alt"),
+      style: attrs.get("style") ?? "",
+      frame: parseAttributes(match[1] ?? "").get("style") ?? ""
+    };
+  });
+}
+var embeddedImage = /data:image\/(?:png|jpeg|gif|webp);base64,[a-zA-Z0-9+/]+=*/;
+var imageDefinition = new RegExp("^\\[(image\\d+)\\]:[ \\t]*<?(" + embeddedImage.source + ")>?[ \\t]*\\r?$", "gm");
+var imageUse = new RegExp("!\\[((?:\\\\.|[^\\]\\\\\\n])*)\\](?:\\[(image\\d+)\\]|\\(<?(" + embeddedImage.source + ")>?\\))", "g");
+function imageLayout(style) {
+  return style.split(";").map((part) => part.trim()).filter((part) => /^(?:width|height|margin-top|margin-left): *-?\d+(?:\.\d+)?px$/.test(part) || /^transform: *rotate\(-?\d+(?:\.\d+)?rad\) translateZ\(0px\)$/.test(part));
+}
+async function docImages(markdown, archive) {
+  if (!markdown.includes("data:image/")) return markdown;
+  const sections = docBlocks(markdown).flatMap((block) => {
+    if (/^ {0,3}(?:`{3,}|~{3,})/.test(block)) return [{ literal: true, text: block }];
+    const parts = [];
+    let from = 0;
+    for (const code of block.matchAll(/(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g)) {
+      parts.push({ literal: false, text: block.slice(from, code.index) }, { literal: true, text: code[0] });
+      from = code.index + code[0].length;
+    }
+    parts.push({ literal: false, text: block.slice(from) });
+    return parts;
+  });
+  const active = sections.filter((s) => !s.literal);
+  const defs = new Set(active.flatMap((s) => [...s.text.matchAll(imageDefinition)].map((m2) => m2[1])));
+  const count = active.reduce((sum, s) => sum + [...s.text.matchAll(imageUse)].filter((m2) => !m2[2] || defs.has(m2[2])).length, 0);
+  if (!count) return markdown;
+  const images = googleDocOriginalImages(await archive());
+  if (images.length !== count) throw new Error("Image count differs between Google Docs Markdown and HTML exports; kept local copy.");
+  let index = 0;
+  const used = /* @__PURE__ */ new Set();
+  for (const section of active) section.text = section.text.replace(imageUse, (match, alt, label) => {
+    if (label && !defs.has(label)) return match;
+    if (label) used.add(label);
+    const { data, ext, style, frame, alt: htmlAlt } = images[index++];
+    const labelText = markdownEntities(alt.replace(/\\([^\w\s])/g, "$1"));
+    if (labelText && htmlAlt && labelText !== htmlAlt) throw new Error("Image descriptions differ between Google Docs Markdown and HTML exports; kept local copy.");
+    const escaped2 = labelText.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\|/g, "&#124;");
+    const layout = imageLayout(style), outer = imageLayout(frame);
+    const size = layout.flatMap((part) => {
+      const m2 = /^(width|height): *(\d+(?:\.\d+)?)px$/.exec(part);
+      return m2 ? [` ${m2[1]}="${Math.round(Number(m2[2]))}"`] : [];
+    }).join("");
+    const img = '<img alt="' + escaped2 + '"' + size + (layout.length ? ' style="' + layout.join("; ") + '"' : "") + ' src="data:image/' + ext + ";base64," + Buffer.from(data).toString("base64") + '">';
+    return outer.length ? '<span style="display: inline-block; overflow: hidden; ' + outer.join("; ") + '">' + img + "</span>" : img;
+  });
+  const body2 = active.map((s) => s.text.replace(imageDefinition, "")).join("");
+  for (const section of active) section.text = section.text.replace(imageDefinition, (line, label) => used.has(label) && !body2.includes("[" + label + "]") ? "" : line);
+  return sections.map((s) => s.text).join("");
+}
 function zipText(files, name) {
   const bytes = files.get(name);
   if (bytes === void 0) throw new Error(`PPTX missing ${name}`);
@@ -19610,7 +19676,7 @@ async function fetchGoogleDocument(runtime2, source, previous) {
     if (!response.ok) throw new Error("Google Docs export failed: HTTP " + response.status);
     return response;
   };
-  let readRevision, docTitle;
+  let readRevision, docTitle, legacyImages;
   if (grant && (previous !== void 0 || grant.canWrite)) {
     const url = "https://docs.googleapis.com/v1/documents/" + encodeURIComponent(id) + "?fields=documentId,title,revisionId";
     const meta = await (await read(url)).json();
@@ -19619,10 +19685,12 @@ async function fetchGoogleDocument(runtime2, source, previous) {
     docTitle = meta.title;
     const snapshot = previous === void 0 ? {} : objectValue(previous);
     if (readRevision && snapshot["verified_revision"] === readRevision && snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && typeof snapshot["markdown"] === "string") {
-      return { title: docTitle, markdown: snapshot["markdown"], readRevision, data: { ...snapshot, title: docTitle } };
+      if (snapshot["original_images"] === true || !snapshot["markdown"].includes("data:image/"))
+        return { title: docTitle, markdown: snapshot["markdown"], readRevision, data: { ...snapshot, title: docTitle } };
+      legacyImages = snapshot["markdown"];
     }
   }
-  let title2, markdown;
+  let title2, markdown, archive;
   if (grant?.driveExport && tab === null) {
     const url = "https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(id);
     if (docTitle !== void 0) title2 = docTitle;
@@ -19632,6 +19700,7 @@ async function fetchGoogleDocument(runtime2, source, previous) {
       title2 = meta.name;
     }
     const format = (mime) => read(url + "/export?" + new URLSearchParams({ mimeType: mime }));
+    archive = async () => new Uint8Array(await (await format("application/zip")).arrayBuffer());
     const text3 = await (await format("text/markdown")).text();
     markdown = await googleDocListMarkdown(text3, async () => new Uint8Array(await (await format("application/vnd.openxmlformats-officedocument.wordprocessingml.document")).arrayBuffer()));
   } else {
@@ -19640,6 +19709,11 @@ async function fetchGoogleDocument(runtime2, source, previous) {
     if (tab) query.set("tab", tab);
     const url = `https://docs.google.com/document/d/${encodeURIComponent(id)}/export?${query}`;
     const exp = await googleExport(runtime2, url, "Docs Markdown export", grant?.token ?? null);
+    archive = async () => {
+      const zipped = new URL(url);
+      zipped.searchParams.set("format", "zip");
+      return (await googleExportBytes(runtime2, zipped.toString(), "Docs HTML archive", grant?.token ?? null)).bytes;
+    };
     title2 = exp.title;
     markdown = await googleDocListMarkdown(exp.text, async () => {
       const word = new URL(url);
@@ -19647,7 +19721,13 @@ async function fetchGoogleDocument(runtime2, source, previous) {
       return (await googleExportBytes(runtime2, word.toString(), "Docs Word export", grant?.token ?? null)).bytes;
     });
   }
-  return { title: title2, markdown, ...readRevision ? { readRevision } : {}, data: { document_id: id, title: title2, output_path: null, sheet_gid: null, markdown, rows: null, ...readRevision ? { position_revision: readRevision } : {}, ...tab === null ? {} : { document_tab: tab } } };
+  const exported = markdown;
+  markdown = await docImages(markdown, archive);
+  if (markdown !== exported && readRevision) {
+    const end = await (await read("https://docs.googleapis.com/v1/documents/" + encodeURIComponent(id) + "?fields=revisionId")).json();
+    if (end.revisionId !== readRevision) throw new Error("Google Docs changed during image export; local copy preserved. Sync again.");
+  }
+  return { title: title2, markdown, ...readRevision ? { readRevision } : {}, data: { document_id: id, title: title2, output_path: null, sheet_gid: null, markdown, rows: null, ...markdown.includes("data:image/") ? { original_images: true } : {}, ...readRevision ? { position_revision: readRevision } : {}, ...legacyImages === exported && readRevision ? { verified_revision: readRevision } : {}, ...tab === null ? {} : { document_tab: tab } } };
 }
 async function synchronizeGoogleDocument(runtime2, _url, source, base, markdown) {
   const remote = await fetchGoogleDocument(runtime2, source, base);
@@ -19691,7 +19771,8 @@ Prefix it with an apostrophe or rewrite it as plain text before syncing.`);
   const id = source["document_id"] ?? source.identifier;
   const key2 = resourceKey(source), tab = documentTab(source);
   const snapshot = objectValue(base);
-  const positionRevision = snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && baseMarkdown === remote.markdown ? snapshot["position_revision"] ?? snapshot["verified_revision"] : void 0;
+  const sameBase = baseMarkdown === remote.markdown || snapshot["verified_revision"] !== void 0 && snapshot["verified_revision"] === objectValue(remote.data)["verified_revision"];
+  const positionRevision = snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && sameBase ? snapshot["position_revision"] ?? snapshot["verified_revision"] : void 0;
   let writtenRevision;
   const native = await tryUploadDocBlocks(
     runtime2,

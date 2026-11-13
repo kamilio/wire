@@ -2,6 +2,9 @@ import type { JsonValue, RuntimeCapabilities, Source } from "wire-core";
 export declare function googleDocOriginalImages(bytes: Uint8Array): {
     data: Uint8Array<ArrayBufferLike>;
     ext: string;
+    alt: string | undefined;
+    style: string;
+    frame: string;
 }[];
 export declare function googleDocListMarkdown(markdown: string, wordExport: () => Promise<Uint8Array>): Promise<string>;
 export declare const googleDocsService: Readonly<{

@@ -1963,3 +1963,104 @@ test("a lost Docs acknowledgment plus a disjoint web edit recovers the exported 
     await assert.rejects(synchronizeSource(rt, url, serviceCatalog, { markdown: base }, append(base, other), "private.md"), /changed remotely and locally/);
   }
 });
+
+test("Docs upgrades a verified thumbnail in place and keeps the next idle poll to one read", async () => {
+  const thumb = "data:image/png;base64,dGh1bWI=", orig = "original pixels", md = "Old text\n\n![Alt][image1]\n\n[image1]: <" + thumb + ">\n";
+  let paths = [], revAfter = "r", mismatch = false;
+  const rt = docsDriveRuntime(async (input, init) => {
+    assert.equal(init.method ?? "GET", "GET");
+    const u = new URL(input), type = u.searchParams.get("mimeType");
+    paths.push(type ?? u.searchParams.get("fields"));
+    if (type === "text/markdown") return new Response(md);
+    if (type === "application/zip") return new Response(zip({ "doc.html": mismatch ? "" :
+      '<span style="width: 160.00px; height: 90.00px;"><img src="images/1.png" style="width: 160.00px; height: 90.00px; margin-left: 0.00px; background: url(https://untrusted.invalid/)"></span>', "images/1.png": orig }));
+    return response({documentId:"doc", title:"Private", revisionId:u.searchParams.get("fields")==="revisionId"?revAfter:"r"});
+  });
+  const url = "https://docs.google.com/document/d/doc/edit";
+  const legacy = {document_id:"doc",markdown:md,verified_revision:"r"};
+  const synced = await synchronizeSource(rt, url, serviceCatalog, legacy, md, "doc.md");
+  assert.equal(synced.data.verified_revision, "r");
+  assert.match(synced.markdown, /<img alt="Alt" width="160" height="90"[^>]*width: 160\.00px; height: 90\.00px/);
+  assert.ok(synced.markdown.includes(Buffer.from(orig).toString("base64")));
+  assert.ok(!synced.markdown.includes(thumb) && !synced.markdown.includes("untrusted.invalid"));
+  assert.deepEqual(paths, ["documentId,title,revisionId","text/markdown","application/zip","revisionId"]);
+  paths = [];
+  assert.equal((await synchronizeSource(rt, url, serviceCatalog, synced.data, synced.markdown, "doc.md")).markdown, synced.markdown);
+  assert.deepEqual(paths, ["documentId,title,revisionId"]);
+  revAfter = "changed";
+  await assert.rejects(synchronizeSource(rt,url,serviceCatalog,legacy,md,"doc.md"), /changed during image export/);
+  mismatch = true;
+  await assert.rejects(synchronizeSource(rt,url,serviceCatalog,legacy,md,"doc.md"), /Image count differs/);
+});
+
+test("explicit-tab Docs exports use the scoped image archive for both direct and reference images", async () => {
+  const thumb = "data:image/png;base64,dGh1bWI=", formats = [];
+  const rt = runtime(async input => {
+    const u = new URL(input), format = u.searchParams.get("format"); formats.push(format);
+    assert.equal(u.hostname, "docs.google.com"); assert.equal(u.searchParams.get("tab"),"tab-two"); assert.equal(u.searchParams.get("resourcekey"),"private");
+    return format === "zip" ? exportResponse("Doc", "zip", zip({"Doc.html":'<img src="a.png"><img src="b.jpeg">',"a.png":"image one","b.jpeg":"image two"})) :
+      exportResponse("Doc","md",'Inline ![x\\]<"][image1], then ![]('+thumb+').\n\n[image1]: <'+thumb+'>');
+  });
+  const doc = await fetchSource(rt, "https://docs.google.com/document/d/doc/edit?tab=tab-two&resourcekey=private", serviceCatalog);
+  assert.deepEqual(formats, ["md","zip"]);
+  assert.match(doc.markdown,/alt="x\]&lt;&quot;"/); assert.match(doc.markdown,/data:image\/jpeg;base64,aW1hZ2UgdHdv/);
+});
+
+test("an unsent paragraph edit on an old verified image snapshot uploads only that text", async () => {
+  let text = "Local old", rev = "1", batches = [];
+  const exported = () => text + "\n\n![img][image1]\n\n[image1]: <data:image/png;base64,dGh1bWI=>\n";
+  const rt = docsDriveRuntime(async (input, init) => {
+    const u = new URL(input);
+    if (u.pathname.endsWith("/export")) return new Response(u.searchParams.get("mimeType") === "text/markdown" ? exported() :
+      zip({"Doc.html":'<img src="images/1.png" style="width: 160px; height: 90px">',"images/1.png":"original"}));
+    if (u.pathname.endsWith("/comments")) return response({comments:[]});
+    if (u.pathname.endsWith(":batchUpdate")) {
+      const batch = JSON.parse(init.body); assert.equal(batch.writeControl.requiredRevisionId,rev); batches.push(batch);
+      rev="2";text="Local new";return response({writeControl:{requiredRevisionId:rev}});
+    }
+    if (u.searchParams.has("fields")) return response({documentId:"doc",title:"Private",revisionId:rev});
+    return response({documentId:"doc",revisionId:rev,tabs:[{tabProperties:{tabId:"t.0"},documentTab:{body:{content:[
+      {startIndex:1,endIndex:11,paragraph:{paragraphStyle:{namedStyleType:"NORMAL_TEXT"},elements:[{startIndex:1,endIndex:11,textRun:{content:text+"\n"}}]}},
+      {startIndex:11,endIndex:13,paragraph:{elements:[{startIndex:11,endIndex:12,inlineObjectElement:{inlineObjectId:"image"}},{startIndex:12,endIndex:13,textRun:{content:"\n"}}]}}
+    ]}}}]});
+  });
+  const before=exported(), result=await synchronizeSource(rt,"https://docs.google.com/document/d/doc/edit",serviceCatalog,
+    {document_id:"doc",verified_revision:rev,markdown:before},before.replace("Local old","Local new"),"doc.md");
+  assert.equal(batches.length,1);
+  let native = "Local old\n\uFFFC\n";
+  for (const r of batches[0].requests) {
+    if (r.insertText) {
+      assert.equal(r.insertText.text,"new");
+      const n = r.insertText.location.index - 1; native = native.slice(0,n) + r.insertText.text + native.slice(n);
+    } else {
+      const range = (r.deleteContentRange ?? r.updateTextStyle).range;
+      const a = range.startIndex - 1, b = range.endIndex - 1;
+      assert.ok(b <= native.indexOf("\n"));
+      if (r.deleteContentRange) native = native.slice(0,a) + native.slice(b);
+    }
+  }
+  assert.equal(native,"Local new\n\uFFFC\n");
+  assert.equal(result.data.verified_revision,"2");
+  assert.match(result.markdown,/Local new/); assert.match(result.markdown,/data:image\/png;base64,b3JpZ2luYWw=/);
+});
+
+test("Docs keeps each original with its own dimensions and ignores image examples in code", async () => {
+  const thumb = "data:image/png;base64,dGh1bWI=", code = "```md\n![Fake][image1]\n[image2]: <" + thumb + ">\n```\n";
+  const md = code + "Actual ![First][image1] and ![Second][image2], example `![Fake][image1]`.\n\n[image1]: <" + thumb + ">\n[image2]: <" + thumb + ">";
+  const a = '<img alt="First" src="a.png" style="width: 160px; height: 90px">',
+    b = '<img alt="Second" src="b.gif" style="width: 40px; height: 100px">';
+  let swapped = false;
+  const rt = docsDriveRuntime(async input => {
+    const u = new URL(input);
+    if (u.hostname === "docs.googleapis.com") return response({documentId:"doc",title:"Images",revisionId:"1"});
+    return u.searchParams.get("mimeType")==="text/markdown" ? new Response(md) :
+      new Response(zip({"doc.html": swapped ? b+a : a+b, "b.gif":"second pixels", "a.png":"first pixels"}));
+  });
+  const url="https://docs.google.com/document/d/doc/edit";
+  const doc=await fetchSource(rt,url,serviceCatalog);
+  assert.ok(doc.markdown.startsWith(code) && doc.markdown.includes("`![Fake][image1]`"));
+  assert.match(doc.markdown, /alt="First" width="160" height="90"[^>]*src="data:image\/png;base64,Zmlyc3QgcGl4ZWxz"/);
+  assert.match(doc.markdown, /alt="Second" width="40" height="100"[^>]*src="data:image\/gif;base64,c2Vjb25kIHBpeGVscw=="/);
+  swapped=true;
+  await assert.rejects(fetchSource(rt,url,serviceCatalog),/Image descriptions differ/);
+});

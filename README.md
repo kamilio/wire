@@ -65,6 +65,8 @@ Run `wire --help` for the full CLI.
 
 `wire sync <file>` merges edits to different paragraphs. It applies local edits to the selected tab in one batch, conditional on the current Google Docs revision. For documents with several tabs, attach the URL of the tab you want to edit, including its `tab=` parameter. An unscoped download can contain all tabs. Nested list items keep their own paragraphs. If both sides changed the same paragraph, open the local file and the Doc to reconcile it. Wire leaves both copies in place. It also stops when it cannot safely map an edit to the native paragraphs.
 
+Attached Markdown embeds original image pixels at the size used in Google Docs. Syncing an older attachment upgrades its thumbnails locally. Edit the image itself in Google Docs.
+
 **Change for existing users**. Google’s browser editor can accept a stale save and combine two versions of the same paragraph. Browser login now supports downloads only. For uploads, set `GOOGLE_DOCS_TOKEN_FILE` to an authorized OAuth token with Google’s `drive` scope, a `drive.file` grant for that file, or both `documents` and `drive.readonly`. Wire needs access to Drive comments to protect anchored feedback. Wire also accepts an eligible existing `GOOGLE_FORMS_TOKEN_FILE` used for Drive. For grants that need refreshing, set `GOOGLE_CREDENTIALS_FILE` to the corresponding client credentials.
 
 ### Scrape a Google Drive folder

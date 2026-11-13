@@ -1,5 +1,5 @@
 import { defineService } from "wire-core";
-import { mergeDocBlocks } from "./doc-blocks.js";
+import { docBlocks, mergeDocBlocks } from "./doc-blocks.js";
 import { googleRead } from "./google-read.js";
 import { nativeDocMarkdownEqual, nativeDocsGrant, tryUploadDocBlocks } from "./native-docs.js";
 import { inflateRawSync } from "node:zlib";
@@ -391,13 +391,70 @@ export function googleDocOriginalImages(bytes: Uint8Array) {
   const pages = [...files.keys()].filter(name => /\.html?$/i.test(name));
   if (pages.length !== 1) throw new Error("Expected one page in Google Docs HTML export");
   const html = new TextDecoder().decode(files.get(pages[0]!)!);
-  return [...html.matchAll(/<img\b[^>]*?\ssrc\s*=\s*(["'])([^"']+)\1/gi)].map(([, , src]) => {
-    const path = decodeURIComponent(src!);
+  return [...html.matchAll(/(?:<span\b((?:[^>"']|"[^"]*"|'[^']*')*)>\s*)?<img\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi)].map(match => {
+    const attrs = parseAttributes(match[2]!.replace(/\/\s*$/, ""));
+    const path = decodeURIComponent(attrs.get("src") ?? "");
     const data = files.get(path);
     const ext = /\.(png|jpe?g|gif|webp)$/i.exec(path)?.[1]?.toLowerCase();
     if (!data || !ext) throw new Error("Missing or unsupported original image in Google Docs HTML export: " + path);
-    return { data, ext: ext === "jpg" ? "jpeg" : ext };
+    return { data, ext: ext === "jpg" ? "jpeg" : ext, alt: attrs.get("alt"), style: attrs.get("style") ?? "",
+      frame: parseAttributes(match[1] ?? "").get("style") ?? "" };
   });
+}
+
+const embeddedImage = /data:image\/(?:png|jpeg|gif|webp);base64,[a-zA-Z0-9+/]+=*/;
+const imageDefinition = new RegExp("^\\[(image\\d+)\\]:[ \\t]*<?(" + embeddedImage.source + ")>?[ \\t]*\\r?$", "gm");
+const imageUse = new RegExp("!\\[((?:\\\\.|[^\\]\\\\\\n])*)\\](?:\\[(image\\d+)\\]|\\(<?(" + embeddedImage.source + ")>?\\))", "g");
+
+// Only copy numeric layout from Google's HTML, never arbitrary HTML or CSS.
+function imageLayout(style: string) {
+  return style.split(";").map(part => part.trim()).filter(part =>
+    /^(?:width|height|margin-top|margin-left): *-?\d+(?:\.\d+)?px$/.test(part) ||
+    /^transform: *rotate\(-?\d+(?:\.\d+)?rad\) translateZ\(0px\)$/.test(part));
+}
+
+async function docImages(markdown: string, archive: () => Promise<Uint8Array>) {
+  if (!markdown.includes("data:image/")) return markdown;
+  // Ignore Markdown examples, including reference definitions inside fences.
+  const sections = docBlocks(markdown).flatMap(block => {
+    if (/^ {0,3}(?:`{3,}|~{3,})/.test(block)) return [{ literal: true, text: block }];
+    const parts: { literal: boolean; text: string }[] = [];
+    let from = 0;
+    for (const code of block.matchAll(/(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g)) {
+      parts.push({ literal: false, text: block.slice(from, code.index) }, { literal: true, text: code[0] });
+      from = code.index + code[0].length;
+    }
+    parts.push({ literal: false, text: block.slice(from) });
+    return parts;
+  });
+  const active = sections.filter(s => !s.literal);
+  const defs = new Set(active.flatMap(s => [...s.text.matchAll(imageDefinition)].map(m => m[1]!)));
+  const count = active.reduce((sum, s) => sum + [...s.text.matchAll(imageUse)].filter(m => !m[2] || defs.has(m[2])).length, 0);
+  if (!count) return markdown;
+  const images = googleDocOriginalImages(await archive());
+  if (images.length !== count) throw new Error("Image count differs between Google Docs Markdown and HTML exports; kept local copy.");
+  let index = 0;
+  const used = new Set<string>();
+  for (const section of active) section.text = section.text.replace(imageUse, (match, alt: string, label?: string) => {
+    if (label && !defs.has(label)) return match;
+    if (label) used.add(label);
+    const { data, ext, style, frame, alt: htmlAlt } = images[index++]!;
+    const labelText = markdownEntities(alt.replace(/\\([^\w\s])/g, "$1"));
+    if (labelText && htmlAlt && labelText !== htmlAlt) throw new Error("Image descriptions differ between Google Docs Markdown and HTML exports; kept local copy.");
+    const escaped = labelText.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\|/g, "&#124;");
+    const layout = imageLayout(style), outer = imageLayout(frame);
+    // Readers that strip CSS can still honor the ordinary HTML dimensions.
+    const size = layout.flatMap(part => {
+      const m = /^(width|height): *(\d+(?:\.\d+)?)px$/.exec(part);
+      return m ? [` ${m[1]}="${Math.round(Number(m[2]))}"`] : [];
+    }).join("");
+    const img = '<img alt="' + escaped + '"' + size + (layout.length ? ' style="' + layout.join("; ") + '"' : "") + ' src="data:image/' + ext + ";base64," + Buffer.from(data).toString("base64") + '">';
+    return outer.length ? '<span style="display: inline-block; overflow: hidden; ' + outer.join("; ") + '">' + img + '</span>' : img;
+  });
+  // Leave definitions used by ordinary Markdown links in place.
+  const body = active.map(s => s.text.replace(imageDefinition, "")).join("");
+  for (const section of active) section.text = section.text.replace(imageDefinition, (line, label) => used.has(label) && !body.includes("[" + label + "]") ? "" : line);
+  return sections.map(s => s.text).join("");
 }
 
 function zipText(files: ReadonlyMap<string, Uint8Array>, name: string): string {
@@ -652,7 +709,7 @@ async function fetchGoogleDocument(runtime: RuntimeCapabilities, source: Source,
     if (!response.ok) throw new Error("Google Docs export failed: HTTP " + response.status);
     return response;
   };
-  let readRevision: string | undefined, docTitle: string | undefined;
+  let readRevision: string | undefined, docTitle: string | undefined, legacyImages: string | undefined;
   if (grant && (previous !== undefined || grant.canWrite)) {
     const url = "https://docs.googleapis.com/v1/documents/" + encodeURIComponent(id) + "?fields=documentId,title,revisionId";
     const meta = await (await read(url)).json() as { documentId?: string; title?: string; revisionId?: string };
@@ -662,11 +719,14 @@ async function fetchGoogleDocument(runtime: RuntimeCapabilities, source: Source,
     // Only a successfully verified, revision-controlled batch sets this key.
     // Never use Drive's version, ETag, or modifiedTime as a document revision.
     if (readRevision && snapshot["verified_revision"] === readRevision && snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && typeof snapshot["markdown"] === "string") {
-      return { title: docTitle, markdown: snapshot["markdown"], readRevision, data: { ...snapshot, title: docTitle } };
+      if (snapshot["original_images"] === true || !snapshot["markdown"].includes("data:image/"))
+        return { title: docTitle, markdown: snapshot["markdown"], readRevision, data: { ...snapshot, title: docTitle } };
+      // Old verified snapshots embedded Google's display-size thumbnails.
+      legacyImages = snapshot["markdown"];
     }
   }
 
-  let title: string, markdown: string;
+  let title: string, markdown: string, archive: () => Promise<Uint8Array>;
   if (grant?.driveExport && tab === null) {
     // Drive export is unscoped and includes every tab. Never route an explicit
     // tab, including t.0, through this endpoint.
@@ -678,6 +738,7 @@ async function fetchGoogleDocument(runtime: RuntimeCapabilities, source: Source,
       title = meta.name;
     }
     const format = (mime: string) => read(url + "/export?" + new URLSearchParams({ mimeType: mime }));
+    archive = async () => new Uint8Array(await (await format("application/zip")).arrayBuffer());
     const text = await (await format("text/markdown")).text();
     markdown = await googleDocListMarkdown(text, async () => new Uint8Array(await (await format("application/vnd.openxmlformats-officedocument.wordprocessingml.document")).arrayBuffer()));
   } else {
@@ -686,6 +747,10 @@ async function fetchGoogleDocument(runtime: RuntimeCapabilities, source: Source,
     if (tab) query.set("tab", tab);
     const url = `https://docs.google.com/document/d/${encodeURIComponent(id)}/export?${query}`;
     const exp = await googleExport(runtime, url, "Docs Markdown export", grant?.token ?? null);
+    archive = async () => {
+      const zipped = new URL(url); zipped.searchParams.set("format", "zip");
+      return (await googleExportBytes(runtime, zipped.toString(), "Docs HTML archive", grant?.token ?? null)).bytes;
+    };
     title = exp.title;
     markdown = await googleDocListMarkdown(exp.text, async () => {
       const word = new URL(url);
@@ -693,7 +758,14 @@ async function fetchGoogleDocument(runtime: RuntimeCapabilities, source: Source,
       return (await googleExportBytes(runtime, word.toString(), "Docs Word export", grant?.token ?? null)).bytes;
     });
   }
-  return { title, markdown, ...(readRevision ? { readRevision } : {}), data: { document_id: id, title, output_path: null, sheet_gid: null, markdown, rows: null, ...(readRevision ? {position_revision: readRevision} : {}), ...(tab === null ? {} : { document_tab: tab }) } };
+  // Bind the Markdown and original images to one revision before using them as a sync base.
+  const exported = markdown;
+  markdown = await docImages(markdown, archive);
+  if (markdown !== exported && readRevision) {
+    const end = await (await read("https://docs.googleapis.com/v1/documents/" + encodeURIComponent(id) + "?fields=revisionId")).json() as { revisionId?: string };
+    if (end.revisionId !== readRevision) throw new Error("Google Docs changed during image export; local copy preserved. Sync again.");
+  }
+  return { title, markdown, ...(readRevision ? { readRevision } : {}), data: { document_id: id, title, output_path: null, sheet_gid: null, markdown, rows: null, ...(markdown.includes("data:image/") ? { original_images: true } : {}), ...(readRevision ? {position_revision: readRevision} : {}), ...(legacyImages === exported && readRevision ? {verified_revision: readRevision} : {}), ...(tab === null ? {} : { document_tab: tab }) } };
 }
 
 async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, _url: string, source: Source, base: JsonValue, markdown: string): Promise<FetchedDocument> {
@@ -739,7 +811,8 @@ async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, _url: str
   const snapshot = objectValue(base);
   // A same-looking paragraph can move (or be recreated) without changing
   // Markdown. Positional lookup needs the actual revision of the local base.
-  const positionRevision = snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && baseMarkdown === remote.markdown
+  const sameBase = baseMarkdown === remote.markdown || (snapshot["verified_revision"] !== undefined && snapshot["verified_revision"] === objectValue(remote.data)["verified_revision"]);
+  const positionRevision = snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && sameBase
     ? snapshot["position_revision"] ?? snapshot["verified_revision"] : undefined;
   let writtenRevision: string | undefined;
   const native = await tryUploadDocBlocks(runtime, id, key, tab, remote.markdown, merged,
