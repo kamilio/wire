@@ -136,6 +136,7 @@ function wireUserErrorMessage(message) {
         || /^Ambiguous resource path /.test(message)
         || /^(Unresolved Wire conflict|Working file changed since the conflict|Stale shell edit|No saved conflict|Unknown document revision|No saved (?:base|local|remote) revision|Linked Markdown is missing|Another Wire operation owns this document|Local file changed during (?:sync|detach)|This registry does not provide durable document history|This provider cannot conditionally publish|Resolve and sync the Wire draft before detaching|Notion cannot condition a save|Google Sheets cannot condition a save)/.test(message)
         || /^((?:Invalid|Missing|Orphaned) Wire editor receipt|Editor receipts require|An older editor buffer|Document already has a different sync owner)/.test(message)
+        || /^(Configured Wire registry is missing|Wire storage is busy|Wire switch destination already exists)/.test(message)
         || /^Wire history and tracked Markdown must be on the same filesystem/.test(message)
         || /^Login not saved$/.test(message)
         || /authentication (is missing|is missing or expired|failed|expired).*Run `wire (ashby|asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.test(message)

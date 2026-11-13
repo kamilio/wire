@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -469,4 +469,57 @@ test("switch refuses an occupied SQLite destination or its journal and preserves
   assert.equal(await readFile(join(source.path,"unrelated.txt"),"utf8"),"owner's file");
   await assert.rejects(switchWireBackend(project,testRoot),/destination already exists/);
   assert.equal((await (await openWireRegistry(project,testRoot)).get(resourceA.id)).id,resourceA.id);
+});
+
+for (const backend of ["files", "sqlite"]) {
+  test(backend + ": explicit first-use init preserves hand-written config and refuses missing used storage", async () => {
+    const project = join(testRoot,"config-only-"+backend), root = join(project,".wire");
+    const path = backend === "files" ? "records" : "registry.sqlite3";
+    const config = JSON.stringify({backend,path,env:{CUSTOM:"keep"}},null,2);
+    await mkdir(join(root,"hooks"),{recursive:true});
+    await writeFile(join(root,"config.json"),config);
+    await assert.rejects(openWireRegistry(project,testRoot),/registry is missing/);
+    assert.equal(existsSync(join(root,path)),false);
+    assert.equal((await initializeWire(project,backend,path)).created,true);
+    assert.equal(await readFile(join(root,"config.json"),"utf8"),config);
+    await (await openWireRegistry(project,testRoot)).put(resourceA);
+    await rm(join(root,path),{recursive:true});
+    await assert.rejects(initializeWire(project,backend,path),/Restore the registry/);
+    assert.equal(existsSync(join(root,path)),false);
+  });
+}
+
+test("SIGKILL after installing SQLite but before publishing config leaves a usable registry for retry", async () => {
+  const project = join(testRoot,"interrupted-init"), root = join(project,".wire");
+  await mkdir(root,{recursive:true});
+  const workspace = new URL("../../wire-core/dist/storage/workspace.js",import.meta.url).href;
+  const child = spawnSync(process.execPath,["--input-type=module","-e",`
+    import fs from "node:fs/promises";
+    import {syncBuiltinESMExports} from "node:module";
+    const rename = fs.rename;
+    fs.rename = async (src,dest) => {
+      if (dest.endsWith("/config.json")) process.kill(process.pid,"SIGKILL");
+      return rename(src,dest);
+    };
+    syncBuiltinESMExports();
+    await (await import(${JSON.stringify(workspace)})).initializeWire(process.argv[1],"sqlite","registry.sqlite3");
+  `,project],{encoding:"utf8",timeout:20000});
+  assert.equal(child.signal,"SIGKILL",child.stderr);
+  assert.equal(existsSync(join(root,"config.json")),false);
+  const registry = new SqliteRegistry(join(root,"registry.sqlite3"),false);
+  assert.deepEqual(await registry.listResources(),[]);
+  await registry.put(resourceA);
+  const result = await initializeWire(project,"sqlite","registry.sqlite3");
+  assert.equal(result.created,true);
+  assert.equal((await (await openWireRegistry(project,testRoot)).get(resourceA.id)).id,resourceA.id);
+});
+
+test("a missing migrated registry cannot be recreated from config alone", async () => {
+  const project = join(testRoot,"lost-after-switch"), root = join(project,".wire");
+  await initializeWire(project,"files","records");
+  await (await openWireRegistry(project,testRoot)).put(resourceA);
+  await switchWireBackend(project,testRoot);
+  await rm(join(root,"registry.sqlite3"));
+  await assert.rejects(initializeWire(project,"sqlite","registry.sqlite3"),/Restore the registry/);
+  assert.equal(existsSync(join(root,"registry.sqlite3")),false);
 });

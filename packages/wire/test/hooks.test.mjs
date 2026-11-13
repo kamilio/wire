@@ -169,6 +169,9 @@ test("wire config env is available to automatically discovered CLI hooks", async
   const project = join(testRoot, "config-env");
   await mkdir(join(project, ".wire"), { recursive: true });
   await writeFile(join(project, ".wire/config.json"), `${JSON.stringify({ backend: "sqlite", path: "registry.sqlite3", env: { WIRE_CUSTOM_VALUE: "from-config" } }, null, 2)}\n`);
+  await execFileAsync(process.execPath, [resolve(import.meta.dirname, "../bin/wire.mjs"), "init", "--backend", "sqlite"], {
+    cwd: project, env: { ...process.env, HOME: project, NO_COLOR:"1", WIRE_NODE_NO_WARNINGS_REEXEC:"1" },
+  });
   await writeExecutable(join(project, ".wire/hooks/post-command"), `#!/bin/sh
 set -eu
 printf "%s" "$WIRE_CUSTOM_VALUE" > config-env.txt

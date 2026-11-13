@@ -1,5 +1,5 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { lstat, mkdir, open, readFile, rename, rmdir, unlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, open, readFile, readdir, rename, rmdir, unlink } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 import { randomUUID } from "node:crypto";
@@ -63,28 +63,92 @@ export async function openWireRegistry(path: string, home: string): Promise<Regi
   const config = await loadWireConfig(wireRoot);
   const registryPath = join(wireRoot, config.path);
   protectHistory(wireRoot, registryPath);
-  if (config.backend === "sqlite") return new SqliteRegistry(registryPath, false);
-  if (config.backend === "files") return new FileRegistry(registryPath, false);
-  throw new Error(config.backend);
+  try {
+    if (config.backend === "sqlite") return new SqliteRegistry(registryPath, false);
+    if (config.backend === "files") return new FileRegistry(registryPath, false);
+    throw new Error(config.backend);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    throw new Error("Configured Wire registry is missing. Restore its storage, or run wire init with the matching backend if this workspace has never stored documents.");
+  }
 }
 
 export async function initializeWire(path: string, backend: WireBackend, registryPath: string): Promise<InitializedWire> {
   const wireRoot = join(canonicalPath(path), ".wire");
   await mkdir(wireRoot, { recursive: true });
   protectHistory(wireRoot, join(wireRoot, registryPath));
-  const configPath = join(wireRoot, "config.json");
-  if (existsSync(configPath) && statSync(configPath).isFile()) {
-    const existing = await loadWireConfig(wireRoot);
-    if (existing.backend !== backend || existing.path !== registryPath) throw new Error(`Wire workspace already initialized with ${existing.backend} registry at ${existing.path}. Existing registries are not overwritten.`);
-    return { root: wireRoot, backend: existing.backend, path: join(wireRoot, existing.path), created: false };
-  }
-  const config = { backend, path: registryPath } satisfies WireConfig;
-  await writeFile(configPath, `${stableJsonPretty(config)}\n`, "utf8");
   const fullRegistryPath = join(wireRoot, registryPath);
-  if (backend === "sqlite") new SqliteRegistry(fullRegistryPath);
-  else if (backend === "files") new FileRegistry(fullRegistryPath);
-  else throw new Error(backend);
-  return { root: wireRoot, backend, path: fullRegistryPath, created: true };
+  const config = { backend, path: registryPath } satisfies WireConfig;
+  const hasConfig = async () => {
+    const existing = await loadWireConfig(wireRoot).catch((e: NodeJS.ErrnoException) => { if (e.code !== "ENOENT") throw e; });
+    if (existing && (existing.backend !== backend || existing.path !== registryPath)) throw new Error(`Wire workspace already initialized with ${existing.backend} registry at ${existing.path}. Existing registries are not overwritten.`);
+    return !!existing;
+  };
+  const occupied = async (path: string) => lstat(path).then(() => true, (e: NodeJS.ErrnoException) => { if (e.code !== "ENOENT") throw e; return false; });
+  const result = (created: boolean) => ({root: wireRoot, backend, path: fullRegistryPath, created});
+  if (await hasConfig() && await occupied(fullRegistryPath)) return result(false);
+
+  const kept = "Configured Wire registry is missing but prior workspace storage exists. Restore the registry; wire init will not replace it.";
+  const history = join(wireRoot, "history");
+  for (let attempt = 0;; attempt++) {
+    try {
+      return await withBackendSwitch(wireRoot, async () => {
+        const configured = await hasConfig(), storeExists = await occupied(fullRegistryPath);
+        if (configured && storeExists) return result(false);
+        if (!storeExists) {
+          const priorFiles = await readdir(wireRoot);
+          const firstNames = new Set(["config.json", "auth", "hooks", "history", registryPath.split(sep)[0]!]);
+          if (priorFiles.some(name => !firstNames.has(name) && !/^\.wire-init-[a-f0-9-]{36}$/.test(name)) ||
+              (await readdir(history)).some(name => !/^switch(?:\.\d+)?$/.test(name))) throw new Error(kept);
+          if (backend === "sqlite") for (const suffix of ["-journal","-wal","-shm"]) if (await occupied(fullRegistryPath + suffix)) throw new Error(kept);
+          await mkdir(dirname(fullRegistryPath), {recursive: true});
+          if (backend === "files") await mkdir(fullRegistryPath, {mode:0o700});
+          else if (backend === "sqlite") {
+            const staged = join(dirname(fullRegistryPath), ".wire-init-" + randomUUID());
+            try {
+              new SqliteRegistry(staged);
+              await link(staged, fullRegistryPath);
+            } finally { await unlink(staged).catch((e: NodeJS.ErrnoException) => { if (e.code !== "ENOENT") throw e; }); }
+          } else throw new Error(backend);
+          const parent = await open(dirname(fullRegistryPath), "r");
+          try { await parent.sync(); } finally { await parent.close(); }
+        }
+        // A previous process may have completed storage creation and died
+        // before publishing config. Validate that storage before adoption.
+        if (!configured) {
+          const registry = backend === "sqlite" ? new SqliteRegistry(fullRegistryPath, false) : new FileRegistry(fullRegistryPath, false);
+          await registry.listResources();
+        }
+        await markRegistryReady(wireRoot);
+        if (!configured) await writeConfig(wireRoot, config);
+        return result(true);
+      });
+    } catch (e) {
+      if (!(e instanceof Error) || !e.message.startsWith("Another Wire operation owns") || attempt >= 8) throw e;
+      await new Promise(r => setTimeout(r, 5 * (attempt + 1)));
+    }
+  }
+}
+
+// Stays outside the registry so removal of the registry cannot be confused
+// with a hand-written config that never had any storage.
+async function markRegistryReady(wireRoot: string) {
+  const history = join(wireRoot, "history");
+  await mkdir(join(history, "registry-ready"), {recursive:true, mode:0o700});
+  const dir = await open(history, "r");
+  try { await dir.sync(); } finally { await dir.close(); }
+}
+
+async function writeConfig(wireRoot: string, config: WireConfig) {
+  const nextConfig = join(wireRoot, randomUUID());
+  try {
+    const handle = await open(nextConfig, "wx", 0o600);
+    try { await handle.writeFile(stableJsonPretty(config) + "\n"); await handle.sync(); }
+    finally { await handle.close(); }
+    await rename(nextConfig, join(wireRoot, "config.json"));
+    const directory = await open(wireRoot, "r");
+    try { await directory.sync(); } finally { await directory.close(); }
+  } finally { await unlink(nextConfig).catch((e: NodeJS.ErrnoException) => { if (e.code !== "ENOENT") throw e; }); }
 }
 
 export async function switchWireBackend(path: string, home: string): Promise<SwitchedWireBackend> {
@@ -120,15 +184,8 @@ export async function switchWireBackend(path: string, home: string): Promise<Swi
     }
     const target = to === "sqlite" ? new SqliteRegistry(toPath) : new FileRegistry(toPath);
     for (const resource of resources) await target.put(resource);
-    const nextConfig = join(wireRoot, randomUUID());
-    try {
-      const handle = await open(nextConfig, "wx", 0o600);
-      try { await handle.writeFile(stableJsonPretty({ ...config, backend: to, path: targetRelativePath }) + "\n"); await handle.sync(); }
-      finally { await handle.close(); }
-      await rename(nextConfig, join(wireRoot, "config.json"));
-      const directory = await open(wireRoot, "r");
-      try { await directory.sync(); } finally { await directory.close(); }
-    } finally { await unlink(nextConfig).catch((e: NodeJS.ErrnoException) => { if (e.code !== "ENOENT") throw e; }); }
+    await markRegistryReady(wireRoot);
+    await writeConfig(wireRoot, { ...config, backend: to, path: targetRelativePath });
     // Remove only records we actually copied. Leave unrelated files alone.
     if (source instanceof FileRegistry) {
       for (const r of resources) await source.delete(r.id);

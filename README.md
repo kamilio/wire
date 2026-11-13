@@ -204,7 +204,7 @@ mkdir -p "docs/$WIRE_SERVICE" && dest="docs/$WIRE_SERVICE/$WIRE_TITLE.md" && mv 
 
 ## Configuration
 
-Workspace config lives in `.wire/config.json` and applies to Wire plus hooks:
+Workspace config lives in `.wire/config.json` and applies to Wire plus hooks. If you write the config by hand in a new workspace, run `wire init --backend sqlite` (or `files`) before the first sync. Init preserves your config and hooks. If an existing workspace loses its registry, restore it from backup. Wire does not create an empty replacement during sync.
 
 ```json
 { "backend": "sqlite", "path": "registry.sqlite3", "env": { "WIRE_CUSTOM_VALUE": "example" } }
