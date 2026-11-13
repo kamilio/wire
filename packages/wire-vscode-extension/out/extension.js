@@ -18669,6 +18669,29 @@ function alignProtectedSpaces(range, start, old, next, from, to, keep) {
     if (pair?.[0] === neighbor && from[neighbor]?.text === " " && to[target]?.text === " " && JSON.stringify(from[neighbor].style) === JSON.stringify(to[target].style)) pair[1] = target;
   }
 }
+function sectionMove(before, after, changes) {
+  if (changes.length !== 1) return;
+  const { start, end, replacement } = changes[0];
+  if (end - start !== replacement.length || replacement.length < 2) return;
+  const cut = before.indexOf(replacement[0], start + 1);
+  if (cut <= start || cut >= end) return;
+  const a = before.slice(start, cut), b2 = before.slice(cut, end);
+  if (![...b2, ...a].every((v2, i) => v2 === replacement[i])) return;
+  const heading = (s) => /^#{1,6} /.test(s);
+  const first = a.some(heading) ? false : b2.some(heading) ? true : void 0;
+  if (first === void 0) return;
+  const moved = first ? a : b2, source = first ? start : cut, dest = first ? end : start, next = first ? start + b2.length : start;
+  const root = (v2) => /^[-*+] /.test(v2 ?? "");
+  const child = (v2) => /^[ \t]+[-*+] /.test(v2 ?? "");
+  if (moved.length < 2 || source + moved.length === before.length || !root(moved[0]) || !moved.slice(1).every(child) || /^[ \t]+(?:[-*+]|\d+[.)]) /.test(before[source + moved.length] ?? "") || !root(before[dest - 1]) || child(after[next + moved.length])) return;
+  const seen = /* @__PURE__ */ new Set(), unique = new Set(moved);
+  for (const row of before) if (unique.has(row)) {
+    if (seen.has(row)) return;
+    seen.add(row);
+  }
+  const remove = { start: source, end: source + moved.length, replacement: [] }, insert = { start: dest, end: dest, replacement: moved };
+  return { source, dest, moved, changes: first ? [remove, insert] : [insert, remove] };
+}
 function plan(tab, previous, desired, comments, allowDuplicatePosition) {
   const oldLayout = spacedBlocks(previous), newLayout = spacedBlocks(desired);
   if (JSON.stringify(numberStarts(oldLayout)) !== JSON.stringify(numberStarts(newLayout))) return unsafe("cannot reproduce a change in native list numbering");
@@ -18679,7 +18702,8 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
   const rows = (layout) => layout.filter((l) => l !== blank).map((l) => l.replace(/^([ \t]*)\d+([.)] +)/, (_2, indent, marker) => indent + "1" + marker));
   const before = rows(oldLayout), after = rows(newLayout);
   let offset = 0;
-  const changes = docChanges(before, after).map((c) => {
+  const delta = docChanges(before, after), move = sectionMove(before, after, delta);
+  const changes = (move?.changes ?? delta).map((c) => {
     const next = c.start + offset;
     offset += c.replacement.length - (c.end - c.start);
     return { ...c, next };
@@ -18764,6 +18788,50 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
   function editable(target, destructive) {
     const p = target.e.paragraph;
     if (JSON.stringify(p).includes('"suggested') || p["positionedObjectIds"] || p["pageBreakBefore"] || destructive && p.paragraphStyle?.headingId) return unsafe("paragraph has a named range, suggestion, object or heading anchor");
+  }
+  if (move) {
+    const left = locate(move.dest - 1), right = move.dest < before.length ? locate(move.dest) : void 0;
+    const list = (o) => tab.documentTab.lists?.[o.e.paragraph.bullet?.listId ?? ""]?.listProperties;
+    const target = list(left);
+    if (!target || right && (right.block.heading !== "NORMAL_TEXT" || right.block.level !== null)) return unsafe("cannot anchor the moved list at a plain section boundary");
+    const allowed = (v2, keys) => Object.keys(v2).every((k2) => keys.includes(k2));
+    const section = (i) => before.slice(0, i).filter((l) => /^#{1,6} /.test(l)).length;
+    if (!section(move.source) || !section(move.dest) || section(move.source) === section(move.dest)) return unsafe("list move needs distinct existing sections");
+    const onlyPlain = (o) => {
+      const p = o.e.paragraph;
+      return allowed(p, ["paragraphStyle", "elements", "bullet"]) && p.elements.every((e) => e.textRun && allowed(e, ["textRun", "startIndex", "endIndex"]) && allowed(e.textRun, ["content", "textStyle"]));
+    };
+    const neighbor = right ?? left;
+    const same = (a, b2) => JSON.stringify(a) === JSON.stringify(b2);
+    const defaultMarks = { underline: false };
+    const standard = target.nestingLevels.every((raw, i) => {
+      const l = raw;
+      return allowed(l, ["glyphSymbol", "glyphFormat", "bulletAlignment", "indentStart", "indentFirstLine", "startNumber", "textStyle"]) && l.glyphSymbol === ["\u25CF", "\u25CB", "\u25A0"][i % 3] && (!l.glyphFormat || l.glyphFormat === "%" + i) && (!l.bulletAlignment || l.bulletAlignment === "START") && (!l.startNumber || l.startNumber === 1) && (!l.textStyle || same(l.textStyle, defaultMarks)) && ["indentStart", "indentFirstLine"].every((k2, n) => !l[k2] || same(l[k2], { magnitude: 36 * (1 + i) - 18 * n, unit: "PT" }));
+    });
+    if (!standard) return unsafe("cannot recreate a custom list preset");
+    if (!right) {
+      const ps = left.e.paragraph.paragraphStyle ?? {}, level = target.nestingLevels[0];
+      if (!level || !allowed(ps, ["namedStyleType", "direction", "spacingMode", "indentFirstLine", "indentStart"]) || ps.spacingMode && ps.spacingMode !== "COLLAPSE_LISTS" || ["indentFirstLine", "indentStart"].some((k2) => ps[k2] && !same(ps[k2], level[k2]))) return unsafe("last list item has extra native formatting");
+    }
+    if (!onlyPlain(neighbor) || right && !allowed(right.e.paragraph.paragraphStyle ?? {}, ["namedStyleType", "direction"]) || neighbor.e.paragraph.paragraphStyle?.direction === "RIGHT_TO_LEFT" || neighbor.e.paragraph.elements.some((e) => Object.keys(e.textRun.textStyle ?? {}).length)) return unsafe("destination has extra native formatting");
+    const sourceId = locate(move.source).e.paragraph.bullet?.listId;
+    for (let i = 0; i < move.moved.length; i++) {
+      const o = locate(move.source + i), p = o.e.paragraph, ps = p.paragraphStyle ?? {}, props = list(o);
+      const level = props?.nestingLevels[o.block.level ?? 0];
+      if (!onlyPlain(o) || !props || !level || !same(props, target) || p.bullet?.listId !== sourceId || !allowed(ps, ["namedStyleType", "direction", "spacingMode", "indentFirstLine", "indentStart"]) || ps.direction === "RIGHT_TO_LEFT" || ps.spacingMode && ps.spacingMode !== "COLLAPSE_LISTS" || ["indentFirstLine", "indentStart"].some((k2) => ps[k2] && !same(ps[k2], level[k2]))) return unsafe("moved paragraph has extra native formatting");
+      const bullet = p.bullet, chars = characters(o.block);
+      if (!allowed(bullet, ["listId", "nestingLevel", "textStyle"]) || bullet.textStyle && !same(bullet.textStyle, defaultMarks) && !same(bullet.textStyle, chars.at(-1)?.style)) return unsafe("moved bullet has extra native formatting");
+      let pos = 0, n = 0;
+      for (const el of p.elements) {
+        const run = el.textRun, end = pos + run.content.length, st = run.textStyle ?? {};
+        if (!allowed(st, ["bold", "italic", "strikethrough", "link"])) return unsafe("moved text has extra native formatting");
+        for (; n < chars.length && chars[n].pos < end; n++) {
+          if (["bold", "italic", "strikethrough", "link"].some((k2) => !same(st[k2] ?? false, chars[n].style[k2] ?? false))) return unsafe("moved text has extra native formatting");
+        }
+        if (run.content === "\n" && !same(st, chars.at(-1)?.style)) return unsafe("moved paragraph has a separately styled ending");
+        pos = end;
+      }
+    }
   }
   for (const c of [...changes].reverse()) {
     const old = before.slice(c.start, c.end).map((_line, i) => locate(c.start + i));

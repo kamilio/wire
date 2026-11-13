@@ -240,3 +240,39 @@ test("an unchanged space stays next to a unique protected Unicode run when the L
     await assert.rejects(refused.write(original,target),/named range/);assert.equal(refused.posts.length,0);
   }
 });
+
+test("moving one intact bullet subtree across a section keeps the existing headings and list entries out of the deletion",async()=>{
+  const lists={a:{listProperties:{nestingLevels:[{glyphSymbol:"●"},{glyphSymbol:"○"}]}}};
+  lists.b=structuredClone(lists.a);
+  function example(tail=true) {
+    const heading=text=>({text,paragraphStyle:{namedStyleType:"HEADING_2",headingId:text}});
+    const entry=(text,listId,nestingLevel=0)=>({text,bullet:{listId,nestingLevel}});
+    const lines=[heading("Work"),entry("First web bullet","a"),entry("Parent","a"),
+      entry([{textRun:{content:"Child\n",textStyle:{italic:true}}}],"a",1),entry("Remaining","a"),heading("Other notes"),entry("Existing","b")];
+    if(tail)lines.push("Tail");
+    const old="## Work\n* First web bullet\n* Parent\n  * *Child*\n* Remaining\n## Other notes\n* Existing"+(tail?"\nTail":"");
+    const next="## Work\n* First web bullet\n* Remaining\n## Other notes\n* Existing\n* Parent\n  * *Child*"+(tail?"\nTail":"");
+    return {...fixture(lines,{lists}),old,next};
+  }
+  for(const tail of [true,false]){
+    const f=example(tail);
+    await f.write(f.old,f.next);
+    const batch=f.posts[0].requests;
+    assert.deepEqual(batch.at(-1),{deleteContentRange:{range:{startIndex:f.content[2].startIndex,endIndex:f.content[3].endIndex,tabId:"tab-main"}}});
+    assert.ok(batch.some(r=>r.updateTextStyle?.textStyle.italic));
+    assert.ok(batch.some(r=>r.insertText?.text.includes("Parent\nChild")));
+  }
+  for(const modify of [
+    f=>{f.content[3].paragraph.elements[0].textRun.textStyle.backgroundColor={color:{rgbColor:{red:1}}};},
+    f=>{f.content[3].paragraph.paragraphStyle.spaceAbove={magnitude:12,unit:"PT"};},
+    f=>{f.content[3].paragraph.bullet.textStyle={underline:true};},
+    f=>{f.content[3].paragraph.suggestedInsertionIds=["example"];},
+    f=>{f.content[6].paragraph.bullet.listId="custom";},
+    f=>{f.old+="\n* Parent"; f.next+="\n* Parent";},
+  ]){
+    const f=example();
+    modify(f);
+    await assert.rejects(f.write(f.old,f.next),/cannot safely apply/);
+    assert.equal(f.posts.length,0);
+  }
+});
