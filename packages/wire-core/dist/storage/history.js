@@ -255,7 +255,15 @@ export class DocumentHistory {
             if (current !== p.next) {
                 if (!await exists(stage)) {
                     const mode = current === null ? 0o600 : (await stat(p.path)).mode & 0o777;
-                    await write(stage, p.next, mode);
+                    const tmp = join(this.dir, randomUUID());
+                    try {
+                        await write(tmp, p.next, mode);
+                        await rename(tmp, stage);
+                        await syncDir(this.dir);
+                    }
+                    finally {
+                        await rm(tmp, { force: true });
+                    }
                 }
                 if (p.expected !== null && !await exists(old)) {
                     if (current !== p.expected)

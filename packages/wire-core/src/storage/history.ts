@@ -4,6 +4,7 @@ import { hostname } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { link, lstat, mkdir, open, readFile, readlink, rename, rm, stat, symlink, unlink } from "node:fs/promises";
 import type { FetchedDocument, Resource } from "../core/model.js";
+import { editorView, plainMarkdown, type EditorReceipts } from "./editor-receipts.js";
 import { stableJsonCompact } from "../core/json.js";
 
 export type HistoryEntry = { id: string; parents: string[]; kind: "attach" | "local" | "remote" | "merge" | "resolve"; at: string };
@@ -13,6 +14,7 @@ export type HistoryDiff = { from: string; to: string; before: string; after: str
 type Revision = HistoryEntry & { blob: string };
 export type HistoryRefs = {
   base: string | null; draft: string | null; remote: string | null; conflict: HistoryConflict | null;
+  editorReceipts?: EditorReceipts;
   strict: boolean; revisions: Revision[]; resolution: FetchedDocument | null; resolutionParent: string | null;
 };
 type Publication = { acknowledged: boolean; path: string; expected: string | null; next: string; token: string; refs: HistoryRefs; resource: Resource | null };
@@ -92,6 +94,7 @@ export class DocumentHistory {
   }
   async save() { await json(join(this.dir, "refs.json"), this.refs); }
   async revision(kind: HistoryEntry["kind"], markdown: string, parents: (string | null)[]): Promise<string> {
+    plainMarkdown(markdown);
     const blob = hash(markdown), ancestry = [...new Set(parents.filter((p): p is string => p !== null))];
     if (ancestry.length === 1 && this.refs.revisions.find(r => r.id === ancestry[0])?.blob === blob) return ancestry[0]!;
     const id = hash(JSON.stringify([kind, blob, ancestry]));
@@ -105,7 +108,12 @@ export class DocumentHistory {
     }
     return id;
   }
-  token() { return hash(stableJsonCompact(this.refs)); }
+  token(raw: string | null = null) { return hash(stableJsonCompact([this.refs, raw])); }
+  view(raw: string) {
+    const view = editorView(raw, this.refs.editorReceipts);
+    for (const ref of [view.shown, view.base]) if (ref && !this.refs.revisions.some(r => r.id === ref)) throw new Error("Orphaned Wire editor receipt. The file was kept.");
+    return view;
+  }
   async text(ref: string) {
     const r = this.refs.revisions.find(r => r.id === ref);
     if (!r) throw new Error("Unknown document revision: " + ref);
@@ -119,8 +127,8 @@ export class DocumentHistory {
       await this.save();
     }
   }
-  async captureLocal(markdown: string) {
-    this.refs.draft = await this.revision("local", markdown, [this.refs.draft ?? this.refs.base]);
+  async captureLocal(markdown: string, parent = this.refs.draft ?? this.refs.base) {
+    this.refs.draft = await this.revision("local", markdown, [parent]);
     await this.save();
     return this.refs.draft;
   }
@@ -130,7 +138,8 @@ export class DocumentHistory {
   }
   async status(path: string): Promise<HistoryStatus> {
     const base = this.refs.base;
-    return { path, base, modified: base === null || await working(path) !== await this.text(base), conflict: this.refs.conflict };
+    const raw = await working(path);
+    return { path, base, modified: base === null || raw === null || this.view(raw).markdown !== await this.text(base), conflict: this.refs.conflict };
   }
   // Private write-ahead intent spans the worktree, registry, and revision pointers.
   // Moving the actual old inode out first lets us verify what we displaced. link()
@@ -156,7 +165,13 @@ export class DocumentHistory {
         try { await link(old, p.path); } catch (e) { if (code(e) !== "EEXIST") throw e; }
         if ((await lstat(old)).isFile()) {
           const saved = await working(old).catch((e: unknown) => { if (e instanceof TypeError) return null; throw e; });
-          if (saved !== null && saved !== p.expected) await this.captureLocal(saved);
+          if (saved !== null && saved !== p.expected) {
+            // The displaced inode remains private even when its editor envelope
+            // cannot be decoded. Never publish or put envelope bytes in history.
+            let view;
+            try { view = this.view(saved); } catch { /* retain raw .old */ }
+            if (view) await this.captureLocal(view.markdown, view.shown ?? undefined);
+          }
         }
       }
       await cleanup();
@@ -175,7 +190,12 @@ export class DocumentHistory {
       if (current !== p.next) {
         if (!await exists(stage)) {
           const mode = current === null ? 0o600 : (await stat(p.path)).mode & 0o777;
-          await write(stage, p.next, mode);
+          const tmp = join(this.dir, randomUUID());
+          try {
+            await write(tmp, p.next, mode);
+            await rename(tmp, stage);
+            await syncDir(this.dir);
+          } finally { await rm(tmp, { force: true }); }
         }
         if (p.expected !== null && !await exists(old)) {
           if (current !== p.expected) return retry();

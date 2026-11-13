@@ -90,3 +90,36 @@ test("a provider observation during a failed local publish never advances the ma
   assert.equal(await readFile(file, "utf8"), "changed during provider read\n");
   assert.equal(doc.writes, 0);
 });
+
+test("an interrupted stage write cannot become a partially delivered document", async t => {
+  const {file,path,wire,doc,make}=await fixture(t,"files");
+  doc.markdown="complete remote replacement\n";
+  const fs=(await import("node:fs/promises")).default;
+  const {syncBuiltinESMExports}=await import("node:module");
+  const original=fs.open;
+  let interrupted=false;
+  fs.open=async (...args)=>{
+    const fd=await original(...args);
+    if(args[1]!=="wx" || interrupted) return fd;
+    const write=fd.writeFile.bind(fd);
+    fd.writeFile=async (content,...rest)=>{
+      // Only interrupt the cooked worktree stage, after write-ahead intent is durable.
+      const {access}=fs;
+      if(content===doc.markdown && await access(join(dirname(args[0]),"pending.json")).then(()=>true,()=>false)){
+        interrupted=true;
+        await write("partial");
+        throw new Error("interrupted stage");
+      }
+      return write(content,...rest);
+    };
+    return fd;
+  };
+  try {
+    syncBuiltinESMExports();
+    await assert.rejects(wire.sync(file,path),/interrupted stage/);
+  } finally { fs.open=original; syncBuiltinESMExports(); }
+  assert.equal(interrupted,true);
+  assert.equal(await readFile(file,"utf8"),"base\n");
+  assert.equal((await make().historyStatus(file,path)).modified,false);
+  assert.equal(await readFile(file,"utf8"),doc.markdown);
+});
