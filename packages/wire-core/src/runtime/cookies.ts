@@ -166,7 +166,7 @@ export function serializeNetscapeCookies(cookies: readonly Cookie[], metadata: R
 
 export function createCookiesCapability(filesystem: FilesystemCapability, home: () => string, repositoryRoot?: () => string | undefined, overrideFile?: (service: string) => string | undefined): CookiesCapability {
   const paths = (service: string) => {
-    if (service === "ashby") return [cookiesFile(home(), service)];
+    if (service === "ashby" || service === "codesignal") return [cookiesFile(home(), service)];
     const overridePath = overrideFile?.(service);
     const repositoryRootPath = repositoryRoot?.();
     return [

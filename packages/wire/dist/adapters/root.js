@@ -1,7 +1,7 @@
 import { UserError, defineCommand, defineGroup, S } from "toolcraft";
 import { defaultWireBackend, registryPathForBackend } from "wire-core";
 import { formatAgenda } from "./calendar.js";
-const authServices = ["ashby", "asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"];
+const authServices = ["ashby", "asana", "chatgpt", "codesignal", "gmail", "google-docs", "notion", "slack", "zoom"];
 const removedCliCommandNames = Object.freeze({
     create: "Use `wire attach <url>` or `wire <url>`.",
     fetch: "Use `wire download <url>`.",
@@ -135,7 +135,7 @@ function wireUserErrorMessage(message) {
         || /^Resource (path |identifier |URL )?not found: /.test(message)
         || /^Ambiguous resource path /.test(message)
         || /^Login not saved$/.test(message)
-        || /authentication (is missing|is missing or expired|failed|expired).*Run `wire (ashby|asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.test(message)
+        || /authentication (is missing|is missing or expired|failed|expired).*Run `wire (ashby|asana|chatgpt|codesignal|gmail|google-docs|notion|slack|zoom) login`/i.test(message)
         || /^Asana API /.test(message)
         || /^(GET|POST|PUT|DELETE) \/.* failed: \d+ /.test(message)
         || /^(Invalid Asana project heading|Asana section appears|Asana milestone appears|Asana task appears|Asana subtask appears|Unsupported Asana Markdown|Duplicate Asana identity|Missing Asana project heading|Asana project identity changed|Unknown Asana identity|Conflicting Asana edits)/.test(message)
@@ -178,7 +178,7 @@ function wireUserErrorDisplayMessage(message) {
     const existingWorkspace = /^Wire workspace already initialized with (sqlite|files) registry at ([\s\S]+)\. Existing registries are not overwritten\.$/.exec(message);
     if (existingWorkspace !== null)
         return `workspace already initialized\nbackend: ${existingWorkspace[1]}\nregistry: ${lineText(existingWorkspace[2])}\nkept: existing registry`;
-    const authentication = /authentication (is missing or expired|is missing|failed|expired).*Run `wire (ashby|asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.exec(message);
+    const authentication = /authentication (is missing or expired|is missing|failed|expired).*Run `wire (ashby|asana|chatgpt|codesignal|gmail|google-docs|notion|slack|zoom) login`/i.exec(message);
     if (authentication !== null)
         return `login required\nservice: ${serviceTitle(authentication[2])}\nrun: wire ${authentication[2]} login`;
     const asanaApi = /^Asana API ([^\s]+) failed: HTTP (\d+)(?: ([\s\S]+))?$/.exec(message);
@@ -322,6 +322,7 @@ function serviceTitle(service) {
         ashby: "Ashby",
         asana: "Asana",
         chatgpt: "ChatGPT",
+        codesignal: "CodeSignal",
         gmail: "Gmail",
         "google-docs": "Google Docs/Sheets/Slides",
         notion: "Notion",
@@ -392,7 +393,7 @@ function authGroup(service, description, loginDescription, auth, readInput, opti
     const login = async (paste) => {
         if (paste === true && !options.allowPaste)
             throw new UserError("Cookie paste is CLI-only.");
-        return paste === true ? auth.pasteCookies(service, await readInput()) : service === "ashby" ? auth.extractAshby() : service === "asana" ? auth.extractAsana() : service === "chatgpt" ? auth.extractChatgpt() : service === "gmail" ? auth.extractGmail() : service === "google-docs" ? auth.extractGoogleDocs() : service === "notion" ? auth.extractNotion() : service === "slack" ? auth.extractSlack() : auth.extractZoom();
+        return paste === true ? auth.pasteCookies(service, await readInput()) : service === "ashby" ? auth.extractAshby() : service === "asana" ? auth.extractAsana() : service === "chatgpt" ? auth.extractChatgpt() : service === "codesignal" ? auth.extractCodeSignal() : service === "gmail" ? auth.extractGmail() : service === "google-docs" ? auth.extractGoogleDocs() : service === "notion" ? auth.extractNotion() : service === "slack" ? auth.extractSlack() : auth.extractZoom();
     };
     const title = serviceTitle(service);
     return defineGroup({ name: service, description, children: [

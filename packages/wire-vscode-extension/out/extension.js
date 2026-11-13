@@ -13847,8 +13847,184 @@ var import_node_child_process3 = require("node:child_process");
 var import_node_fs4 = require("node:fs");
 var import_promises8 = require("node:fs/promises");
 var import_node_path7 = require("node:path");
-var import_node_util3 = require("node:util");
+var import_node_util4 = require("node:util");
 var vscode = __toESM(require("vscode"));
+
+// ../wire/src/adapters/codesignal.ts
+var import_node_util = require("node:util");
+var loginRequired = "codesignal cookie authentication is missing or expired. Run `wire codesignal login` once; other commands reuse saved cookies.";
+async function session(token, read) {
+  const socket = new WebSocket("wss://app.codesignal.com/websocket");
+  let sequence = 0;
+  const send = (value) => socket.send(JSON.stringify(value));
+  const exchange = (start, accept) => new Promise((resolve5, reject) => {
+    const listeners = new AbortController();
+    const finish = () => {
+      clearTimeout(timer);
+      listeners.abort();
+    };
+    const fail = () => {
+      finish();
+      reject(new Error("CodeSignal connection interrupted."));
+    };
+    const timer = setTimeout(fail, 3e4);
+    const options = { signal: listeners.signal };
+    socket.addEventListener("error", fail, options);
+    socket.addEventListener("close", fail, options);
+    socket.addEventListener(
+      "message",
+      (event) => {
+        try {
+          const frame = JSON.parse(String(event.data));
+          if (frame.msg === "ping") {
+            send({ msg: "pong", id: frame.id });
+            return;
+          }
+          const result = accept(frame);
+          if (result) {
+            finish();
+            resolve5(result.value);
+          }
+        } catch (error) {
+          finish();
+          reject(error);
+        }
+      },
+      options
+    );
+    if (socket.readyState === WebSocket.CONNECTING)
+      socket.addEventListener("open", () => send(start), options);
+    else send(start);
+  });
+  const call = (name, params) => {
+    const id = String(++sequence);
+    return exchange(
+      { msg: "method", method: name, params, id },
+      (f) => f.msg === "result" && f.id === id ? { value: f } : void 0
+    );
+  };
+  try {
+    await exchange(
+      { msg: "connect", version: "1", support: ["1"] },
+      (f) => f.msg === "connected" ? { value: true } : void 0
+    );
+    const login = await call("login", [{ resume: token }]);
+    if (login.error) return null;
+    return await read(
+      login.result.id,
+      async (name, ...params) => {
+        const result = await call(name, params);
+        if (result.error) throw new Error("CodeSignal: " + result.error.reason);
+        return result.result;
+      },
+      async (interviewId) => {
+        let candidate;
+        for (const name of [
+          "liveInterviews.byId",
+          "liveInterviews.finished.byId"
+        ]) {
+          const id = String(++sequence);
+          await exchange(
+            { msg: "sub", name, params: [interviewId], id },
+            (f) => {
+              if (f.msg === "added" && f.collection === "liveInterviews" && f.id === interviewId)
+                candidate = f.fields?.candidateId;
+              if (f.msg === "nosub" && f.id === id)
+                throw new Error("CodeSignal: " + f.error?.reason);
+              return f.msg === "ready" && f.subs?.includes(id) ? { value: true } : void 0;
+            }
+          );
+          if (candidate) break;
+        }
+        return candidate;
+      }
+    );
+  } finally {
+    socket.close();
+  }
+}
+var verifyCodeSignal = (token) => session(token, async (user_id) => ({
+  service: "codesignal",
+  identity: { user_id }
+}));
+function block(value) {
+  const fence = "`".repeat(
+    Math.max(3, ...Array.from(value.matchAll(/`+/g), (m2) => m2[0].length + 1))
+  );
+  return fence + "\n" + value + (value.endsWith("\n") ? "" : "\n") + fence;
+}
+function output(events) {
+  let terminals = {};
+  const runs = [];
+  for (const e of events) {
+    if (e.action === "setState" && e.terminal)
+      terminals = { ...e.terminal.terminalContents };
+    if (e.action === "terminalCreate" || e.action === "terminalReset")
+      terminals[e.id] = "";
+    if (e.action === "terminalDelete") delete terminals[e.id];
+    if (e.action === "terminalWrite")
+      terminals[e.id] = (terminals[e.id] ?? "") + e.command;
+    if (e.action === "runResult" && e.testResults) {
+      const { compilationLog, output: output2 } = JSON.parse(e.testResults);
+      runs.push(
+        ...[compilationLog, output2].filter(
+          (v2) => typeof v2 === "string" && v2.length > 0
+        )
+      );
+    }
+  }
+  const clean = (v2) => (0, import_node_util.stripVTControlCharacters)(v2).replace(/\r\n/g, "\n").replace(/[^\n]*\r/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+  return [
+    ...Object.entries(terminals).map(
+      ([id, v2]) => "### Terminal " + id + "\n\n" + block(clean(v2))
+    ),
+    ...runs.map((v2) => "### Run output\n\n" + block(clean(v2)))
+  ];
+}
+function codeSignalInterviewId(url) {
+  return /^https:\/\/app\.codesignal\.com\/live-interview\/([a-zA-Z0-9]+)\/?(?:[?#].*)?$/.exec(
+    url
+  )?.[1];
+}
+async function previewCodeSignal(runtime2, id) {
+  const { token } = await runtime2.cookies.metadata("codesignal");
+  if (!token) throw new Error(loginRequired);
+  const result = await session(token, async (user, method, interview) => {
+    const replayUser = await interview(id);
+    const questions = await method("liveInterviewService.getSolutions", id);
+    const title2 = "CodeSignal interview " + id;
+    const parts = ["# " + title2];
+    for (const question of questions) {
+      for (const solution of "taskLevels" in question ? question.taskLevels : [question]) {
+        const state = solution.solutions.finalState ?? solution.solutions.submission;
+        parts.push("## " + solution.taskDoc.name);
+        for (const file of state?.sources ?? [])
+          if (!file.isHidden && !file.excluded)
+            parts.push("### " + file.path, block(file.source));
+        const data = await method("taskRecordingService.getRecording", {
+          taskId: solution.taskDoc._id,
+          replayUserId: replayUser ?? user,
+          context: { mode: "live-interview", liveInterviewId: id, role: null },
+          taskLevelId: solution.levelId ?? null,
+          executionEnvironment: state?.executionEnvironment,
+          clientUserId: user
+        });
+        const terminal = output(data?.recording?.events ?? []);
+        parts.push(
+          ...terminal.length ? terminal : ["No recorded terminal output."]
+        );
+      }
+    }
+    if (!questions.length) parts.push("No saved solutions.");
+    return {
+      title: title2,
+      markdown: parts.join("\n\n") + "\n",
+      data: { url: "https://app.codesignal.com/live-interview/" + id }
+    };
+  });
+  if (!result) throw new Error(loginRequired);
+  return result;
+}
 
 // ../wire-core/src/core/json.ts
 function compareStrings(left, right) {
@@ -14185,7 +14361,7 @@ function serializeNetscapeCookies(cookies, metadata) {
 }
 function createCookiesCapability(filesystem, home, repositoryRoot2, overrideFile) {
   const paths = (service) => {
-    if (service === "ashby") return [cookiesFile(home(), service)];
+    if (service === "ashby" || service === "codesignal") return [cookiesFile(home(), service)];
     const overridePath = overrideFile?.(service);
     const repositoryRootPath = repositoryRoot2?.();
     return [
@@ -15589,10 +15765,10 @@ async function verifyChatgpt(runtime2, cookies) {
   } });
   const text3 = await response.text();
   if (!text3.startsWith("{")) return null;
-  const session = JSON.parse(text3);
+  const session2 = JSON.parse(text3);
   if (!response.ok) return null;
-  if ("error" in session) return null;
-  const account = session["account"];
+  if ("error" in session2) return null;
+  const account = session2["account"];
   return Object.freeze({ service: "chatgpt", identity: Object.freeze({ account_id: account["id"] }) });
 }
 async function verifyAsana(runtime2, cookies) {
@@ -15618,8 +15794,8 @@ async function verifyGoogleDocsCookies(runtime2, cookies) {
   return Object.freeze({ service: "google-docs", identity: Object.freeze(email === void 0 ? { service: "google-docs" } : { email }) });
 }
 function composeAuth(runtime2, environment2, extractCookies) {
-  const cookieDomains = Object.freeze({ ashby: ".ashbyhq.com", asana: ".asana.com", chatgpt: ".chatgpt.com", gmail: ".google.com", "google-docs": ".google.com", notion: ".notion.so", slack: ".slack.com", zoom: ".zoom.us" });
-  const verifyCookies = (service, cookies, metadata) => service === "ashby" ? ashbySession(runtime2, cookies).then((q2) => q2("query { sessionUser { id } }")).then((d) => d.sessionUser ? { service, identity: { user_id: d.sessionUser.id } } : null).catch(() => null) : service === "asana" ? verifyAsana(runtime2, cookies) : service === "chatgpt" ? verifyChatgpt(runtime2, cookies) : service === "gmail" ? verifyGmailCookies(runtime2, cookies) : service === "google-docs" ? verifyGoogleDocsCookies(runtime2, cookies) : service === "notion" ? verifyNotion(runtime2, cookies) : service === "slack" ? verifySlack(runtime2, cookies, metadata) : verifyZoom(runtime2, cookies);
+  const cookieDomains = Object.freeze({ ashby: ".ashbyhq.com", asana: ".asana.com", chatgpt: ".chatgpt.com", codesignal: ".codesignal.com", gmail: ".google.com", "google-docs": ".google.com", notion: ".notion.so", slack: ".slack.com", zoom: ".zoom.us" });
+  const verifyCookies = (service, cookies, metadata) => service === "codesignal" ? metadata.token ? verifyCodeSignal(metadata.token) : null : service === "ashby" ? ashbySession(runtime2, cookies).then((q2) => q2("query { sessionUser { id } }")).then((d) => d.sessionUser ? { service, identity: { user_id: d.sessionUser.id } } : null).catch(() => null) : service === "asana" ? verifyAsana(runtime2, cookies) : service === "chatgpt" ? verifyChatgpt(runtime2, cookies) : service === "gmail" ? verifyGmailCookies(runtime2, cookies) : service === "google-docs" ? verifyGoogleDocsCookies(runtime2, cookies) : service === "notion" ? verifyNotion(runtime2, cookies) : service === "slack" ? verifySlack(runtime2, cookies, metadata) : verifyZoom(runtime2, cookies);
   const verifyCookieState = async (service, cookies, metadata) => {
     if (service === "zoom") return verifyZoomCookieState(runtime2, cookies, metadata);
     return Object.freeze({ result: await verifyCookies(service, cookies, metadata), cookies, metadata, changed: false });
@@ -15668,6 +15844,7 @@ function composeAuth(runtime2, environment2, extractCookies) {
     extractAshby: () => extract("ashby", "https://app.ashbyhq.com/", ["ashbyhq.com"], (values2) => values2.length > 0),
     extractAsana: () => extract("asana", "https://app.asana.com/", ["asana.com"], (values2) => values2.some((cookie) => cookie.domain === ".asana.com" || cookie.domain.endsWith(".asana.com"))),
     extractChatgpt: () => extract("chatgpt", "https://chatgpt.com/", ["chatgpt.com", "openai.com"], (values2) => values2.some((cookie) => cookie.name === "oai-did") && values2.some((cookie) => cookie.name === "__Secure-next-auth.session-token" || cookie.name === "__Secure-next-auth.session-token.0"), void 0, true),
+    extractCodeSignal: () => extract("codesignal", "https://app.codesignal.com/", ["codesignal.com"], () => true, `(() => { const token = location.origin === "https://app.codesignal.com" && localStorage.getItem("Meteor.loginToken"); return token ? {token} : {}; })()`),
     extractGmail: () => extract("gmail", "https://mail.google.com/mail/u/0/", ["google.com"], googleReady),
     extractGoogleDocs: () => extract("google-docs", "https://docs.google.com/", ["google.com"], googleReady),
     extractNotion: () => extract("notion", "https://www.notion.so/login", ["notion.so", "notion.com"], requiredReady(["token_v2", "notion_user_id", "notion_users"])),
@@ -15682,7 +15859,7 @@ var import_node_child_process2 = require("node:child_process");
 var import_node_fs3 = require("node:fs");
 var import_promises5 = require("node:fs/promises");
 var import_node_path4 = require("node:path");
-var import_node_util = require("node:util");
+var import_node_util2 = require("node:util");
 
 // ../wire-core/dist/core/transform.js
 var htmlEntities2 = Object.freeze({ "AElig": "\xC6", "AElig;": "\xC6", "AMP": "&", "AMP;": "&", "Aacute": "\xC1", "Aacute;": "\xC1", "Abreve;": "\u0102", "Acirc": "\xC2", "Acirc;": "\xC2", "Acy;": "\u0410", "Afr;": "\u{1D504}", "Agrave": "\xC0", "Agrave;": "\xC0", "Alpha;": "\u0391", "Amacr;": "\u0100", "And;": "\u2A53", "Aogon;": "\u0104", "Aopf;": "\u{1D538}", "ApplyFunction;": "\u2061", "Aring": "\xC5", "Aring;": "\xC5", "Ascr;": "\u{1D49C}", "Assign;": "\u2254", "Atilde": "\xC3", "Atilde;": "\xC3", "Auml": "\xC4", "Auml;": "\xC4", "Backslash;": "\u2216", "Barv;": "\u2AE7", "Barwed;": "\u2306", "Bcy;": "\u0411", "Because;": "\u2235", "Bernoullis;": "\u212C", "Beta;": "\u0392", "Bfr;": "\u{1D505}", "Bopf;": "\u{1D539}", "Breve;": "\u02D8", "Bscr;": "\u212C", "Bumpeq;": "\u224E", "CHcy;": "\u0427", "COPY": "\xA9", "COPY;": "\xA9", "Cacute;": "\u0106", "Cap;": "\u22D2", "CapitalDifferentialD;": "\u2145", "Cayleys;": "\u212D", "Ccaron;": "\u010C", "Ccedil": "\xC7", "Ccedil;": "\xC7", "Ccirc;": "\u0108", "Cconint;": "\u2230", "Cdot;": "\u010A", "Cedilla;": "\xB8", "CenterDot;": "\xB7", "Cfr;": "\u212D", "Chi;": "\u03A7", "CircleDot;": "\u2299", "CircleMinus;": "\u2296", "CirclePlus;": "\u2295", "CircleTimes;": "\u2297", "ClockwiseContourIntegral;": "\u2232", "CloseCurlyDoubleQuote;": "\u201D", "CloseCurlyQuote;": "\u2019", "Colon;": "\u2237", "Colone;": "\u2A74", "Congruent;": "\u2261", "Conint;": "\u222F", "ContourIntegral;": "\u222E", "Copf;": "\u2102", "Coproduct;": "\u2210", "CounterClockwiseContourIntegral;": "\u2233", "Cross;": "\u2A2F", "Cscr;": "\u{1D49E}", "Cup;": "\u22D3", "CupCap;": "\u224D", "DD;": "\u2145", "DDotrahd;": "\u2911", "DJcy;": "\u0402", "DScy;": "\u0405", "DZcy;": "\u040F", "Dagger;": "\u2021", "Darr;": "\u21A1", "Dashv;": "\u2AE4", "Dcaron;": "\u010E", "Dcy;": "\u0414", "Del;": "\u2207", "Delta;": "\u0394", "Dfr;": "\u{1D507}", "DiacriticalAcute;": "\xB4", "DiacriticalDot;": "\u02D9", "DiacriticalDoubleAcute;": "\u02DD", "DiacriticalGrave;": "`", "DiacriticalTilde;": "\u02DC", "Diamond;": "\u22C4", "DifferentialD;": "\u2146", "Dopf;": "\u{1D53B}", "Dot;": "\xA8", "DotDot;": "\u20DC", "DotEqual;": "\u2250", "DoubleContourIntegral;": "\u222F", "DoubleDot;": "\xA8", "DoubleDownArrow;": "\u21D3", "DoubleLeftArrow;": "\u21D0", "DoubleLeftRightArrow;": "\u21D4", "DoubleLeftTee;": "\u2AE4", "DoubleLongLeftArrow;": "\u27F8", "DoubleLongLeftRightArrow;": "\u27FA", "DoubleLongRightArrow;": "\u27F9", "DoubleRightArrow;": "\u21D2", "DoubleRightTee;": "\u22A8", "DoubleUpArrow;": "\u21D1", "DoubleUpDownArrow;": "\u21D5", "DoubleVerticalBar;": "\u2225", "DownArrow;": "\u2193", "DownArrowBar;": "\u2913", "DownArrowUpArrow;": "\u21F5", "DownBreve;": "\u0311", "DownLeftRightVector;": "\u2950", "DownLeftTeeVector;": "\u295E", "DownLeftVector;": "\u21BD", "DownLeftVectorBar;": "\u2956", "DownRightTeeVector;": "\u295F", "DownRightVector;": "\u21C1", "DownRightVectorBar;": "\u2957", "DownTee;": "\u22A4", "DownTeeArrow;": "\u21A7", "Downarrow;": "\u21D3", "Dscr;": "\u{1D49F}", "Dstrok;": "\u0110", "ENG;": "\u014A", "ETH": "\xD0", "ETH;": "\xD0", "Eacute": "\xC9", "Eacute;": "\xC9", "Ecaron;": "\u011A", "Ecirc": "\xCA", "Ecirc;": "\xCA", "Ecy;": "\u042D", "Edot;": "\u0116", "Efr;": "\u{1D508}", "Egrave": "\xC8", "Egrave;": "\xC8", "Element;": "\u2208", "Emacr;": "\u0112", "EmptySmallSquare;": "\u25FB", "EmptyVerySmallSquare;": "\u25AB", "Eogon;": "\u0118", "Eopf;": "\u{1D53C}", "Epsilon;": "\u0395", "Equal;": "\u2A75", "EqualTilde;": "\u2242", "Equilibrium;": "\u21CC", "Escr;": "\u2130", "Esim;": "\u2A73", "Eta;": "\u0397", "Euml": "\xCB", "Euml;": "\xCB", "Exists;": "\u2203", "ExponentialE;": "\u2147", "Fcy;": "\u0424", "Ffr;": "\u{1D509}", "FilledSmallSquare;": "\u25FC", "FilledVerySmallSquare;": "\u25AA", "Fopf;": "\u{1D53D}", "ForAll;": "\u2200", "Fouriertrf;": "\u2131", "Fscr;": "\u2131", "GJcy;": "\u0403", "GT": ">", "GT;": ">", "Gamma;": "\u0393", "Gammad;": "\u03DC", "Gbreve;": "\u011E", "Gcedil;": "\u0122", "Gcirc;": "\u011C", "Gcy;": "\u0413", "Gdot;": "\u0120", "Gfr;": "\u{1D50A}", "Gg;": "\u22D9", "Gopf;": "\u{1D53E}", "GreaterEqual;": "\u2265", "GreaterEqualLess;": "\u22DB", "GreaterFullEqual;": "\u2267", "GreaterGreater;": "\u2AA2", "GreaterLess;": "\u2277", "GreaterSlantEqual;": "\u2A7E", "GreaterTilde;": "\u2273", "Gscr;": "\u{1D4A2}", "Gt;": "\u226B", "HARDcy;": "\u042A", "Hacek;": "\u02C7", "Hat;": "^", "Hcirc;": "\u0124", "Hfr;": "\u210C", "HilbertSpace;": "\u210B", "Hopf;": "\u210D", "HorizontalLine;": "\u2500", "Hscr;": "\u210B", "Hstrok;": "\u0126", "HumpDownHump;": "\u224E", "HumpEqual;": "\u224F", "IEcy;": "\u0415", "IJlig;": "\u0132", "IOcy;": "\u0401", "Iacute": "\xCD", "Iacute;": "\xCD", "Icirc": "\xCE", "Icirc;": "\xCE", "Icy;": "\u0418", "Idot;": "\u0130", "Ifr;": "\u2111", "Igrave": "\xCC", "Igrave;": "\xCC", "Im;": "\u2111", "Imacr;": "\u012A", "ImaginaryI;": "\u2148", "Implies;": "\u21D2", "Int;": "\u222C", "Integral;": "\u222B", "Intersection;": "\u22C2", "InvisibleComma;": "\u2063", "InvisibleTimes;": "\u2062", "Iogon;": "\u012E", "Iopf;": "\u{1D540}", "Iota;": "\u0399", "Iscr;": "\u2110", "Itilde;": "\u0128", "Iukcy;": "\u0406", "Iuml": "\xCF", "Iuml;": "\xCF", "Jcirc;": "\u0134", "Jcy;": "\u0419", "Jfr;": "\u{1D50D}", "Jopf;": "\u{1D541}", "Jscr;": "\u{1D4A5}", "Jsercy;": "\u0408", "Jukcy;": "\u0404", "KHcy;": "\u0425", "KJcy;": "\u040C", "Kappa;": "\u039A", "Kcedil;": "\u0136", "Kcy;": "\u041A", "Kfr;": "\u{1D50E}", "Kopf;": "\u{1D542}", "Kscr;": "\u{1D4A6}", "LJcy;": "\u0409", "LT": "<", "LT;": "<", "Lacute;": "\u0139", "Lambda;": "\u039B", "Lang;": "\u27EA", "Laplacetrf;": "\u2112", "Larr;": "\u219E", "Lcaron;": "\u013D", "Lcedil;": "\u013B", "Lcy;": "\u041B", "LeftAngleBracket;": "\u27E8", "LeftArrow;": "\u2190", "LeftArrowBar;": "\u21E4", "LeftArrowRightArrow;": "\u21C6", "LeftCeiling;": "\u2308", "LeftDoubleBracket;": "\u27E6", "LeftDownTeeVector;": "\u2961", "LeftDownVector;": "\u21C3", "LeftDownVectorBar;": "\u2959", "LeftFloor;": "\u230A", "LeftRightArrow;": "\u2194", "LeftRightVector;": "\u294E", "LeftTee;": "\u22A3", "LeftTeeArrow;": "\u21A4", "LeftTeeVector;": "\u295A", "LeftTriangle;": "\u22B2", "LeftTriangleBar;": "\u29CF", "LeftTriangleEqual;": "\u22B4", "LeftUpDownVector;": "\u2951", "LeftUpTeeVector;": "\u2960", "LeftUpVector;": "\u21BF", "LeftUpVectorBar;": "\u2958", "LeftVector;": "\u21BC", "LeftVectorBar;": "\u2952", "Leftarrow;": "\u21D0", "Leftrightarrow;": "\u21D4", "LessEqualGreater;": "\u22DA", "LessFullEqual;": "\u2266", "LessGreater;": "\u2276", "LessLess;": "\u2AA1", "LessSlantEqual;": "\u2A7D", "LessTilde;": "\u2272", "Lfr;": "\u{1D50F}", "Ll;": "\u22D8", "Lleftarrow;": "\u21DA", "Lmidot;": "\u013F", "LongLeftArrow;": "\u27F5", "LongLeftRightArrow;": "\u27F7", "LongRightArrow;": "\u27F6", "Longleftarrow;": "\u27F8", "Longleftrightarrow;": "\u27FA", "Longrightarrow;": "\u27F9", "Lopf;": "\u{1D543}", "LowerLeftArrow;": "\u2199", "LowerRightArrow;": "\u2198", "Lscr;": "\u2112", "Lsh;": "\u21B0", "Lstrok;": "\u0141", "Lt;": "\u226A", "Map;": "\u2905", "Mcy;": "\u041C", "MediumSpace;": "\u205F", "Mellintrf;": "\u2133", "Mfr;": "\u{1D510}", "MinusPlus;": "\u2213", "Mopf;": "\u{1D544}", "Mscr;": "\u2133", "Mu;": "\u039C", "NJcy;": "\u040A", "Nacute;": "\u0143", "Ncaron;": "\u0147", "Ncedil;": "\u0145", "Ncy;": "\u041D", "NegativeMediumSpace;": "\u200B", "NegativeThickSpace;": "\u200B", "NegativeThinSpace;": "\u200B", "NegativeVeryThinSpace;": "\u200B", "NestedGreaterGreater;": "\u226B", "NestedLessLess;": "\u226A", "NewLine;": "\n", "Nfr;": "\u{1D511}", "NoBreak;": "\u2060", "NonBreakingSpace;": "\xA0", "Nopf;": "\u2115", "Not;": "\u2AEC", "NotCongruent;": "\u2262", "NotCupCap;": "\u226D", "NotDoubleVerticalBar;": "\u2226", "NotElement;": "\u2209", "NotEqual;": "\u2260", "NotEqualTilde;": "\u2242\u0338", "NotExists;": "\u2204", "NotGreater;": "\u226F", "NotGreaterEqual;": "\u2271", "NotGreaterFullEqual;": "\u2267\u0338", "NotGreaterGreater;": "\u226B\u0338", "NotGreaterLess;": "\u2279", "NotGreaterSlantEqual;": "\u2A7E\u0338", "NotGreaterTilde;": "\u2275", "NotHumpDownHump;": "\u224E\u0338", "NotHumpEqual;": "\u224F\u0338", "NotLeftTriangle;": "\u22EA", "NotLeftTriangleBar;": "\u29CF\u0338", "NotLeftTriangleEqual;": "\u22EC", "NotLess;": "\u226E", "NotLessEqual;": "\u2270", "NotLessGreater;": "\u2278", "NotLessLess;": "\u226A\u0338", "NotLessSlantEqual;": "\u2A7D\u0338", "NotLessTilde;": "\u2274", "NotNestedGreaterGreater;": "\u2AA2\u0338", "NotNestedLessLess;": "\u2AA1\u0338", "NotPrecedes;": "\u2280", "NotPrecedesEqual;": "\u2AAF\u0338", "NotPrecedesSlantEqual;": "\u22E0", "NotReverseElement;": "\u220C", "NotRightTriangle;": "\u22EB", "NotRightTriangleBar;": "\u29D0\u0338", "NotRightTriangleEqual;": "\u22ED", "NotSquareSubset;": "\u228F\u0338", "NotSquareSubsetEqual;": "\u22E2", "NotSquareSuperset;": "\u2290\u0338", "NotSquareSupersetEqual;": "\u22E3", "NotSubset;": "\u2282\u20D2", "NotSubsetEqual;": "\u2288", "NotSucceeds;": "\u2281", "NotSucceedsEqual;": "\u2AB0\u0338", "NotSucceedsSlantEqual;": "\u22E1", "NotSucceedsTilde;": "\u227F\u0338", "NotSuperset;": "\u2283\u20D2", "NotSupersetEqual;": "\u2289", "NotTilde;": "\u2241", "NotTildeEqual;": "\u2244", "NotTildeFullEqual;": "\u2247", "NotTildeTilde;": "\u2249", "NotVerticalBar;": "\u2224", "Nscr;": "\u{1D4A9}", "Ntilde": "\xD1", "Ntilde;": "\xD1", "Nu;": "\u039D", "OElig;": "\u0152", "Oacute": "\xD3", "Oacute;": "\xD3", "Ocirc": "\xD4", "Ocirc;": "\xD4", "Ocy;": "\u041E", "Odblac;": "\u0150", "Ofr;": "\u{1D512}", "Ograve": "\xD2", "Ograve;": "\xD2", "Omacr;": "\u014C", "Omega;": "\u03A9", "Omicron;": "\u039F", "Oopf;": "\u{1D546}", "OpenCurlyDoubleQuote;": "\u201C", "OpenCurlyQuote;": "\u2018", "Or;": "\u2A54", "Oscr;": "\u{1D4AA}", "Oslash": "\xD8", "Oslash;": "\xD8", "Otilde": "\xD5", "Otilde;": "\xD5", "Otimes;": "\u2A37", "Ouml": "\xD6", "Ouml;": "\xD6", "OverBar;": "\u203E", "OverBrace;": "\u23DE", "OverBracket;": "\u23B4", "OverParenthesis;": "\u23DC", "PartialD;": "\u2202", "Pcy;": "\u041F", "Pfr;": "\u{1D513}", "Phi;": "\u03A6", "Pi;": "\u03A0", "PlusMinus;": "\xB1", "Poincareplane;": "\u210C", "Popf;": "\u2119", "Pr;": "\u2ABB", "Precedes;": "\u227A", "PrecedesEqual;": "\u2AAF", "PrecedesSlantEqual;": "\u227C", "PrecedesTilde;": "\u227E", "Prime;": "\u2033", "Product;": "\u220F", "Proportion;": "\u2237", "Proportional;": "\u221D", "Pscr;": "\u{1D4AB}", "Psi;": "\u03A8", "QUOT": '"', "QUOT;": '"', "Qfr;": "\u{1D514}", "Qopf;": "\u211A", "Qscr;": "\u{1D4AC}", "RBarr;": "\u2910", "REG": "\xAE", "REG;": "\xAE", "Racute;": "\u0154", "Rang;": "\u27EB", "Rarr;": "\u21A0", "Rarrtl;": "\u2916", "Rcaron;": "\u0158", "Rcedil;": "\u0156", "Rcy;": "\u0420", "Re;": "\u211C", "ReverseElement;": "\u220B", "ReverseEquilibrium;": "\u21CB", "ReverseUpEquilibrium;": "\u296F", "Rfr;": "\u211C", "Rho;": "\u03A1", "RightAngleBracket;": "\u27E9", "RightArrow;": "\u2192", "RightArrowBar;": "\u21E5", "RightArrowLeftArrow;": "\u21C4", "RightCeiling;": "\u2309", "RightDoubleBracket;": "\u27E7", "RightDownTeeVector;": "\u295D", "RightDownVector;": "\u21C2", "RightDownVectorBar;": "\u2955", "RightFloor;": "\u230B", "RightTee;": "\u22A2", "RightTeeArrow;": "\u21A6", "RightTeeVector;": "\u295B", "RightTriangle;": "\u22B3", "RightTriangleBar;": "\u29D0", "RightTriangleEqual;": "\u22B5", "RightUpDownVector;": "\u294F", "RightUpTeeVector;": "\u295C", "RightUpVector;": "\u21BE", "RightUpVectorBar;": "\u2954", "RightVector;": "\u21C0", "RightVectorBar;": "\u2953", "Rightarrow;": "\u21D2", "Ropf;": "\u211D", "RoundImplies;": "\u2970", "Rrightarrow;": "\u21DB", "Rscr;": "\u211B", "Rsh;": "\u21B1", "RuleDelayed;": "\u29F4", "SHCHcy;": "\u0429", "SHcy;": "\u0428", "SOFTcy;": "\u042C", "Sacute;": "\u015A", "Sc;": "\u2ABC", "Scaron;": "\u0160", "Scedil;": "\u015E", "Scirc;": "\u015C", "Scy;": "\u0421", "Sfr;": "\u{1D516}", "ShortDownArrow;": "\u2193", "ShortLeftArrow;": "\u2190", "ShortRightArrow;": "\u2192", "ShortUpArrow;": "\u2191", "Sigma;": "\u03A3", "SmallCircle;": "\u2218", "Sopf;": "\u{1D54A}", "Sqrt;": "\u221A", "Square;": "\u25A1", "SquareIntersection;": "\u2293", "SquareSubset;": "\u228F", "SquareSubsetEqual;": "\u2291", "SquareSuperset;": "\u2290", "SquareSupersetEqual;": "\u2292", "SquareUnion;": "\u2294", "Sscr;": "\u{1D4AE}", "Star;": "\u22C6", "Sub;": "\u22D0", "Subset;": "\u22D0", "SubsetEqual;": "\u2286", "Succeeds;": "\u227B", "SucceedsEqual;": "\u2AB0", "SucceedsSlantEqual;": "\u227D", "SucceedsTilde;": "\u227F", "SuchThat;": "\u220B", "Sum;": "\u2211", "Sup;": "\u22D1", "Superset;": "\u2283", "SupersetEqual;": "\u2287", "Supset;": "\u22D1", "THORN": "\xDE", "THORN;": "\xDE", "TRADE;": "\u2122", "TSHcy;": "\u040B", "TScy;": "\u0426", "Tab;": "	", "Tau;": "\u03A4", "Tcaron;": "\u0164", "Tcedil;": "\u0162", "Tcy;": "\u0422", "Tfr;": "\u{1D517}", "Therefore;": "\u2234", "Theta;": "\u0398", "ThickSpace;": "\u205F\u200A", "ThinSpace;": "\u2009", "Tilde;": "\u223C", "TildeEqual;": "\u2243", "TildeFullEqual;": "\u2245", "TildeTilde;": "\u2248", "Topf;": "\u{1D54B}", "TripleDot;": "\u20DB", "Tscr;": "\u{1D4AF}", "Tstrok;": "\u0166", "Uacute": "\xDA", "Uacute;": "\xDA", "Uarr;": "\u219F", "Uarrocir;": "\u2949", "Ubrcy;": "\u040E", "Ubreve;": "\u016C", "Ucirc": "\xDB", "Ucirc;": "\xDB", "Ucy;": "\u0423", "Udblac;": "\u0170", "Ufr;": "\u{1D518}", "Ugrave": "\xD9", "Ugrave;": "\xD9", "Umacr;": "\u016A", "UnderBar;": "_", "UnderBrace;": "\u23DF", "UnderBracket;": "\u23B5", "UnderParenthesis;": "\u23DD", "Union;": "\u22C3", "UnionPlus;": "\u228E", "Uogon;": "\u0172", "Uopf;": "\u{1D54C}", "UpArrow;": "\u2191", "UpArrowBar;": "\u2912", "UpArrowDownArrow;": "\u21C5", "UpDownArrow;": "\u2195", "UpEquilibrium;": "\u296E", "UpTee;": "\u22A5", "UpTeeArrow;": "\u21A5", "Uparrow;": "\u21D1", "Updownarrow;": "\u21D5", "UpperLeftArrow;": "\u2196", "UpperRightArrow;": "\u2197", "Upsi;": "\u03D2", "Upsilon;": "\u03A5", "Uring;": "\u016E", "Uscr;": "\u{1D4B0}", "Utilde;": "\u0168", "Uuml": "\xDC", "Uuml;": "\xDC", "VDash;": "\u22AB", "Vbar;": "\u2AEB", "Vcy;": "\u0412", "Vdash;": "\u22A9", "Vdashl;": "\u2AE6", "Vee;": "\u22C1", "Verbar;": "\u2016", "Vert;": "\u2016", "VerticalBar;": "\u2223", "VerticalLine;": "|", "VerticalSeparator;": "\u2758", "VerticalTilde;": "\u2240", "VeryThinSpace;": "\u200A", "Vfr;": "\u{1D519}", "Vopf;": "\u{1D54D}", "Vscr;": "\u{1D4B1}", "Vvdash;": "\u22AA", "Wcirc;": "\u0174", "Wedge;": "\u22C0", "Wfr;": "\u{1D51A}", "Wopf;": "\u{1D54E}", "Wscr;": "\u{1D4B2}", "Xfr;": "\u{1D51B}", "Xi;": "\u039E", "Xopf;": "\u{1D54F}", "Xscr;": "\u{1D4B3}", "YAcy;": "\u042F", "YIcy;": "\u0407", "YUcy;": "\u042E", "Yacute": "\xDD", "Yacute;": "\xDD", "Ycirc;": "\u0176", "Ycy;": "\u042B", "Yfr;": "\u{1D51C}", "Yopf;": "\u{1D550}", "Yscr;": "\u{1D4B4}", "Yuml;": "\u0178", "ZHcy;": "\u0416", "Zacute;": "\u0179", "Zcaron;": "\u017D", "Zcy;": "\u0417", "Zdot;": "\u017B", "ZeroWidthSpace;": "\u200B", "Zeta;": "\u0396", "Zfr;": "\u2128", "Zopf;": "\u2124", "Zscr;": "\u{1D4B5}", "aacute": "\xE1", "aacute;": "\xE1", "abreve;": "\u0103", "ac;": "\u223E", "acE;": "\u223E\u0333", "acd;": "\u223F", "acirc": "\xE2", "acirc;": "\xE2", "acute": "\xB4", "acute;": "\xB4", "acy;": "\u0430", "aelig": "\xE6", "aelig;": "\xE6", "af;": "\u2061", "afr;": "\u{1D51E}", "agrave": "\xE0", "agrave;": "\xE0", "alefsym;": "\u2135", "aleph;": "\u2135", "alpha;": "\u03B1", "amacr;": "\u0101", "amalg;": "\u2A3F", "amp": "&", "amp;": "&", "and;": "\u2227", "andand;": "\u2A55", "andd;": "\u2A5C", "andslope;": "\u2A58", "andv;": "\u2A5A", "ang;": "\u2220", "ange;": "\u29A4", "angle;": "\u2220", "angmsd;": "\u2221", "angmsdaa;": "\u29A8", "angmsdab;": "\u29A9", "angmsdac;": "\u29AA", "angmsdad;": "\u29AB", "angmsdae;": "\u29AC", "angmsdaf;": "\u29AD", "angmsdag;": "\u29AE", "angmsdah;": "\u29AF", "angrt;": "\u221F", "angrtvb;": "\u22BE", "angrtvbd;": "\u299D", "angsph;": "\u2222", "angst;": "\xC5", "angzarr;": "\u237C", "aogon;": "\u0105", "aopf;": "\u{1D552}", "ap;": "\u2248", "apE;": "\u2A70", "apacir;": "\u2A6F", "ape;": "\u224A", "apid;": "\u224B", "apos;": "'", "approx;": "\u2248", "approxeq;": "\u224A", "aring": "\xE5", "aring;": "\xE5", "ascr;": "\u{1D4B6}", "ast;": "*", "asymp;": "\u2248", "asympeq;": "\u224D", "atilde": "\xE3", "atilde;": "\xE3", "auml": "\xE4", "auml;": "\xE4", "awconint;": "\u2233", "awint;": "\u2A11", "bNot;": "\u2AED", "backcong;": "\u224C", "backepsilon;": "\u03F6", "backprime;": "\u2035", "backsim;": "\u223D", "backsimeq;": "\u22CD", "barvee;": "\u22BD", "barwed;": "\u2305", "barwedge;": "\u2305", "bbrk;": "\u23B5", "bbrktbrk;": "\u23B6", "bcong;": "\u224C", "bcy;": "\u0431", "bdquo;": "\u201E", "becaus;": "\u2235", "because;": "\u2235", "bemptyv;": "\u29B0", "bepsi;": "\u03F6", "bernou;": "\u212C", "beta;": "\u03B2", "beth;": "\u2136", "between;": "\u226C", "bfr;": "\u{1D51F}", "bigcap;": "\u22C2", "bigcirc;": "\u25EF", "bigcup;": "\u22C3", "bigodot;": "\u2A00", "bigoplus;": "\u2A01", "bigotimes;": "\u2A02", "bigsqcup;": "\u2A06", "bigstar;": "\u2605", "bigtriangledown;": "\u25BD", "bigtriangleup;": "\u25B3", "biguplus;": "\u2A04", "bigvee;": "\u22C1", "bigwedge;": "\u22C0", "bkarow;": "\u290D", "blacklozenge;": "\u29EB", "blacksquare;": "\u25AA", "blacktriangle;": "\u25B4", "blacktriangledown;": "\u25BE", "blacktriangleleft;": "\u25C2", "blacktriangleright;": "\u25B8", "blank;": "\u2423", "blk12;": "\u2592", "blk14;": "\u2591", "blk34;": "\u2593", "block;": "\u2588", "bne;": "=\u20E5", "bnequiv;": "\u2261\u20E5", "bnot;": "\u2310", "bopf;": "\u{1D553}", "bot;": "\u22A5", "bottom;": "\u22A5", "bowtie;": "\u22C8", "boxDL;": "\u2557", "boxDR;": "\u2554", "boxDl;": "\u2556", "boxDr;": "\u2553", "boxH;": "\u2550", "boxHD;": "\u2566", "boxHU;": "\u2569", "boxHd;": "\u2564", "boxHu;": "\u2567", "boxUL;": "\u255D", "boxUR;": "\u255A", "boxUl;": "\u255C", "boxUr;": "\u2559", "boxV;": "\u2551", "boxVH;": "\u256C", "boxVL;": "\u2563", "boxVR;": "\u2560", "boxVh;": "\u256B", "boxVl;": "\u2562", "boxVr;": "\u255F", "boxbox;": "\u29C9", "boxdL;": "\u2555", "boxdR;": "\u2552", "boxdl;": "\u2510", "boxdr;": "\u250C", "boxh;": "\u2500", "boxhD;": "\u2565", "boxhU;": "\u2568", "boxhd;": "\u252C", "boxhu;": "\u2534", "boxminus;": "\u229F", "boxplus;": "\u229E", "boxtimes;": "\u22A0", "boxuL;": "\u255B", "boxuR;": "\u2558", "boxul;": "\u2518", "boxur;": "\u2514", "boxv;": "\u2502", "boxvH;": "\u256A", "boxvL;": "\u2561", "boxvR;": "\u255E", "boxvh;": "\u253C", "boxvl;": "\u2524", "boxvr;": "\u251C", "bprime;": "\u2035", "breve;": "\u02D8", "brvbar": "\xA6", "brvbar;": "\xA6", "bscr;": "\u{1D4B7}", "bsemi;": "\u204F", "bsim;": "\u223D", "bsime;": "\u22CD", "bsol;": "\\", "bsolb;": "\u29C5", "bsolhsub;": "\u27C8", "bull;": "\u2022", "bullet;": "\u2022", "bump;": "\u224E", "bumpE;": "\u2AAE", "bumpe;": "\u224F", "bumpeq;": "\u224F", "cacute;": "\u0107", "cap;": "\u2229", "capand;": "\u2A44", "capbrcup;": "\u2A49", "capcap;": "\u2A4B", "capcup;": "\u2A47", "capdot;": "\u2A40", "caps;": "\u2229\uFE00", "caret;": "\u2041", "caron;": "\u02C7", "ccaps;": "\u2A4D", "ccaron;": "\u010D", "ccedil": "\xE7", "ccedil;": "\xE7", "ccirc;": "\u0109", "ccups;": "\u2A4C", "ccupssm;": "\u2A50", "cdot;": "\u010B", "cedil": "\xB8", "cedil;": "\xB8", "cemptyv;": "\u29B2", "cent": "\xA2", "cent;": "\xA2", "centerdot;": "\xB7", "cfr;": "\u{1D520}", "chcy;": "\u0447", "check;": "\u2713", "checkmark;": "\u2713", "chi;": "\u03C7", "cir;": "\u25CB", "cirE;": "\u29C3", "circ;": "\u02C6", "circeq;": "\u2257", "circlearrowleft;": "\u21BA", "circlearrowright;": "\u21BB", "circledR;": "\xAE", "circledS;": "\u24C8", "circledast;": "\u229B", "circledcirc;": "\u229A", "circleddash;": "\u229D", "cire;": "\u2257", "cirfnint;": "\u2A10", "cirmid;": "\u2AEF", "cirscir;": "\u29C2", "clubs;": "\u2663", "clubsuit;": "\u2663", "colon;": ":", "colone;": "\u2254", "coloneq;": "\u2254", "comma;": ",", "commat;": "@", "comp;": "\u2201", "compfn;": "\u2218", "complement;": "\u2201", "complexes;": "\u2102", "cong;": "\u2245", "congdot;": "\u2A6D", "conint;": "\u222E", "copf;": "\u{1D554}", "coprod;": "\u2210", "copy": "\xA9", "copy;": "\xA9", "copysr;": "\u2117", "crarr;": "\u21B5", "cross;": "\u2717", "cscr;": "\u{1D4B8}", "csub;": "\u2ACF", "csube;": "\u2AD1", "csup;": "\u2AD0", "csupe;": "\u2AD2", "ctdot;": "\u22EF", "cudarrl;": "\u2938", "cudarrr;": "\u2935", "cuepr;": "\u22DE", "cuesc;": "\u22DF", "cularr;": "\u21B6", "cularrp;": "\u293D", "cup;": "\u222A", "cupbrcap;": "\u2A48", "cupcap;": "\u2A46", "cupcup;": "\u2A4A", "cupdot;": "\u228D", "cupor;": "\u2A45", "cups;": "\u222A\uFE00", "curarr;": "\u21B7", "curarrm;": "\u293C", "curlyeqprec;": "\u22DE", "curlyeqsucc;": "\u22DF", "curlyvee;": "\u22CE", "curlywedge;": "\u22CF", "curren": "\xA4", "curren;": "\xA4", "curvearrowleft;": "\u21B6", "curvearrowright;": "\u21B7", "cuvee;": "\u22CE", "cuwed;": "\u22CF", "cwconint;": "\u2232", "cwint;": "\u2231", "cylcty;": "\u232D", "dArr;": "\u21D3", "dHar;": "\u2965", "dagger;": "\u2020", "daleth;": "\u2138", "darr;": "\u2193", "dash;": "\u2010", "dashv;": "\u22A3", "dbkarow;": "\u290F", "dblac;": "\u02DD", "dcaron;": "\u010F", "dcy;": "\u0434", "dd;": "\u2146", "ddagger;": "\u2021", "ddarr;": "\u21CA", "ddotseq;": "\u2A77", "deg": "\xB0", "deg;": "\xB0", "delta;": "\u03B4", "demptyv;": "\u29B1", "dfisht;": "\u297F", "dfr;": "\u{1D521}", "dharl;": "\u21C3", "dharr;": "\u21C2", "diam;": "\u22C4", "diamond;": "\u22C4", "diamondsuit;": "\u2666", "diams;": "\u2666", "die;": "\xA8", "digamma;": "\u03DD", "disin;": "\u22F2", "div;": "\xF7", "divide": "\xF7", "divide;": "\xF7", "divideontimes;": "\u22C7", "divonx;": "\u22C7", "djcy;": "\u0452", "dlcorn;": "\u231E", "dlcrop;": "\u230D", "dollar;": "$", "dopf;": "\u{1D555}", "dot;": "\u02D9", "doteq;": "\u2250", "doteqdot;": "\u2251", "dotminus;": "\u2238", "dotplus;": "\u2214", "dotsquare;": "\u22A1", "doublebarwedge;": "\u2306", "downarrow;": "\u2193", "downdownarrows;": "\u21CA", "downharpoonleft;": "\u21C3", "downharpoonright;": "\u21C2", "drbkarow;": "\u2910", "drcorn;": "\u231F", "drcrop;": "\u230C", "dscr;": "\u{1D4B9}", "dscy;": "\u0455", "dsol;": "\u29F6", "dstrok;": "\u0111", "dtdot;": "\u22F1", "dtri;": "\u25BF", "dtrif;": "\u25BE", "duarr;": "\u21F5", "duhar;": "\u296F", "dwangle;": "\u29A6", "dzcy;": "\u045F", "dzigrarr;": "\u27FF", "eDDot;": "\u2A77", "eDot;": "\u2251", "eacute": "\xE9", "eacute;": "\xE9", "easter;": "\u2A6E", "ecaron;": "\u011B", "ecir;": "\u2256", "ecirc": "\xEA", "ecirc;": "\xEA", "ecolon;": "\u2255", "ecy;": "\u044D", "edot;": "\u0117", "ee;": "\u2147", "efDot;": "\u2252", "efr;": "\u{1D522}", "eg;": "\u2A9A", "egrave": "\xE8", "egrave;": "\xE8", "egs;": "\u2A96", "egsdot;": "\u2A98", "el;": "\u2A99", "elinters;": "\u23E7", "ell;": "\u2113", "els;": "\u2A95", "elsdot;": "\u2A97", "emacr;": "\u0113", "empty;": "\u2205", "emptyset;": "\u2205", "emptyv;": "\u2205", "emsp13;": "\u2004", "emsp14;": "\u2005", "emsp;": "\u2003", "eng;": "\u014B", "ensp;": "\u2002", "eogon;": "\u0119", "eopf;": "\u{1D556}", "epar;": "\u22D5", "eparsl;": "\u29E3", "eplus;": "\u2A71", "epsi;": "\u03B5", "epsilon;": "\u03B5", "epsiv;": "\u03F5", "eqcirc;": "\u2256", "eqcolon;": "\u2255", "eqsim;": "\u2242", "eqslantgtr;": "\u2A96", "eqslantless;": "\u2A95", "equals;": "=", "equest;": "\u225F", "equiv;": "\u2261", "equivDD;": "\u2A78", "eqvparsl;": "\u29E5", "erDot;": "\u2253", "erarr;": "\u2971", "escr;": "\u212F", "esdot;": "\u2250", "esim;": "\u2242", "eta;": "\u03B7", "eth": "\xF0", "eth;": "\xF0", "euml": "\xEB", "euml;": "\xEB", "euro;": "\u20AC", "excl;": "!", "exist;": "\u2203", "expectation;": "\u2130", "exponentiale;": "\u2147", "fallingdotseq;": "\u2252", "fcy;": "\u0444", "female;": "\u2640", "ffilig;": "\uFB03", "fflig;": "\uFB00", "ffllig;": "\uFB04", "ffr;": "\u{1D523}", "filig;": "\uFB01", "fjlig;": "fj", "flat;": "\u266D", "fllig;": "\uFB02", "fltns;": "\u25B1", "fnof;": "\u0192", "fopf;": "\u{1D557}", "forall;": "\u2200", "fork;": "\u22D4", "forkv;": "\u2AD9", "fpartint;": "\u2A0D", "frac12": "\xBD", "frac12;": "\xBD", "frac13;": "\u2153", "frac14": "\xBC", "frac14;": "\xBC", "frac15;": "\u2155", "frac16;": "\u2159", "frac18;": "\u215B", "frac23;": "\u2154", "frac25;": "\u2156", "frac34": "\xBE", "frac34;": "\xBE", "frac35;": "\u2157", "frac38;": "\u215C", "frac45;": "\u2158", "frac56;": "\u215A", "frac58;": "\u215D", "frac78;": "\u215E", "frasl;": "\u2044", "frown;": "\u2322", "fscr;": "\u{1D4BB}", "gE;": "\u2267", "gEl;": "\u2A8C", "gacute;": "\u01F5", "gamma;": "\u03B3", "gammad;": "\u03DD", "gap;": "\u2A86", "gbreve;": "\u011F", "gcirc;": "\u011D", "gcy;": "\u0433", "gdot;": "\u0121", "ge;": "\u2265", "gel;": "\u22DB", "geq;": "\u2265", "geqq;": "\u2267", "geqslant;": "\u2A7E", "ges;": "\u2A7E", "gescc;": "\u2AA9", "gesdot;": "\u2A80", "gesdoto;": "\u2A82", "gesdotol;": "\u2A84", "gesl;": "\u22DB\uFE00", "gesles;": "\u2A94", "gfr;": "\u{1D524}", "gg;": "\u226B", "ggg;": "\u22D9", "gimel;": "\u2137", "gjcy;": "\u0453", "gl;": "\u2277", "glE;": "\u2A92", "gla;": "\u2AA5", "glj;": "\u2AA4", "gnE;": "\u2269", "gnap;": "\u2A8A", "gnapprox;": "\u2A8A", "gne;": "\u2A88", "gneq;": "\u2A88", "gneqq;": "\u2269", "gnsim;": "\u22E7", "gopf;": "\u{1D558}", "grave;": "`", "gscr;": "\u210A", "gsim;": "\u2273", "gsime;": "\u2A8E", "gsiml;": "\u2A90", "gt": ">", "gt;": ">", "gtcc;": "\u2AA7", "gtcir;": "\u2A7A", "gtdot;": "\u22D7", "gtlPar;": "\u2995", "gtquest;": "\u2A7C", "gtrapprox;": "\u2A86", "gtrarr;": "\u2978", "gtrdot;": "\u22D7", "gtreqless;": "\u22DB", "gtreqqless;": "\u2A8C", "gtrless;": "\u2277", "gtrsim;": "\u2273", "gvertneqq;": "\u2269\uFE00", "gvnE;": "\u2269\uFE00", "hArr;": "\u21D4", "hairsp;": "\u200A", "half;": "\xBD", "hamilt;": "\u210B", "hardcy;": "\u044A", "harr;": "\u2194", "harrcir;": "\u2948", "harrw;": "\u21AD", "hbar;": "\u210F", "hcirc;": "\u0125", "hearts;": "\u2665", "heartsuit;": "\u2665", "hellip;": "\u2026", "hercon;": "\u22B9", "hfr;": "\u{1D525}", "hksearow;": "\u2925", "hkswarow;": "\u2926", "hoarr;": "\u21FF", "homtht;": "\u223B", "hookleftarrow;": "\u21A9", "hookrightarrow;": "\u21AA", "hopf;": "\u{1D559}", "horbar;": "\u2015", "hscr;": "\u{1D4BD}", "hslash;": "\u210F", "hstrok;": "\u0127", "hybull;": "\u2043", "hyphen;": "\u2010", "iacute": "\xED", "iacute;": "\xED", "ic;": "\u2063", "icirc": "\xEE", "icirc;": "\xEE", "icy;": "\u0438", "iecy;": "\u0435", "iexcl": "\xA1", "iexcl;": "\xA1", "iff;": "\u21D4", "ifr;": "\u{1D526}", "igrave": "\xEC", "igrave;": "\xEC", "ii;": "\u2148", "iiiint;": "\u2A0C", "iiint;": "\u222D", "iinfin;": "\u29DC", "iiota;": "\u2129", "ijlig;": "\u0133", "imacr;": "\u012B", "image;": "\u2111", "imagline;": "\u2110", "imagpart;": "\u2111", "imath;": "\u0131", "imof;": "\u22B7", "imped;": "\u01B5", "in;": "\u2208", "incare;": "\u2105", "infin;": "\u221E", "infintie;": "\u29DD", "inodot;": "\u0131", "int;": "\u222B", "intcal;": "\u22BA", "integers;": "\u2124", "intercal;": "\u22BA", "intlarhk;": "\u2A17", "intprod;": "\u2A3C", "iocy;": "\u0451", "iogon;": "\u012F", "iopf;": "\u{1D55A}", "iota;": "\u03B9", "iprod;": "\u2A3C", "iquest": "\xBF", "iquest;": "\xBF", "iscr;": "\u{1D4BE}", "isin;": "\u2208", "isinE;": "\u22F9", "isindot;": "\u22F5", "isins;": "\u22F4", "isinsv;": "\u22F3", "isinv;": "\u2208", "it;": "\u2062", "itilde;": "\u0129", "iukcy;": "\u0456", "iuml": "\xEF", "iuml;": "\xEF", "jcirc;": "\u0135", "jcy;": "\u0439", "jfr;": "\u{1D527}", "jmath;": "\u0237", "jopf;": "\u{1D55B}", "jscr;": "\u{1D4BF}", "jsercy;": "\u0458", "jukcy;": "\u0454", "kappa;": "\u03BA", "kappav;": "\u03F0", "kcedil;": "\u0137", "kcy;": "\u043A", "kfr;": "\u{1D528}", "kgreen;": "\u0138", "khcy;": "\u0445", "kjcy;": "\u045C", "kopf;": "\u{1D55C}", "kscr;": "\u{1D4C0}", "lAarr;": "\u21DA", "lArr;": "\u21D0", "lAtail;": "\u291B", "lBarr;": "\u290E", "lE;": "\u2266", "lEg;": "\u2A8B", "lHar;": "\u2962", "lacute;": "\u013A", "laemptyv;": "\u29B4", "lagran;": "\u2112", "lambda;": "\u03BB", "lang;": "\u27E8", "langd;": "\u2991", "langle;": "\u27E8", "lap;": "\u2A85", "laquo": "\xAB", "laquo;": "\xAB", "larr;": "\u2190", "larrb;": "\u21E4", "larrbfs;": "\u291F", "larrfs;": "\u291D", "larrhk;": "\u21A9", "larrlp;": "\u21AB", "larrpl;": "\u2939", "larrsim;": "\u2973", "larrtl;": "\u21A2", "lat;": "\u2AAB", "latail;": "\u2919", "late;": "\u2AAD", "lates;": "\u2AAD\uFE00", "lbarr;": "\u290C", "lbbrk;": "\u2772", "lbrace;": "{", "lbrack;": "[", "lbrke;": "\u298B", "lbrksld;": "\u298F", "lbrkslu;": "\u298D", "lcaron;": "\u013E", "lcedil;": "\u013C", "lceil;": "\u2308", "lcub;": "{", "lcy;": "\u043B", "ldca;": "\u2936", "ldquo;": "\u201C", "ldquor;": "\u201E", "ldrdhar;": "\u2967", "ldrushar;": "\u294B", "ldsh;": "\u21B2", "le;": "\u2264", "leftarrow;": "\u2190", "leftarrowtail;": "\u21A2", "leftharpoondown;": "\u21BD", "leftharpoonup;": "\u21BC", "leftleftarrows;": "\u21C7", "leftrightarrow;": "\u2194", "leftrightarrows;": "\u21C6", "leftrightharpoons;": "\u21CB", "leftrightsquigarrow;": "\u21AD", "leftthreetimes;": "\u22CB", "leg;": "\u22DA", "leq;": "\u2264", "leqq;": "\u2266", "leqslant;": "\u2A7D", "les;": "\u2A7D", "lescc;": "\u2AA8", "lesdot;": "\u2A7F", "lesdoto;": "\u2A81", "lesdotor;": "\u2A83", "lesg;": "\u22DA\uFE00", "lesges;": "\u2A93", "lessapprox;": "\u2A85", "lessdot;": "\u22D6", "lesseqgtr;": "\u22DA", "lesseqqgtr;": "\u2A8B", "lessgtr;": "\u2276", "lesssim;": "\u2272", "lfisht;": "\u297C", "lfloor;": "\u230A", "lfr;": "\u{1D529}", "lg;": "\u2276", "lgE;": "\u2A91", "lhard;": "\u21BD", "lharu;": "\u21BC", "lharul;": "\u296A", "lhblk;": "\u2584", "ljcy;": "\u0459", "ll;": "\u226A", "llarr;": "\u21C7", "llcorner;": "\u231E", "llhard;": "\u296B", "lltri;": "\u25FA", "lmidot;": "\u0140", "lmoust;": "\u23B0", "lmoustache;": "\u23B0", "lnE;": "\u2268", "lnap;": "\u2A89", "lnapprox;": "\u2A89", "lne;": "\u2A87", "lneq;": "\u2A87", "lneqq;": "\u2268", "lnsim;": "\u22E6", "loang;": "\u27EC", "loarr;": "\u21FD", "lobrk;": "\u27E6", "longleftarrow;": "\u27F5", "longleftrightarrow;": "\u27F7", "longmapsto;": "\u27FC", "longrightarrow;": "\u27F6", "looparrowleft;": "\u21AB", "looparrowright;": "\u21AC", "lopar;": "\u2985", "lopf;": "\u{1D55D}", "loplus;": "\u2A2D", "lotimes;": "\u2A34", "lowast;": "\u2217", "lowbar;": "_", "loz;": "\u25CA", "lozenge;": "\u25CA", "lozf;": "\u29EB", "lpar;": "(", "lparlt;": "\u2993", "lrarr;": "\u21C6", "lrcorner;": "\u231F", "lrhar;": "\u21CB", "lrhard;": "\u296D", "lrm;": "\u200E", "lrtri;": "\u22BF", "lsaquo;": "\u2039", "lscr;": "\u{1D4C1}", "lsh;": "\u21B0", "lsim;": "\u2272", "lsime;": "\u2A8D", "lsimg;": "\u2A8F", "lsqb;": "[", "lsquo;": "\u2018", "lsquor;": "\u201A", "lstrok;": "\u0142", "lt": "<", "lt;": "<", "ltcc;": "\u2AA6", "ltcir;": "\u2A79", "ltdot;": "\u22D6", "lthree;": "\u22CB", "ltimes;": "\u22C9", "ltlarr;": "\u2976", "ltquest;": "\u2A7B", "ltrPar;": "\u2996", "ltri;": "\u25C3", "ltrie;": "\u22B4", "ltrif;": "\u25C2", "lurdshar;": "\u294A", "luruhar;": "\u2966", "lvertneqq;": "\u2268\uFE00", "lvnE;": "\u2268\uFE00", "mDDot;": "\u223A", "macr": "\xAF", "macr;": "\xAF", "male;": "\u2642", "malt;": "\u2720", "maltese;": "\u2720", "map;": "\u21A6", "mapsto;": "\u21A6", "mapstodown;": "\u21A7", "mapstoleft;": "\u21A4", "mapstoup;": "\u21A5", "marker;": "\u25AE", "mcomma;": "\u2A29", "mcy;": "\u043C", "mdash;": "\u2014", "measuredangle;": "\u2221", "mfr;": "\u{1D52A}", "mho;": "\u2127", "micro": "\xB5", "micro;": "\xB5", "mid;": "\u2223", "midast;": "*", "midcir;": "\u2AF0", "middot": "\xB7", "middot;": "\xB7", "minus;": "\u2212", "minusb;": "\u229F", "minusd;": "\u2238", "minusdu;": "\u2A2A", "mlcp;": "\u2ADB", "mldr;": "\u2026", "mnplus;": "\u2213", "models;": "\u22A7", "mopf;": "\u{1D55E}", "mp;": "\u2213", "mscr;": "\u{1D4C2}", "mstpos;": "\u223E", "mu;": "\u03BC", "multimap;": "\u22B8", "mumap;": "\u22B8", "nGg;": "\u22D9\u0338", "nGt;": "\u226B\u20D2", "nGtv;": "\u226B\u0338", "nLeftarrow;": "\u21CD", "nLeftrightarrow;": "\u21CE", "nLl;": "\u22D8\u0338", "nLt;": "\u226A\u20D2", "nLtv;": "\u226A\u0338", "nRightarrow;": "\u21CF", "nVDash;": "\u22AF", "nVdash;": "\u22AE", "nabla;": "\u2207", "nacute;": "\u0144", "nang;": "\u2220\u20D2", "nap;": "\u2249", "napE;": "\u2A70\u0338", "napid;": "\u224B\u0338", "napos;": "\u0149", "napprox;": "\u2249", "natur;": "\u266E", "natural;": "\u266E", "naturals;": "\u2115", "nbsp": "\xA0", "nbsp;": "\xA0", "nbump;": "\u224E\u0338", "nbumpe;": "\u224F\u0338", "ncap;": "\u2A43", "ncaron;": "\u0148", "ncedil;": "\u0146", "ncong;": "\u2247", "ncongdot;": "\u2A6D\u0338", "ncup;": "\u2A42", "ncy;": "\u043D", "ndash;": "\u2013", "ne;": "\u2260", "neArr;": "\u21D7", "nearhk;": "\u2924", "nearr;": "\u2197", "nearrow;": "\u2197", "nedot;": "\u2250\u0338", "nequiv;": "\u2262", "nesear;": "\u2928", "nesim;": "\u2242\u0338", "nexist;": "\u2204", "nexists;": "\u2204", "nfr;": "\u{1D52B}", "ngE;": "\u2267\u0338", "nge;": "\u2271", "ngeq;": "\u2271", "ngeqq;": "\u2267\u0338", "ngeqslant;": "\u2A7E\u0338", "nges;": "\u2A7E\u0338", "ngsim;": "\u2275", "ngt;": "\u226F", "ngtr;": "\u226F", "nhArr;": "\u21CE", "nharr;": "\u21AE", "nhpar;": "\u2AF2", "ni;": "\u220B", "nis;": "\u22FC", "nisd;": "\u22FA", "niv;": "\u220B", "njcy;": "\u045A", "nlArr;": "\u21CD", "nlE;": "\u2266\u0338", "nlarr;": "\u219A", "nldr;": "\u2025", "nle;": "\u2270", "nleftarrow;": "\u219A", "nleftrightarrow;": "\u21AE", "nleq;": "\u2270", "nleqq;": "\u2266\u0338", "nleqslant;": "\u2A7D\u0338", "nles;": "\u2A7D\u0338", "nless;": "\u226E", "nlsim;": "\u2274", "nlt;": "\u226E", "nltri;": "\u22EA", "nltrie;": "\u22EC", "nmid;": "\u2224", "nopf;": "\u{1D55F}", "not": "\xAC", "not;": "\xAC", "notin;": "\u2209", "notinE;": "\u22F9\u0338", "notindot;": "\u22F5\u0338", "notinva;": "\u2209", "notinvb;": "\u22F7", "notinvc;": "\u22F6", "notni;": "\u220C", "notniva;": "\u220C", "notnivb;": "\u22FE", "notnivc;": "\u22FD", "npar;": "\u2226", "nparallel;": "\u2226", "nparsl;": "\u2AFD\u20E5", "npart;": "\u2202\u0338", "npolint;": "\u2A14", "npr;": "\u2280", "nprcue;": "\u22E0", "npre;": "\u2AAF\u0338", "nprec;": "\u2280", "npreceq;": "\u2AAF\u0338", "nrArr;": "\u21CF", "nrarr;": "\u219B", "nrarrc;": "\u2933\u0338", "nrarrw;": "\u219D\u0338", "nrightarrow;": "\u219B", "nrtri;": "\u22EB", "nrtrie;": "\u22ED", "nsc;": "\u2281", "nsccue;": "\u22E1", "nsce;": "\u2AB0\u0338", "nscr;": "\u{1D4C3}", "nshortmid;": "\u2224", "nshortparallel;": "\u2226", "nsim;": "\u2241", "nsime;": "\u2244", "nsimeq;": "\u2244", "nsmid;": "\u2224", "nspar;": "\u2226", "nsqsube;": "\u22E2", "nsqsupe;": "\u22E3", "nsub;": "\u2284", "nsubE;": "\u2AC5\u0338", "nsube;": "\u2288", "nsubset;": "\u2282\u20D2", "nsubseteq;": "\u2288", "nsubseteqq;": "\u2AC5\u0338", "nsucc;": "\u2281", "nsucceq;": "\u2AB0\u0338", "nsup;": "\u2285", "nsupE;": "\u2AC6\u0338", "nsupe;": "\u2289", "nsupset;": "\u2283\u20D2", "nsupseteq;": "\u2289", "nsupseteqq;": "\u2AC6\u0338", "ntgl;": "\u2279", "ntilde": "\xF1", "ntilde;": "\xF1", "ntlg;": "\u2278", "ntriangleleft;": "\u22EA", "ntrianglelefteq;": "\u22EC", "ntriangleright;": "\u22EB", "ntrianglerighteq;": "\u22ED", "nu;": "\u03BD", "num;": "#", "numero;": "\u2116", "numsp;": "\u2007", "nvDash;": "\u22AD", "nvHarr;": "\u2904", "nvap;": "\u224D\u20D2", "nvdash;": "\u22AC", "nvge;": "\u2265\u20D2", "nvgt;": ">\u20D2", "nvinfin;": "\u29DE", "nvlArr;": "\u2902", "nvle;": "\u2264\u20D2", "nvlt;": "<\u20D2", "nvltrie;": "\u22B4\u20D2", "nvrArr;": "\u2903", "nvrtrie;": "\u22B5\u20D2", "nvsim;": "\u223C\u20D2", "nwArr;": "\u21D6", "nwarhk;": "\u2923", "nwarr;": "\u2196", "nwarrow;": "\u2196", "nwnear;": "\u2927", "oS;": "\u24C8", "oacute": "\xF3", "oacute;": "\xF3", "oast;": "\u229B", "ocir;": "\u229A", "ocirc": "\xF4", "ocirc;": "\xF4", "ocy;": "\u043E", "odash;": "\u229D", "odblac;": "\u0151", "odiv;": "\u2A38", "odot;": "\u2299", "odsold;": "\u29BC", "oelig;": "\u0153", "ofcir;": "\u29BF", "ofr;": "\u{1D52C}", "ogon;": "\u02DB", "ograve": "\xF2", "ograve;": "\xF2", "ogt;": "\u29C1", "ohbar;": "\u29B5", "ohm;": "\u03A9", "oint;": "\u222E", "olarr;": "\u21BA", "olcir;": "\u29BE", "olcross;": "\u29BB", "oline;": "\u203E", "olt;": "\u29C0", "omacr;": "\u014D", "omega;": "\u03C9", "omicron;": "\u03BF", "omid;": "\u29B6", "ominus;": "\u2296", "oopf;": "\u{1D560}", "opar;": "\u29B7", "operp;": "\u29B9", "oplus;": "\u2295", "or;": "\u2228", "orarr;": "\u21BB", "ord;": "\u2A5D", "order;": "\u2134", "orderof;": "\u2134", "ordf": "\xAA", "ordf;": "\xAA", "ordm": "\xBA", "ordm;": "\xBA", "origof;": "\u22B6", "oror;": "\u2A56", "orslope;": "\u2A57", "orv;": "\u2A5B", "oscr;": "\u2134", "oslash": "\xF8", "oslash;": "\xF8", "osol;": "\u2298", "otilde": "\xF5", "otilde;": "\xF5", "otimes;": "\u2297", "otimesas;": "\u2A36", "ouml": "\xF6", "ouml;": "\xF6", "ovbar;": "\u233D", "par;": "\u2225", "para": "\xB6", "para;": "\xB6", "parallel;": "\u2225", "parsim;": "\u2AF3", "parsl;": "\u2AFD", "part;": "\u2202", "pcy;": "\u043F", "percnt;": "%", "period;": ".", "permil;": "\u2030", "perp;": "\u22A5", "pertenk;": "\u2031", "pfr;": "\u{1D52D}", "phi;": "\u03C6", "phiv;": "\u03D5", "phmmat;": "\u2133", "phone;": "\u260E", "pi;": "\u03C0", "pitchfork;": "\u22D4", "piv;": "\u03D6", "planck;": "\u210F", "planckh;": "\u210E", "plankv;": "\u210F", "plus;": "+", "plusacir;": "\u2A23", "plusb;": "\u229E", "pluscir;": "\u2A22", "plusdo;": "\u2214", "plusdu;": "\u2A25", "pluse;": "\u2A72", "plusmn": "\xB1", "plusmn;": "\xB1", "plussim;": "\u2A26", "plustwo;": "\u2A27", "pm;": "\xB1", "pointint;": "\u2A15", "popf;": "\u{1D561}", "pound": "\xA3", "pound;": "\xA3", "pr;": "\u227A", "prE;": "\u2AB3", "prap;": "\u2AB7", "prcue;": "\u227C", "pre;": "\u2AAF", "prec;": "\u227A", "precapprox;": "\u2AB7", "preccurlyeq;": "\u227C", "preceq;": "\u2AAF", "precnapprox;": "\u2AB9", "precneqq;": "\u2AB5", "precnsim;": "\u22E8", "precsim;": "\u227E", "prime;": "\u2032", "primes;": "\u2119", "prnE;": "\u2AB5", "prnap;": "\u2AB9", "prnsim;": "\u22E8", "prod;": "\u220F", "profalar;": "\u232E", "profline;": "\u2312", "profsurf;": "\u2313", "prop;": "\u221D", "propto;": "\u221D", "prsim;": "\u227E", "prurel;": "\u22B0", "pscr;": "\u{1D4C5}", "psi;": "\u03C8", "puncsp;": "\u2008", "qfr;": "\u{1D52E}", "qint;": "\u2A0C", "qopf;": "\u{1D562}", "qprime;": "\u2057", "qscr;": "\u{1D4C6}", "quaternions;": "\u210D", "quatint;": "\u2A16", "quest;": "?", "questeq;": "\u225F", "quot": '"', "quot;": '"', "rAarr;": "\u21DB", "rArr;": "\u21D2", "rAtail;": "\u291C", "rBarr;": "\u290F", "rHar;": "\u2964", "race;": "\u223D\u0331", "racute;": "\u0155", "radic;": "\u221A", "raemptyv;": "\u29B3", "rang;": "\u27E9", "rangd;": "\u2992", "range;": "\u29A5", "rangle;": "\u27E9", "raquo": "\xBB", "raquo;": "\xBB", "rarr;": "\u2192", "rarrap;": "\u2975", "rarrb;": "\u21E5", "rarrbfs;": "\u2920", "rarrc;": "\u2933", "rarrfs;": "\u291E", "rarrhk;": "\u21AA", "rarrlp;": "\u21AC", "rarrpl;": "\u2945", "rarrsim;": "\u2974", "rarrtl;": "\u21A3", "rarrw;": "\u219D", "ratail;": "\u291A", "ratio;": "\u2236", "rationals;": "\u211A", "rbarr;": "\u290D", "rbbrk;": "\u2773", "rbrace;": "}", "rbrack;": "]", "rbrke;": "\u298C", "rbrksld;": "\u298E", "rbrkslu;": "\u2990", "rcaron;": "\u0159", "rcedil;": "\u0157", "rceil;": "\u2309", "rcub;": "}", "rcy;": "\u0440", "rdca;": "\u2937", "rdldhar;": "\u2969", "rdquo;": "\u201D", "rdquor;": "\u201D", "rdsh;": "\u21B3", "real;": "\u211C", "realine;": "\u211B", "realpart;": "\u211C", "reals;": "\u211D", "rect;": "\u25AD", "reg": "\xAE", "reg;": "\xAE", "rfisht;": "\u297D", "rfloor;": "\u230B", "rfr;": "\u{1D52F}", "rhard;": "\u21C1", "rharu;": "\u21C0", "rharul;": "\u296C", "rho;": "\u03C1", "rhov;": "\u03F1", "rightarrow;": "\u2192", "rightarrowtail;": "\u21A3", "rightharpoondown;": "\u21C1", "rightharpoonup;": "\u21C0", "rightleftarrows;": "\u21C4", "rightleftharpoons;": "\u21CC", "rightrightarrows;": "\u21C9", "rightsquigarrow;": "\u219D", "rightthreetimes;": "\u22CC", "ring;": "\u02DA", "risingdotseq;": "\u2253", "rlarr;": "\u21C4", "rlhar;": "\u21CC", "rlm;": "\u200F", "rmoust;": "\u23B1", "rmoustache;": "\u23B1", "rnmid;": "\u2AEE", "roang;": "\u27ED", "roarr;": "\u21FE", "robrk;": "\u27E7", "ropar;": "\u2986", "ropf;": "\u{1D563}", "roplus;": "\u2A2E", "rotimes;": "\u2A35", "rpar;": ")", "rpargt;": "\u2994", "rppolint;": "\u2A12", "rrarr;": "\u21C9", "rsaquo;": "\u203A", "rscr;": "\u{1D4C7}", "rsh;": "\u21B1", "rsqb;": "]", "rsquo;": "\u2019", "rsquor;": "\u2019", "rthree;": "\u22CC", "rtimes;": "\u22CA", "rtri;": "\u25B9", "rtrie;": "\u22B5", "rtrif;": "\u25B8", "rtriltri;": "\u29CE", "ruluhar;": "\u2968", "rx;": "\u211E", "sacute;": "\u015B", "sbquo;": "\u201A", "sc;": "\u227B", "scE;": "\u2AB4", "scap;": "\u2AB8", "scaron;": "\u0161", "sccue;": "\u227D", "sce;": "\u2AB0", "scedil;": "\u015F", "scirc;": "\u015D", "scnE;": "\u2AB6", "scnap;": "\u2ABA", "scnsim;": "\u22E9", "scpolint;": "\u2A13", "scsim;": "\u227F", "scy;": "\u0441", "sdot;": "\u22C5", "sdotb;": "\u22A1", "sdote;": "\u2A66", "seArr;": "\u21D8", "searhk;": "\u2925", "searr;": "\u2198", "searrow;": "\u2198", "sect": "\xA7", "sect;": "\xA7", "semi;": ";", "seswar;": "\u2929", "setminus;": "\u2216", "setmn;": "\u2216", "sext;": "\u2736", "sfr;": "\u{1D530}", "sfrown;": "\u2322", "sharp;": "\u266F", "shchcy;": "\u0449", "shcy;": "\u0448", "shortmid;": "\u2223", "shortparallel;": "\u2225", "shy": "\xAD", "shy;": "\xAD", "sigma;": "\u03C3", "sigmaf;": "\u03C2", "sigmav;": "\u03C2", "sim;": "\u223C", "simdot;": "\u2A6A", "sime;": "\u2243", "simeq;": "\u2243", "simg;": "\u2A9E", "simgE;": "\u2AA0", "siml;": "\u2A9D", "simlE;": "\u2A9F", "simne;": "\u2246", "simplus;": "\u2A24", "simrarr;": "\u2972", "slarr;": "\u2190", "smallsetminus;": "\u2216", "smashp;": "\u2A33", "smeparsl;": "\u29E4", "smid;": "\u2223", "smile;": "\u2323", "smt;": "\u2AAA", "smte;": "\u2AAC", "smtes;": "\u2AAC\uFE00", "softcy;": "\u044C", "sol;": "/", "solb;": "\u29C4", "solbar;": "\u233F", "sopf;": "\u{1D564}", "spades;": "\u2660", "spadesuit;": "\u2660", "spar;": "\u2225", "sqcap;": "\u2293", "sqcaps;": "\u2293\uFE00", "sqcup;": "\u2294", "sqcups;": "\u2294\uFE00", "sqsub;": "\u228F", "sqsube;": "\u2291", "sqsubset;": "\u228F", "sqsubseteq;": "\u2291", "sqsup;": "\u2290", "sqsupe;": "\u2292", "sqsupset;": "\u2290", "sqsupseteq;": "\u2292", "squ;": "\u25A1", "square;": "\u25A1", "squarf;": "\u25AA", "squf;": "\u25AA", "srarr;": "\u2192", "sscr;": "\u{1D4C8}", "ssetmn;": "\u2216", "ssmile;": "\u2323", "sstarf;": "\u22C6", "star;": "\u2606", "starf;": "\u2605", "straightepsilon;": "\u03F5", "straightphi;": "\u03D5", "strns;": "\xAF", "sub;": "\u2282", "subE;": "\u2AC5", "subdot;": "\u2ABD", "sube;": "\u2286", "subedot;": "\u2AC3", "submult;": "\u2AC1", "subnE;": "\u2ACB", "subne;": "\u228A", "subplus;": "\u2ABF", "subrarr;": "\u2979", "subset;": "\u2282", "subseteq;": "\u2286", "subseteqq;": "\u2AC5", "subsetneq;": "\u228A", "subsetneqq;": "\u2ACB", "subsim;": "\u2AC7", "subsub;": "\u2AD5", "subsup;": "\u2AD3", "succ;": "\u227B", "succapprox;": "\u2AB8", "succcurlyeq;": "\u227D", "succeq;": "\u2AB0", "succnapprox;": "\u2ABA", "succneqq;": "\u2AB6", "succnsim;": "\u22E9", "succsim;": "\u227F", "sum;": "\u2211", "sung;": "\u266A", "sup1": "\xB9", "sup1;": "\xB9", "sup2": "\xB2", "sup2;": "\xB2", "sup3": "\xB3", "sup3;": "\xB3", "sup;": "\u2283", "supE;": "\u2AC6", "supdot;": "\u2ABE", "supdsub;": "\u2AD8", "supe;": "\u2287", "supedot;": "\u2AC4", "suphsol;": "\u27C9", "suphsub;": "\u2AD7", "suplarr;": "\u297B", "supmult;": "\u2AC2", "supnE;": "\u2ACC", "supne;": "\u228B", "supplus;": "\u2AC0", "supset;": "\u2283", "supseteq;": "\u2287", "supseteqq;": "\u2AC6", "supsetneq;": "\u228B", "supsetneqq;": "\u2ACC", "supsim;": "\u2AC8", "supsub;": "\u2AD4", "supsup;": "\u2AD6", "swArr;": "\u21D9", "swarhk;": "\u2926", "swarr;": "\u2199", "swarrow;": "\u2199", "swnwar;": "\u292A", "szlig": "\xDF", "szlig;": "\xDF", "target;": "\u2316", "tau;": "\u03C4", "tbrk;": "\u23B4", "tcaron;": "\u0165", "tcedil;": "\u0163", "tcy;": "\u0442", "tdot;": "\u20DB", "telrec;": "\u2315", "tfr;": "\u{1D531}", "there4;": "\u2234", "therefore;": "\u2234", "theta;": "\u03B8", "thetasym;": "\u03D1", "thetav;": "\u03D1", "thickapprox;": "\u2248", "thicksim;": "\u223C", "thinsp;": "\u2009", "thkap;": "\u2248", "thksim;": "\u223C", "thorn": "\xFE", "thorn;": "\xFE", "tilde;": "\u02DC", "times": "\xD7", "times;": "\xD7", "timesb;": "\u22A0", "timesbar;": "\u2A31", "timesd;": "\u2A30", "tint;": "\u222D", "toea;": "\u2928", "top;": "\u22A4", "topbot;": "\u2336", "topcir;": "\u2AF1", "topf;": "\u{1D565}", "topfork;": "\u2ADA", "tosa;": "\u2929", "tprime;": "\u2034", "trade;": "\u2122", "triangle;": "\u25B5", "triangledown;": "\u25BF", "triangleleft;": "\u25C3", "trianglelefteq;": "\u22B4", "triangleq;": "\u225C", "triangleright;": "\u25B9", "trianglerighteq;": "\u22B5", "tridot;": "\u25EC", "trie;": "\u225C", "triminus;": "\u2A3A", "triplus;": "\u2A39", "trisb;": "\u29CD", "tritime;": "\u2A3B", "trpezium;": "\u23E2", "tscr;": "\u{1D4C9}", "tscy;": "\u0446", "tshcy;": "\u045B", "tstrok;": "\u0167", "twixt;": "\u226C", "twoheadleftarrow;": "\u219E", "twoheadrightarrow;": "\u21A0", "uArr;": "\u21D1", "uHar;": "\u2963", "uacute": "\xFA", "uacute;": "\xFA", "uarr;": "\u2191", "ubrcy;": "\u045E", "ubreve;": "\u016D", "ucirc": "\xFB", "ucirc;": "\xFB", "ucy;": "\u0443", "udarr;": "\u21C5", "udblac;": "\u0171", "udhar;": "\u296E", "ufisht;": "\u297E", "ufr;": "\u{1D532}", "ugrave": "\xF9", "ugrave;": "\xF9", "uharl;": "\u21BF", "uharr;": "\u21BE", "uhblk;": "\u2580", "ulcorn;": "\u231C", "ulcorner;": "\u231C", "ulcrop;": "\u230F", "ultri;": "\u25F8", "umacr;": "\u016B", "uml": "\xA8", "uml;": "\xA8", "uogon;": "\u0173", "uopf;": "\u{1D566}", "uparrow;": "\u2191", "updownarrow;": "\u2195", "upharpoonleft;": "\u21BF", "upharpoonright;": "\u21BE", "uplus;": "\u228E", "upsi;": "\u03C5", "upsih;": "\u03D2", "upsilon;": "\u03C5", "upuparrows;": "\u21C8", "urcorn;": "\u231D", "urcorner;": "\u231D", "urcrop;": "\u230E", "uring;": "\u016F", "urtri;": "\u25F9", "uscr;": "\u{1D4CA}", "utdot;": "\u22F0", "utilde;": "\u0169", "utri;": "\u25B5", "utrif;": "\u25B4", "uuarr;": "\u21C8", "uuml": "\xFC", "uuml;": "\xFC", "uwangle;": "\u29A7", "vArr;": "\u21D5", "vBar;": "\u2AE8", "vBarv;": "\u2AE9", "vDash;": "\u22A8", "vangrt;": "\u299C", "varepsilon;": "\u03F5", "varkappa;": "\u03F0", "varnothing;": "\u2205", "varphi;": "\u03D5", "varpi;": "\u03D6", "varpropto;": "\u221D", "varr;": "\u2195", "varrho;": "\u03F1", "varsigma;": "\u03C2", "varsubsetneq;": "\u228A\uFE00", "varsubsetneqq;": "\u2ACB\uFE00", "varsupsetneq;": "\u228B\uFE00", "varsupsetneqq;": "\u2ACC\uFE00", "vartheta;": "\u03D1", "vartriangleleft;": "\u22B2", "vartriangleright;": "\u22B3", "vcy;": "\u0432", "vdash;": "\u22A2", "vee;": "\u2228", "veebar;": "\u22BB", "veeeq;": "\u225A", "vellip;": "\u22EE", "verbar;": "|", "vert;": "|", "vfr;": "\u{1D533}", "vltri;": "\u22B2", "vnsub;": "\u2282\u20D2", "vnsup;": "\u2283\u20D2", "vopf;": "\u{1D567}", "vprop;": "\u221D", "vrtri;": "\u22B3", "vscr;": "\u{1D4CB}", "vsubnE;": "\u2ACB\uFE00", "vsubne;": "\u228A\uFE00", "vsupnE;": "\u2ACC\uFE00", "vsupne;": "\u228B\uFE00", "vzigzag;": "\u299A", "wcirc;": "\u0175", "wedbar;": "\u2A5F", "wedge;": "\u2227", "wedgeq;": "\u2259", "weierp;": "\u2118", "wfr;": "\u{1D534}", "wopf;": "\u{1D568}", "wp;": "\u2118", "wr;": "\u2240", "wreath;": "\u2240", "wscr;": "\u{1D4CC}", "xcap;": "\u22C2", "xcirc;": "\u25EF", "xcup;": "\u22C3", "xdtri;": "\u25BD", "xfr;": "\u{1D535}", "xhArr;": "\u27FA", "xharr;": "\u27F7", "xi;": "\u03BE", "xlArr;": "\u27F8", "xlarr;": "\u27F5", "xmap;": "\u27FC", "xnis;": "\u22FB", "xodot;": "\u2A00", "xopf;": "\u{1D569}", "xoplus;": "\u2A01", "xotime;": "\u2A02", "xrArr;": "\u27F9", "xrarr;": "\u27F6", "xscr;": "\u{1D4CD}", "xsqcup;": "\u2A06", "xuplus;": "\u2A04", "xutri;": "\u25B3", "xvee;": "\u22C1", "xwedge;": "\u22C0", "yacute": "\xFD", "yacute;": "\xFD", "yacy;": "\u044F", "ycirc;": "\u0177", "ycy;": "\u044B", "yen": "\xA5", "yen;": "\xA5", "yfr;": "\u{1D536}", "yicy;": "\u0457", "yopf;": "\u{1D56A}", "yscr;": "\u{1D4CE}", "yucy;": "\u044E", "yuml": "\xFF", "yuml;": "\xFF", "zacute;": "\u017A", "zcaron;": "\u017E", "zcy;": "\u0437", "zdot;": "\u017C", "zeetrf;": "\u2128", "zeta;": "\u03B6", "zfr;": "\u{1D537}", "zhcy;": "\u0436", "zigrarr;": "\u21DD", "zopf;": "\u{1D56B}", "zscr;": "\u{1D4CF}", "zwj;": "\u200D", "zwnj;": "\u200C" });
@@ -15691,7 +15868,7 @@ var htmlEntities2 = Object.freeze({ "AElig": "\xC6", "AElig;": "\xC6", "AMP": "&
 var wireWatchHooks2 = Symbol("wireWatchHooks");
 
 // ../wire/src/hooks.ts
-var execFileAsync = (0, import_node_util.promisify)(import_node_child_process2.execFile);
+var execFileAsync = (0, import_node_util2.promisify)(import_node_child_process2.execFile);
 function primaryFilesystemLink(resource) {
   return resource.filesystem_links.find((link2) => link2.role === "primary");
 }
@@ -15806,9 +15983,9 @@ async function runResourceHooks(options, command, result) {
   };
   for (const path of await hookCommandPaths(wireRoot2, "post-resource")) {
     const hookResult = await execFileAsync(path, [], { cwd: (0, import_node_path4.dirname)(wireRoot2), env: environment2, encoding: "utf8" });
-    const output = outputEnvironment(hookResult.stdout);
-    environment2 = { ...environment2, ...output };
-    const outputPath = output["WIRE_PATH"];
+    const output2 = outputEnvironment(hookResult.stdout);
+    environment2 = { ...environment2, ...output2 };
+    const outputPath = output2["WIRE_PATH"];
     if (outputPath !== void 0 && (0, import_node_path4.resolve)((0, import_node_path4.dirname)(wireRoot2), outputPath) !== currentResult.path) {
       currentResult = await updateMovedResult(options, wireRoot2, currentResult, outputPath);
       environment2 = { ...environment2, ...resourceEnvironment(command, options.currentDirectory, wireRoot2, currentResult) };
@@ -15864,7 +16041,7 @@ function withWireHooks(wire2, options) {
 }
 
 // ../provider-asana/src/asana-http.ts
-var import_node_util2 = require("node:util");
+var import_node_util3 = require("node:util");
 async function asanaHttp(runtime2, url, init) {
   for (let attempt = 0; ; attempt++) {
     const response = await runtime2.http.request(url, init);
@@ -15887,7 +16064,7 @@ async function request(runtime2, method, path, parameters, data) {
     if (!token) {
       const tokenFile = runtime2.configuration?.getOptional?.("ASANA_TOKEN_FILE");
       if (tokenFile) {
-        token = (0, import_node_util2.parseEnv)(await runtime2.filesystem.readText(tokenFile))["ASANA_ACCESS_TOKEN"];
+        token = (0, import_node_util3.parseEnv)(await runtime2.filesystem.readText(tokenFile))["ASANA_ACCESS_TOKEN"];
         if (!token) throw new Error(`${method} ${path} failed: 401 ASANA_TOKEN_FILE must contain ASANA_ACCESS_TOKEN.`);
       }
     }
@@ -17758,12 +17935,12 @@ async function connectChatgpt(runtime2, referer, onCooldown) {
   const response = await runtime2.http.request("https://chatgpt.com/api/auth/session", { headers, signal: AbortSignal.timeout(6e4), redirect: "error" });
   const contents = await response.text();
   if (!response.ok || !contents.trimStart().startsWith("{")) throw authError();
-  const session = object3(JSON.parse(contents));
-  if (session["error"] !== void 0 || text(session["accessToken"]) === void 0 || session["account"] == null) throw authError();
-  const account = object3(session["account"]);
+  const session2 = object3(JSON.parse(contents));
+  if (session2["error"] !== void 0 || text(session2["accessToken"]) === void 0 || session2["account"] == null) throw authError();
+  const account = object3(session2["account"]);
   const accountId = text(account["id"]);
   if (accountId === void 0) throw authError();
-  headers["authorization"] = `Bearer ${session["accessToken"]}`;
+  headers["authorization"] = `Bearer ${session2["accessToken"]}`;
   const request2 = createChatgptRequester(runtime2.http, onCooldown);
   const forAccount = (id) => {
     const authenticated = { ...headers, "chatgpt-account-id": id };
@@ -17884,12 +18061,12 @@ async function downloadChatgpt(runtime2, url, source, write, render2) {
       return void 0;
     }
   };
-  const session = await connectChatgpt(runtime2, url, async (cooldown) => {
+  const session2 = await connectChatgpt(runtime2, url, async (cooldown) => {
     cooldowns.push(cooldown);
     await json(`${base}/manifest.json`, { status: "cooldown", source: url, started_at: started, records, files, errors, skipped, cooldowns, retry_at: cooldown.retry_at });
   });
   await json(`${base}/manifest.json`, { status: "in_progress", source: url, started_at: started });
-  const paged = async (client, path2, query, output, consume, offsetMode = false, filter) => {
+  const paged = async (client, path2, query, output2, consume, offsetMode = false, filter) => {
     const seen = /* @__PURE__ */ new Set();
     let cursor;
     let offset = 0;
@@ -17898,7 +18075,7 @@ async function downloadChatgpt(runtime2, url, source, write, render2) {
       const parameters = { ...query, ...offsetMode ? { offset: String(offset) } : cursor === void 0 ? {} : { cursor } };
       const page = object3(await client.json(endpoint(path2, parameters)));
       const entries = items(page["items"]);
-      await json(`${output}/${pageNumber++}.json`, filter === void 0 ? page : { ...page, items: entries.filter(filter) });
+      await json(`${output2}/${pageNumber++}.json`, filter === void 0 ? page : { ...page, items: entries.filter(filter) });
       for (const item of entries) consume(item);
       if (offsetMode) {
         if (page["offset"] !== void 0 && page["offset"] !== offset) throw new Error(`ChatGPT returned a different offset for ${path2}`);
@@ -18070,12 +18247,12 @@ ${links.join("\n")}
   };
   const exportAll = async () => {
     if (!wholeHistory) {
-      await exportAccount(session.forAccount(session.accountId), base, source.identifier);
+      await exportAccount(session2.forAccount(session2.accountId), base, source.identifier);
       return;
     }
-    const current = session.forAccount(session.accountId);
+    const current = session2.forAccount(session2.accountId);
     const accounts = await attempt("accounts", () => current.json("/backend-api/accounts/check/v4-2023-04-27"));
-    const accountIds = /* @__PURE__ */ new Set([session.accountId]);
+    const accountIds = /* @__PURE__ */ new Set([session2.accountId]);
     if (accounts !== void 0) {
       await json(`${base}/accounts.json`, accounts);
       await attempt("account listing", async () => {
@@ -18089,7 +18266,7 @@ ${links.join("\n")}
         }
       });
     }
-    for (const id of accountIds) await exportAccount(session.forAccount(id), `${base}/accounts/${segment(id)}`);
+    for (const id of accountIds) await exportAccount(session2.forAccount(id), `${base}/accounts/${segment(id)}`);
   };
   try {
     await exportAll();
@@ -18254,8 +18431,8 @@ var chatgptService = defineService({
   download: (runtime2, url, source, write) => downloadChatgpt(runtime2, url, source, write, conversationMarkdown),
   fetch: async (runtime2, url, source) => {
     if (source.type === "project") throw new Error("Use `wire download <url>` to export ChatGPT history or projects as a directory.");
-    const session = await connectChatgpt(runtime2, url);
-    const conversation = await session.forAccount(session.accountId).json(`/backend-api/conversation/${encodeURIComponent(source.identifier)}`);
+    const session2 = await connectChatgpt(runtime2, url);
+    const conversation = await session2.forAccount(session2.accountId).json(`/backend-api/conversation/${encodeURIComponent(source.identifier)}`);
     return fetchedConversation(object3(conversation));
   }
 });
@@ -18355,19 +18532,19 @@ function docBlocks(markdown) {
   const result = [];
   const lines = markdown.match(/[^\n]*\n|[^\n]+$/g) ?? [];
   for (let i = 0; i < lines.length; i++) {
-    let block = lines[i];
-    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(block)?.[1];
+    let block2 = lines[i];
+    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(block2)?.[1];
     if (fence) {
       const close = new RegExp("^ {0,3}" + fence[0] + "{" + fence.length + ",}\\s*$");
       while (i + 1 < lines.length) {
         const next = lines[++i];
-        block += next;
+        block2 += next;
         if (close.test(next)) break;
       }
-    } else if (/^\s*\|/.test(block)) {
-      while (i + 1 < lines.length && /^\s*\|/.test(lines[i + 1])) block += lines[++i];
+    } else if (/^\s*\|/.test(block2)) {
+      while (i + 1 < lines.length && /^\s*\|/.test(lines[i + 1])) block2 += lines[++i];
     }
-    result.push(block);
+    result.push(block2);
   }
   return result;
 }
@@ -18456,7 +18633,7 @@ function mergeDocBlocks(base, local, remote, sameRendering = (a, b2) => a === b2
     const sidePositions = occurrences(side, 0, side.length);
     for (const change of changes) {
       if (change.end - change.start === change.replacement.length) continue;
-      const repeated = [...blocks.slice(change.start, change.end), ...change.replacement].some((block) => block.trim() && (positions.get(block) === -1 || positions.has(block) && sidePositions.get(block) === -1));
+      const repeated = [...blocks.slice(change.start, change.end), ...change.replacement].some((block2) => block2.trim() && (positions.get(block2) === -1 || positions.has(block2) && sidePositions.get(block2) === -1));
       if (repeated && !(change.end === change.start + 1 && !change.replacement.length && boundedDeletion(blocks, side, side === localBlocks ? remoteBlocks : localBlocks, change.start))) conflict();
     }
   }
@@ -18469,10 +18646,10 @@ function mergeDocBlocks(base, local, remote, sameRendering = (a, b2) => a === b2
         const unique = (rows, i) => i >= 0 && rows.every((row, n) => n === i || !sameRendering(row.replace(/\r?\n$/, ""), rows[i].replace(/\r?\n$/, "")));
         const replacement = localChanges.find((c) => c.start === change.start)?.replacement;
         if (replacement?.length === 1 && unique(blocks, change.start)) {
-          const block = replacement[0], index = localBlocks.indexOf(block);
+          const block2 = replacement[0], index = localBlocks.indexOf(block2);
           if (unique(localBlocks, index)) {
             const first = 1 + localBlocks.slice(0, index).reduce((n, b2) => n + b2.split("\n").length - 1, 0);
-            const last = first + block.replace(/\n$/, "").split("\n").length - 1;
+            const last = first + block2.replace(/\n$/, "").split("\n").length - 1;
             if (last - first > 5) conflict(` Local Markdown line ${first} (start of block).`);
             conflict(first === last ? ` Local Markdown line ${first}.` : ` Local Markdown lines ${first}-${last}.`);
           }
@@ -18715,11 +18892,11 @@ function duplicateContext(base, local, revision, raw) {
   const identity = typeof revision === "string" && proof && proof.revision === revision && typeof proof.tab === "string" && proof.markdown === digest(base) && Array.isArray(proof.slots) && proof.slots.every((s) => typeof s === "string" && /^[a-f0-9]{64}$/.test(s)) ? proof : void 0;
   return { base, local, identity };
 }
-function characters(block) {
+function characters(block2) {
   let pos = 0, span = 0;
-  return Array.from(block.text, (text3) => {
-    while (span < block.spans.length && block.spans[span].to <= pos) span++;
-    const s = block.spans[span];
+  return Array.from(block2.text, (text3) => {
+    while (span < block2.spans.length && block2.spans[span].to <= pos) span++;
+    const s = block2.spans[span];
     const c = { text: text3, pos, style: s && s.from <= pos ? s.style : {} };
     pos += text3.length;
     return c;
@@ -18838,8 +19015,8 @@ function movePlainLabel(tab, oldMd, newMd, guard) {
   const region = [left, ...(forward ? label.concat(group) : group.concat(label)).filter((v2) => v2 !== ""), right];
   const start = first - 1 - (forward ? 0 : group.length);
   if (start < 0 || !region.every((line, j2) => {
-    const e = body2[start + j2], p = e?.paragraph, block = paragraph(line);
-    return e && p && p.elements.every((r) => r.textRun) && contents(e) === block.text + "\n" && (p.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT") === block.heading && (p.bullet ? p.bullet.nestingLevel ?? 0 : null) === block.level && !hasSuggestion(p) && !p.positionedObjectIds;
+    const e = body2[start + j2], p = e?.paragraph, block2 = paragraph(line);
+    return e && p && p.elements.every((r) => r.textRun) && contents(e) === block2.text + "\n" && (p.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT") === block2.heading && (p.bullet ? p.bullet.nestingLevel ?? 0 : null) === block2.level && !hasSuggestion(p) && !p.positionedObjectIds;
   })) return unsafe("section boundary does not match adjacent native paragraphs");
   const ps = cells[1].paragraph.paragraphStyle ?? {};
   if (ps.direction && ps.direction !== "LEFT_TO_RIGHT" || Object.entries(ps).some(([k2, v2]) => {
@@ -18894,9 +19071,9 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition, context)
   const range = (startIndex, endIndex) => ({ startIndex, endIndex, tabId });
   const location = (index) => ({ index, tabId });
   const requests = [];
-  function matches(e, block) {
+  function matches(e, block2) {
     const p = e.paragraph;
-    return p && p.elements.every((run) => run.textRun) && p.elements.map((run) => run.textRun.content).join("") === block.text + "\n" && (p.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT") === block.heading && (p.bullet ? p.bullet.nestingLevel ?? 0 : null) === block.level;
+    return p && p.elements.every((run) => run.textRun) && p.elements.map((run) => run.textRun.content).join("") === block2.text + "\n" && (p.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT") === block2.heading && (p.bullet ? p.bullet.nestingLevel ?? 0 : null) === block2.level;
   }
   let ordered;
   function byPosition(i) {
@@ -18947,25 +19124,25 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition, context)
     }) ?? unsafe("native identity of duplicate paragraph changed");
   }
   const locate = (i, deleted = 0) => {
-    const block = paragraph(before[i]);
-    const candidates = body2.filter((e2) => matches(e2, block));
+    const block2 = paragraph(before[i]);
+    const candidates = body2.filter((e2) => matches(e2, block2));
     if (!candidates.length) return unsafe("paragraph is missing");
     const e = boundedTarget(i, candidates, deleted) ?? (candidates.length === 1 ? candidates[0] : byPosition(i));
-    if (!Number.isInteger(e.startIndex) || e.endIndex - e.startIndex !== block.text.length + 1) return unsafe("unrecognized paragraph range");
-    return { block, e, start: e.startIndex, end: e.endIndex };
+    if (!Number.isInteger(e.startIndex) || e.endIndex - e.startIndex !== block2.text.length + 1) return unsafe("unrecognized paragraph range");
+    return { block: block2, e, start: e.startIndex, end: e.endIndex };
   };
-  const style = (block, start, reset2) => {
-    if (reset2) requests.push({ updateTextStyle: { range: range(start, start + block.text.length), textStyle: block.heading === "NORMAL_TEXT" ? {} : { bold: false, italic: false, strikethrough: false }, fields: "bold,italic,strikethrough,link" } });
-    for (const s of block.spans) requests.push({ updateTextStyle: { range: range(start + s.from, start + s.to), textStyle: s.style, fields: Object.keys(s.style).join(",") } });
+  const style = (block2, start, reset2) => {
+    if (reset2) requests.push({ updateTextStyle: { range: range(start, start + block2.text.length), textStyle: block2.heading === "NORMAL_TEXT" ? {} : { bold: false, italic: false, strikethrough: false }, fields: "bold,italic,strikethrough,link" } });
+    for (const s of block2.spans) requests.push({ updateTextStyle: { range: range(start + s.from, start + s.to), textStyle: s.style, fields: Object.keys(s.style).join(",") } });
   };
-  const setParagraph = (block, start, hasBullet, structure, priorLevel, headingChanged) => {
+  const setParagraph = (block2, start, hasBullet, structure, priorLevel, headingChanged) => {
     if (!structure) return;
     const part = range(start, start + 1);
     if (hasBullet) requests.push({ deleteParagraphBullets: { range: part } });
-    if (headingChanged || hasBullet) requests.push({ updateParagraphStyle: { range: part, paragraphStyle: headingChanged ? { namedStyleType: block.heading } : {}, fields: headingChanged ? "namedStyleType,indentStart,indentFirstLine" : "indentStart,indentFirstLine" } });
-    if (block.level !== null) {
-      if (block.numbered) return unsafe("cannot create a numbered level without a matching native list paragraph");
-      const relative3 = block.level - priorLevel;
+    if (headingChanged || hasBullet) requests.push({ updateParagraphStyle: { range: part, paragraphStyle: headingChanged ? { namedStyleType: block2.heading } : {}, fields: headingChanged ? "namedStyleType,indentStart,indentFirstLine" : "indentStart,indentFirstLine" } });
+    if (block2.level !== null) {
+      if (block2.numbered) return unsafe("cannot create a numbered level without a matching native list paragraph");
+      const relative3 = block2.level - priorLevel;
       if (relative3 < 0) return unsafe("outdent would split the preceding native list");
       const prefix = relative3 ? "x\n" + "	".repeat(relative3) : "";
       if (prefix) requests.push({ insertText: { location: location(start), text: prefix } });
@@ -19623,15 +19800,15 @@ function imageLayout(style) {
 }
 async function docImages(markdown, archive) {
   if (!markdown.includes("data:image/")) return markdown;
-  const sections = docBlocks(markdown).flatMap((block) => {
-    if (/^ {0,3}(?:`{3,}|~{3,})/.test(block)) return [{ literal: true, text: block }];
+  const sections = docBlocks(markdown).flatMap((block2) => {
+    if (/^ {0,3}(?:`{3,}|~{3,})/.test(block2)) return [{ literal: true, text: block2 }];
     const parts = [];
     let from = 0;
-    for (const code of block.matchAll(/(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g)) {
-      parts.push({ literal: false, text: block.slice(from, code.index) }, { literal: true, text: code[0] });
+    for (const code of block2.matchAll(/(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g)) {
+      parts.push({ literal: false, text: block2.slice(from, code.index) }, { literal: true, text: code[0] });
       from = code.index + code[0].length;
     }
-    parts.push({ literal: false, text: block.slice(from) });
+    parts.push({ literal: false, text: block2.slice(from) });
     return parts;
   });
   const active = sections.filter((s) => !s.literal);
@@ -19805,10 +19982,10 @@ function formulaLikeCell(value) {
   return value.startsWith("=") || value.startsWith("+") || value.startsWith("@") || /^-(?!\d+(?:\.\d+)?$)/.test(value);
 }
 async function uploadSheetRows(runtime2, documentId, gid2, key2, cells) {
-  const session = sheetSession(await googleText(runtime2, sheetEditUrl(documentId, gid2, key2), "Sheets editor"));
-  const bundles = [{ commands: cells.map((cell) => sheetCellCommand(session.gridId, cell.row, cell.column, cell.value)), sid: session.sid, reqId: 0 }];
-  const body2 = new URLSearchParams({ rev: String(session.revision), bundles: JSON.stringify(bundles) });
-  const response = await runtime2.http.request(`https://docs.google.com/spreadsheets/u/0/d/${encodeURIComponent(documentId)}/save?id=${encodeURIComponent(documentId)}&token=${encodeURIComponent(session.token)}`, { method: "POST", headers: { Cookie: await cookieHeader2(runtime2), "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: body2.toString() });
+  const session2 = sheetSession(await googleText(runtime2, sheetEditUrl(documentId, gid2, key2), "Sheets editor"));
+  const bundles = [{ commands: cells.map((cell) => sheetCellCommand(session2.gridId, cell.row, cell.column, cell.value)), sid: session2.sid, reqId: 0 }];
+  const body2 = new URLSearchParams({ rev: String(session2.revision), bundles: JSON.stringify(bundles) });
+  const response = await runtime2.http.request(`https://docs.google.com/spreadsheets/u/0/d/${encodeURIComponent(documentId)}/save?id=${encodeURIComponent(documentId)}&token=${encodeURIComponent(session2.token)}`, { method: "POST", headers: { Cookie: await cookieHeader2(runtime2), "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: body2.toString() });
   if (response.status === 401 || response.status === 403) throw cookieAuthenticationError();
   if (!response.ok) throw new Error(`Google Sheets save failed: HTTP ${response.status}`);
   const text3 = await response.text();
@@ -20313,25 +20490,25 @@ function renderMarks(marks) {
   return [...marks].sort((left, right) => priority.get(array(left)[0]) - priority.get(array(right)[0]) || compact(left).localeCompare(compact(right)));
 }
 function normalizeRichText(value) {
-  const output = [];
+  const output2 = [];
   for (const raw of value) {
     const content = text2(raw[0]).replace(/\r\n?/g, "\n");
     if (content === "") continue;
     const marks = raw.length > 1 ? normalizeMarks(raw[1]) : [];
-    if (marks.length > 0 && content.match(/^ +/) !== null) output.push([content.match(/^ +/)[0]]);
+    if (marks.length > 0 && content.match(/^ +/) !== null) output2.push([content.match(/^ +/)[0]]);
     const trimmedContent = marks.length === 0 ? content : content.replace(/^ +| +$/g, "");
     const segment2 = marks.length === 0 ? [trimmedContent] : [trimmedContent, marks];
     if (trimmedContent === "") continue;
-    const previous = output[output.length - 1];
+    const previous = output2[output2.length - 1];
     if (previous !== void 0 && compact(previous[1] ?? []) === compact(segment2[1] ?? [])) previous[0] = `${previous[0]}${trimmedContent}`;
-    else output.push(segment2);
-    if (marks.length > 0 && content.match(/ +$/) !== null) output.push([content.match(/ +$/)[0]]);
+    else output2.push(segment2);
+    if (marks.length > 0 && content.match(/ +$/) !== null) output2.push([content.match(/ +$/)[0]]);
   }
-  while (output.length > 0 && text2(output[0][0]).trim() === "") output.shift();
-  while (output.length > 0 && text2(output[output.length - 1][0]).trim() === "") output.pop();
-  if (output.length > 0) output[0][0] = text2(output[0][0]).replace(/^ +/, "");
-  if (output.length > 0) output[output.length - 1][0] = text2(output[output.length - 1][0]).replace(/ +$/, "");
-  return output;
+  while (output2.length > 0 && text2(output2[0][0]).trim() === "") output2.shift();
+  while (output2.length > 0 && text2(output2[output2.length - 1][0]).trim() === "") output2.pop();
+  if (output2.length > 0) output2[0][0] = text2(output2[0][0]).replace(/^ +/, "");
+  if (output2.length > 0) output2[output2.length - 1][0] = text2(output2[output2.length - 1][0]).replace(/ +$/, "");
+  return output2;
 }
 function parseInline(value) {
   const segments = [];
@@ -20464,18 +20641,18 @@ function renderRichText(value) {
   return normalizeRichText(value).map((segment2) => renderSegment(text2(segment2[0]), segment2[1] ?? [])).join("");
 }
 function renderUserMentions(markdownText3, mentions) {
-  let output = markdownText3;
+  let output2 = markdownText3;
   for (const [userId, handle] of Object.entries(mentions)) {
-    output = output.replace(new RegExp(`<span data-notion-mention="u" data-notion-id="${escapeRegExp(escapeHtml(userId))}">(.*?)</span>`, "g"), (_match, content) => content.replaceAll("\u2023", `@${handle}`));
+    output2 = output2.replace(new RegExp(`<span data-notion-mention="u" data-notion-id="${escapeRegExp(escapeHtml(userId))}">(.*?)</span>`, "g"), (_match, content) => content.replaceAll("\u2023", `@${handle}`));
   }
-  return output;
+  return output2;
 }
 function hydrateUserMentions(markdownText3, mentions) {
-  let output = markdownText3;
+  let output2 = markdownText3;
   for (const [userId, handle] of Object.entries(mentions)) {
-    output = output.replace(new RegExp(`(?<![A-Za-z0-9_])@${escapeRegExp(handle)}(?![A-Za-z0-9_])`, "g"), `<span data-notion-mention="u" data-notion-id="${escapeHtml(userId)}">\u2023</span>`);
+    output2 = output2.replace(new RegExp(`(?<![A-Za-z0-9_])@${escapeRegExp(handle)}(?![A-Za-z0-9_])`, "g"), `<span data-notion-mention="u" data-notion-id="${escapeHtml(userId)}">\u2023</span>`);
   }
-  return output;
+  return output2;
 }
 function baseUserMentions(base) {
   return base["user_mentions"];
@@ -20731,8 +20908,8 @@ function parseLines(lines, baseIndent = 0) {
 function parseNotionMarkdown(markdown) {
   return parseLines(markdown.replace(/^\ufeff/, "").split("\n"));
 }
-function tableRowCells(block, columnOrder) {
-  const cells = object4(block.properties["cells"]);
+function tableRowCells(block2, columnOrder) {
+  const cells = object4(block2.properties["cells"]);
   if (columnOrder === void 0) return cells;
   const localColumns = Object.keys(cells);
   return Object.fromEntries(columnOrder.map((column, index) => [column, cells[localColumns[index]]]));
@@ -20748,21 +20925,21 @@ function tableColumnOrder(remote, local) {
     return value;
   });
 }
-function parserBlockToNotionBlock(block, id, parentId, parentTable, spaceId, userId, currentTime, columnOrder) {
-  const base = { id, type: block.type, space_id: spaceId, parent_id: parentId, parent_table: parentTable, alive: true, created_time: currentTime, created_by_table: "notion_user", created_by_id: userId, last_edited_time: currentTime, last_edited_by_table: "notion_user", last_edited_by_id: userId };
-  if (block.properties["notion_opaque"] !== void 0) return { ...object4(block.properties["notion_opaque"]), ...base };
-  if (block.type === "divider") return base;
-  if (block.type === "toggle") return { ...base, type: "text", properties: { title: block.rich_text }, format: { toggleable: true } };
-  if (block.type === "code") return { ...base, properties: { title: [[block.content]], language: [[block.properties["language"]]] } };
-  if (block.type === "to_do") return { ...base, properties: { title: block.rich_text, checked: [[block.properties["checked"] === true ? "Yes" : "No"]] } };
-  if (block.type === "image") return { ...base, properties: { source: [[block.properties["source"]]], alt_text: [[block.properties["alt_text"]]], ...block.properties["caption"] === void 0 ? {} : { caption: block.properties["caption"] } } };
-  if (block.type === "table") return { ...base, properties: {}, format: { table_block_column_order: columnOrder ?? block.properties["column_ids"], table_block_column_header: block.properties["has_header"], table_block_row_header: block.properties["has_row_header"] } };
-  if (block.type === "table_row") return { ...base, properties: tableRowCells(block, columnOrder) };
-  if (block.type === "column_list" || block.type === "transclusion_container") return { ...base, properties: {} };
-  if (block.type === "column") return { ...base, properties: {}, ...block.properties["format"] === void 0 ? {} : { format: block.properties["format"] } };
-  if (block.type === "callout") return { ...base, properties: { title: block.rich_text }, ...block.properties["format"] === void 0 ? {} : { format: block.properties["format"] } };
-  if (["header", "sub_header", "sub_sub_header"].includes(block.type)) return { ...base, properties: { title: block.rich_text }, ...block.properties["format"] === void 0 ? {} : { format: block.properties["format"] } };
-  return { ...base, properties: { title: block.rich_text } };
+function parserBlockToNotionBlock(block2, id, parentId, parentTable, spaceId, userId, currentTime, columnOrder) {
+  const base = { id, type: block2.type, space_id: spaceId, parent_id: parentId, parent_table: parentTable, alive: true, created_time: currentTime, created_by_table: "notion_user", created_by_id: userId, last_edited_time: currentTime, last_edited_by_table: "notion_user", last_edited_by_id: userId };
+  if (block2.properties["notion_opaque"] !== void 0) return { ...object4(block2.properties["notion_opaque"]), ...base };
+  if (block2.type === "divider") return base;
+  if (block2.type === "toggle") return { ...base, type: "text", properties: { title: block2.rich_text }, format: { toggleable: true } };
+  if (block2.type === "code") return { ...base, properties: { title: [[block2.content]], language: [[block2.properties["language"]]] } };
+  if (block2.type === "to_do") return { ...base, properties: { title: block2.rich_text, checked: [[block2.properties["checked"] === true ? "Yes" : "No"]] } };
+  if (block2.type === "image") return { ...base, properties: { source: [[block2.properties["source"]]], alt_text: [[block2.properties["alt_text"]]], ...block2.properties["caption"] === void 0 ? {} : { caption: block2.properties["caption"] } } };
+  if (block2.type === "table") return { ...base, properties: {}, format: { table_block_column_order: columnOrder ?? block2.properties["column_ids"], table_block_column_header: block2.properties["has_header"], table_block_row_header: block2.properties["has_row_header"] } };
+  if (block2.type === "table_row") return { ...base, properties: tableRowCells(block2, columnOrder) };
+  if (block2.type === "column_list" || block2.type === "transclusion_container") return { ...base, properties: {} };
+  if (block2.type === "column") return { ...base, properties: {}, ...block2.properties["format"] === void 0 ? {} : { format: block2.properties["format"] } };
+  if (block2.type === "callout") return { ...base, properties: { title: block2.rich_text }, ...block2.properties["format"] === void 0 ? {} : { format: block2.properties["format"] } };
+  if (["header", "sub_header", "sub_sub_header"].includes(block2.type)) return { ...base, properties: { title: block2.rich_text }, ...block2.properties["format"] === void 0 ? {} : { format: block2.properties["format"] } };
+  return { ...base, properties: { title: block2.rich_text } };
 }
 function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTime, createId = () => (0, import_node_crypto5.randomUUID)(), initialTableColumnOrder) {
   const operations = [];
@@ -20771,25 +20948,25 @@ function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTim
   const lastChildByParent = /* @__PURE__ */ new Map();
   let lastTableId = null;
   let tableColumnOrder2 = initialTableColumnOrder;
-  for (const block of blocks) {
+  for (const block2 of blocks) {
     const blockId = formatBlockId(createId().replaceAll("-", ""));
     let parentId = pageId;
-    if (block.type === "table_row") parentId = lastTableId;
-    else if (block.indent > 0) {
-      const parent = lastAtIndent.get(block.indent - 1);
-      if (parent === void 0) throw new Error(`Indented Notion Markdown block has no parent at indent ${block.indent - 1}`);
+    if (block2.type === "table_row") parentId = lastTableId;
+    else if (block2.indent > 0) {
+      const parent = lastAtIndent.get(block2.indent - 1);
+      if (parent === void 0) throw new Error(`Indented Notion Markdown block has no parent at indent ${block2.indent - 1}`);
       parentId = parent;
     }
-    if (block.type !== "table_row" && block.indent === 0) topLevelIds.push(blockId);
+    if (block2.type !== "table_row" && block2.indent === 0) topLevelIds.push(blockId);
     const parentTable = "block";
-    operations.push({ pointer: pointer(blockId, spaceId), path: [], command: "set", args: parserBlockToNotionBlock(block, blockId, parentId, parentTable, spaceId, userId, currentTime, block.type === "table_row" ? tableColumnOrder2 : void 0) });
+    operations.push({ pointer: pointer(blockId, spaceId), path: [], command: "set", args: parserBlockToNotionBlock(block2, blockId, parentId, parentTable, spaceId, userId, currentTime, block2.type === "table_row" ? tableColumnOrder2 : void 0) });
     const after = lastChildByParent.get(parentId);
     operations.push({ pointer: pointer(parentId, spaceId), path: ["content"], command: after === void 0 ? "listBefore" : "listAfter", args: after === void 0 ? { id: blockId } : { id: blockId, after } });
     lastChildByParent.set(parentId, blockId);
-    if (["bulleted_list", "numbered_list", "to_do", "quote", "callout", "toggle", "header", "sub_header", "sub_sub_header", "table", "page", "column_list", "column", "transclusion_container"].includes(block.type)) lastAtIndent.set(block.indent, blockId);
-    if (block.type === "table") {
+    if (["bulleted_list", "numbered_list", "to_do", "quote", "callout", "toggle", "header", "sub_header", "sub_sub_header", "table", "page", "column_list", "column", "transclusion_container"].includes(block2.type)) lastAtIndent.set(block2.indent, blockId);
+    if (block2.type === "table") {
       lastTableId = blockId;
-      tableColumnOrder2 = block.properties["column_ids"];
+      tableColumnOrder2 = block2.properties["column_ids"];
     }
   }
   if (operations.length > 0) operations.push({ pointer: pointer(pageId, spaceId), path: ["last_edited_time"], command: "set", args: currentTime });
@@ -20808,25 +20985,25 @@ function canonicalBlock(value, columnOrder) {
   if (["header", "sub_header", "sub_sub_header"].includes(type)) return { type, title: normalizeRichText(object4(value["properties"] ?? { title: [] })["title"] ?? []), toggleable: object4(value["format"] ?? {})["toggleable"] === true };
   return { type, title: normalizeRichText(object4(value["properties"] ?? { title: [] })["title"] ?? []) };
 }
-function canonicalParserBlock(block, columnOrder) {
-  if (block.properties["notion_opaque"] !== void 0) return canonicalBlock(object4(block.properties["notion_opaque"]), columnOrder);
-  if (block.type === "header" || block.type === "sub_header" || block.type === "sub_sub_header") return { type: block.type, title: normalizeRichText(block.rich_text), toggleable: object4(block.properties["format"] ?? {})["toggleable"] === true };
-  if (block.type === "text" || block.type === "bulleted_list" || block.type === "numbered_list" || block.type === "quote" || block.type === "callout" || block.type === "toggle") return { type: block.type, title: normalizeRichText(block.rich_text) };
-  if (block.type === "code") return { type: "code", title: normalizeRichText([[block.content]]), language: [[block.properties["language"]]] };
-  if (block.type === "to_do") return { type: "to_do", title: normalizeRichText(block.rich_text), checked: [[block.properties["checked"] === true ? "Yes" : "No"]] };
-  if (block.type === "table") return { type: "table", column_count: block.properties["column_ids"].length };
-  if (block.type === "table_row") {
-    const cells = tableRowCells(block, columnOrder);
+function canonicalParserBlock(block2, columnOrder) {
+  if (block2.properties["notion_opaque"] !== void 0) return canonicalBlock(object4(block2.properties["notion_opaque"]), columnOrder);
+  if (block2.type === "header" || block2.type === "sub_header" || block2.type === "sub_sub_header") return { type: block2.type, title: normalizeRichText(block2.rich_text), toggleable: object4(block2.properties["format"] ?? {})["toggleable"] === true };
+  if (block2.type === "text" || block2.type === "bulleted_list" || block2.type === "numbered_list" || block2.type === "quote" || block2.type === "callout" || block2.type === "toggle") return { type: block2.type, title: normalizeRichText(block2.rich_text) };
+  if (block2.type === "code") return { type: "code", title: normalizeRichText([[block2.content]]), language: [[block2.properties["language"]]] };
+  if (block2.type === "to_do") return { type: "to_do", title: normalizeRichText(block2.rich_text), checked: [[block2.properties["checked"] === true ? "Yes" : "No"]] };
+  if (block2.type === "table") return { type: "table", column_count: block2.properties["column_ids"].length };
+  if (block2.type === "table_row") {
+    const cells = tableRowCells(block2, columnOrder);
     return { type: "table_row", cells: columnOrder.map((column) => normalizeRichText(cells[column] ?? [])) };
   }
-  if (block.type === "image") return { type: "image", source: [[block.properties["source"]]], alt_text: [[block.properties["alt_text"]]], caption: block.properties["caption"] ?? null };
-  if (block.type === "page" || block.type === "equation") return { type: block.type, title: normalizeRichText(block.rich_text) };
-  if (block.type === "column") return { type: "column", column_ratio: object4(block.properties["format"] ?? {})["column_ratio"] ?? null };
-  if (block.type === "column_list" || block.type === "transclusion_container") return { type: block.type };
-  return { type: block.type };
+  if (block2.type === "image") return { type: "image", source: [[block2.properties["source"]]], alt_text: [[block2.properties["alt_text"]]], caption: block2.properties["caption"] ?? null };
+  if (block2.type === "page" || block2.type === "equation") return { type: block2.type, title: normalizeRichText(block2.rich_text) };
+  if (block2.type === "column") return { type: "column", column_ratio: object4(block2.properties["format"] ?? {})["column_ratio"] ?? null };
+  if (block2.type === "column_list" || block2.type === "transclusion_container") return { type: block2.type };
+  return { type: block2.type };
 }
-function notionBlockContentHash(block, columnOrder) {
-  return hash("rich_text" in block ? canonicalParserBlock(block, columnOrder) : canonicalBlock(block, columnOrder));
+function notionBlockContentHash(block2, columnOrder) {
+  return hash("rich_text" in block2 ? canonicalParserBlock(block2, columnOrder) : canonicalBlock(block2, columnOrder));
 }
 function sidecarBlocksFromNotionTree(tree) {
   const blocks = [];
@@ -20842,19 +21019,19 @@ function sidecarBlocksFromNotionTree(tree) {
 function localTree(blocks) {
   const roots = [];
   const stack = [{ indent: -1, children: roots }];
-  for (const block of blocks) {
-    const node = { block, children: [] };
-    while (stack[stack.length - 1].indent >= block.indent) stack.pop();
+  for (const block2 of blocks) {
+    const node = { block: block2, children: [] };
+    while (stack[stack.length - 1].indent >= block2.indent) stack.pop();
     stack[stack.length - 1].children.push(node);
-    if (["bulleted_list", "numbered_list", "to_do", "quote", "callout", "toggle", "header", "sub_header", "sub_sub_header", "table", "page", "column_list", "column", "transclusion_container"].includes(block.type)) stack.push({ indent: block.indent, children: node.children });
+    if (["bulleted_list", "numbered_list", "to_do", "quote", "callout", "toggle", "header", "sub_header", "sub_sub_header", "table", "page", "column_list", "column", "transclusion_container"].includes(block2.type)) stack.push({ indent: block2.indent, children: node.children });
   }
   return roots;
 }
 function outputNode(node, remoteNode, parentId, remote, currentTime, columnOrder) {
   const id = remoteNode?.id ?? formatBlockId((0, import_node_crypto5.randomUUID)().replaceAll("-", ""));
-  const block = parserBlockToNotionBlock(node.block, id, parentId, "block", remote.spaceId, remote.userId, currentTime, node.block.type === "table" ? tableColumnOrder(remoteNode?.block, node.block) : node.block.type === "table_row" ? columnOrder : void 0);
-  const nextColumnOrder = block["type"] === "table" ? object4(block["format"])["table_block_column_order"] : columnOrder;
-  return { id, block, children: node.children.map((child, index) => outputNode(child, remoteNode?.children[index], id, remote, currentTime, nextColumnOrder)) };
+  const block2 = parserBlockToNotionBlock(node.block, id, parentId, "block", remote.spaceId, remote.userId, currentTime, node.block.type === "table" ? tableColumnOrder(remoteNode?.block, node.block) : node.block.type === "table_row" ? columnOrder : void 0);
+  const nextColumnOrder = block2["type"] === "table" ? object4(block2["format"])["table_block_column_order"] : columnOrder;
+  return { id, block: block2, children: node.children.map((child, index) => outputNode(child, remoteNode?.children[index], id, remote, currentTime, nextColumnOrder)) };
 }
 function emitUpdates(remote, local, blockId, spaceId, columnOrder) {
   const operations = [];
@@ -21068,10 +21245,10 @@ async function resolveNotionEmailMentions(runtime2, blocks, cookie, spaceId, hea
       else for (const child of value) visit(child);
     } else if (value !== null && typeof value === "object") for (const child of Object.values(value)) visit(child);
   };
-  for (const block of blocks) {
-    if (block.type === "code" || block.properties["notion_opaque"] !== void 0) continue;
-    visit(block.rich_text);
-    visit(block.properties);
+  for (const block2 of blocks) {
+    if (block2.type === "code" || block2.properties["notion_opaque"] !== void 0) continue;
+    visit(block2.rich_text);
+    visit(block2.properties);
   }
   if (segments.length === 0) return;
   const response = await notionPost(runtime2, "getVisibleUsers", cookie, { spaceId }, headers);
@@ -21108,7 +21285,7 @@ async function fetchComments(runtime2, tree, spaceId, cookie, headers) {
     if (activityIds.length < 100) break;
     startingAfterId = activityIds[activityIds.length - 1];
   }
-  const blockIds = new Set(sidecarBlocksFromNotionTree(tree).map((block) => block.id));
+  const blockIds = new Set(sidecarBlocksFromNotionTree(tree).map((block2) => block2.id));
   const discussions = [...records["discussion"].values()].filter((discussion) => blockIds.has(discussion["parent_id"]) && discussion["alive"] !== false);
   for (const table of ["comment", "notion_user", "bot"]) {
     const ids = table === "comment" ? discussions.flatMap((discussion) => discussion["comments"]) : [...records["comment"].values()].filter((comment) => comment["alive"] === true && (comment["created_by_table"] ?? "notion_user") === table).map((comment) => comment["created_by_id"]);
@@ -21175,26 +21352,26 @@ async function fetchTree(runtime2, url, source) {
       const idValue = pending.pop();
       if (visited.has(idValue)) continue;
       visited.add(idValue);
-      const block = blocks.get(idValue);
-      if (block === void 0) {
+      const block2 = blocks.get(idValue);
+      if (block2 === void 0) {
         missing.add(idValue);
         continue;
       }
-      if (idValue !== pageId && block["type"] === "page") continue;
-      for (const child of block["content"] ?? []) pending.push(child);
+      if (idValue !== pageId && block2["type"] === "page") continue;
+      for (const child of block2["content"] ?? []) pending.push(child);
     }
     if (missing.size === 0) break;
     const missingIds = [...missing];
     const data = await notionPost(runtime2, "getRecordValues", cookie, { requests: missingIds.map((idValue) => ({ table: "block", id: idValue })) }, headers);
     for (const [index, result] of data["results"].entries()) {
-      const block = object4(result["value"]);
-      blocks.set(block["id"] ?? missingIds[index], block);
+      const block2 = object4(result["value"]);
+      blocks.set(block2["id"] ?? missingIds[index], block2);
     }
   }
   const build = (idValue) => {
-    const block = blocks.get(idValue);
-    if (idValue !== pageId && block["type"] === "page") return { id: idValue, block, children: [] };
-    return { id: idValue, block, children: (block["content"] ?? []).filter((child) => blocks.get(child)?.["alive"] !== false).map(build) };
+    const block2 = blocks.get(idValue);
+    if (idValue !== pageId && block2["type"] === "page") return { id: idValue, block: block2, children: [] };
+    return { id: idValue, block: block2, children: (block2["content"] ?? []).filter((child) => blocks.get(child)?.["alive"] !== false).map(build) };
   };
   const tree = build(pageId);
   const comments = await fetchComments(runtime2, tree, spaceId, cookie, headers);
@@ -21230,9 +21407,9 @@ async function downloadNotionDirectory(runtime2, url, source, write) {
     await read("block", pending, blocks);
     const next = [];
     for (const id of pending) {
-      const block = blocks.get(id);
-      if (block === void 0 || block["alive"] === false) continue;
-      for (const child of block["content"] ?? []) {
+      const block2 = blocks.get(id);
+      if (block2 === void 0 || block2["alive"] === false) continue;
+      for (const child of block2["content"] ?? []) {
         if (seen.has(child)) continue;
         seen.add(child);
         next.push(child);
@@ -21242,10 +21419,10 @@ async function downloadNotionDirectory(runtime2, url, source, write) {
   }
   const root = blocks.get(rootId);
   if (root === void 0 || root["alive"] === false) throw new Error(`Notion page is unavailable: ${url}`);
-  if (![...blocks.values()].some((block) => block !== root && block["alive"] !== false && block["type"] === "page")) return null;
+  if (![...blocks.values()].some((block2) => block2 !== root && block2["alive"] !== false && block2["type"] === "page")) return null;
   const discussions = /* @__PURE__ */ new Map(), comments = /* @__PURE__ */ new Map(), users = /* @__PURE__ */ new Map();
-  const live = [...blocks.values()].filter((block) => block["alive"] !== false);
-  await read("discussion", [...new Set(live.flatMap((block) => block["discussions"] ?? []))], discussions);
+  const live = [...blocks.values()].filter((block2) => block2["alive"] !== false);
+  await read("discussion", [...new Set(live.flatMap((block2) => block2["discussions"] ?? []))], discussions);
   await read("comment", [...new Set([...discussions.values()].flatMap((discussion) => discussion["comments"]))], comments);
   for (const table of ["notion_user", "bot"]) {
     const authors = [...comments.values()].filter((comment) => comment["alive"] === true && comment["created_by_table"] === table);
@@ -21262,29 +21439,29 @@ async function downloadNotionDirectory(runtime2, url, source, write) {
     paths.set(id, path);
     const threads = [];
     const build = async (blockId, pageRoot) => {
-      const block = blocks.get(blockId);
-      if (block === void 0 || !pageRoot && block["type"] === "page") {
+      const block2 = blocks.get(blockId);
+      if (block2 === void 0 || !pageRoot && block2["type"] === "page") {
         let label = "Unavailable Notion block";
         let href = `https://www.notion.so/${blockId.replaceAll("-", "")}`;
-        if (block !== void 0) {
-          label = richTextText(object4(block["properties"] ?? {})["title"] ?? []) || "Untitled";
+        if (block2 !== void 0) {
+          label = richTextText(object4(block2["properties"] ?? {})["title"] ?? []) || "Untitled";
           if (!paths.has(blockId)) {
-            const child = await exportPage(block, import_node_path5.posix.join(directory, directoryName(block)));
+            const child = await exportPage(block2, import_node_path5.posix.join(directory, directoryName(block2)));
             await write(child.path, child.markdown);
           }
           href = import_node_path5.posix.relative(directory, paths.get(blockId));
         }
         return { id: blockId, block: { type: "text", properties: { title: [[label, [["a", href]]]] } }, children: [] };
       }
-      for (const threadId of block["discussions"] ?? []) {
+      for (const threadId of block2["discussions"] ?? []) {
         const thread = discussions.get(threadId);
         if (thread !== void 0 && thread["alive"] !== false) threads.push(thread);
       }
       const children = [];
-      for (const child of block["content"] ?? []) {
+      for (const child of block2["content"] ?? []) {
         if (blocks.get(child)?.["alive"] !== false) children.push(await build(child, false));
       }
-      return { id: blockId, block, children };
+      return { id: blockId, block: block2, children };
     };
     const tree = await build(id, true);
     const markdown = renderNotionTreeToMarkdown(tree, void 0, {}, true) + renderComments(id, threads, comments, users);
@@ -21339,9 +21516,9 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
     block: pageOperation.args,
     children: localTree(localBlocks).map((node) => outputNode(node, void 0, pageId, { spaceId, userId }, currentTime))
   };
-  const output = renderNotionTreeToMarkdown(pageTree, void 0, emailMentions);
+  const output2 = renderNotionTreeToMarkdown(pageTree, void 0, emailMentions);
   const slug = split.title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return { url: slug === "" ? `https://www.notion.so/${compactPageId}` : `https://www.notion.so/${slug}-${compactPageId}`, title: split.title, markdown: output, data: notionData(compactPageId, output, pageTree, void 0, emailMentions) };
+  return { url: slug === "" ? `https://www.notion.so/${compactPageId}` : `https://www.notion.so/${slug}-${compactPageId}`, title: split.title, markdown: output2, data: notionData(compactPageId, output2, pageTree, void 0, emailMentions) };
 }
 function splitTitle(markdown) {
   const lines = markdown.replace(/^\ufeff/, "").split("\n");
@@ -21634,8 +21811,8 @@ function applyStyles(text3, styles) {
     return text3;
   }
   const open2 = styles.map((style) => style.open).join("");
-  const output = text3.includes(reset) ? replaceAll(text3, reset, `${reset}${open2}`) : text3;
-  return `${open2}${output}${reset}`;
+  const output2 = text3.includes(reset) ? replaceAll(text3, reset, `${reset}${open2}`) : text3;
+  return `${open2}${output2}${reset}`;
 }
 function clampRgb(value) {
   if (Number.isNaN(value)) {
@@ -21841,7 +22018,7 @@ ${value}
 ${fence}`;
 }
 function richInline(elements, users) {
-  let output = "";
+  let output2 = "";
   let active = [];
   for (const element of elements) {
     const style = element["style"];
@@ -21884,27 +22061,27 @@ function richInline(elements, users) {
     const next = [...active.filter((marker) => markers.includes(marker)), ...markers.filter((marker) => !active.includes(marker))];
     let common = 0;
     while (common < active.length && active[common] === next[common]) common += 1;
-    const trailing2 = /\s*$/.exec(output)[0];
-    output = output.slice(0, output.length - trailing2.length) + active.slice(common).reverse().join("") + trailing2;
+    const trailing2 = /\s*$/.exec(output2)[0];
+    output2 = output2.slice(0, output2.length - trailing2.length) + active.slice(common).reverse().join("") + trailing2;
     const leading = /^\s*/.exec(text3)[0];
-    output += leading + next.slice(common).join("") + text3.slice(leading.length);
+    output2 += leading + next.slice(common).join("") + text3.slice(leading.length);
     active = next;
   }
-  const trailing = /\s*$/.exec(output)[0];
-  return output.slice(0, output.length - trailing.length) + active.reverse().join("") + trailing;
+  const trailing = /\s*$/.exec(output2)[0];
+  return output2.slice(0, output2.length - trailing.length) + active.reverse().join("") + trailing;
 }
 function slackBlocksToMarkdown(blocks, users) {
-  const render2 = (block) => {
-    const elements = block["elements"];
-    switch (block["type"]) {
+  const render2 = (block2) => {
+    const elements = block2["elements"];
+    switch (block2["type"]) {
       case "rich_text": {
-        const output = [];
+        const output2 = [];
         for (const [index, child] of elements.entries()) {
           const previous = elements[index - 1];
           const adjacentLists = child["type"] === "rich_text_list" && previous?.["type"] === "rich_text_list" && (child["style"] === previous["style"] || child["indent"] !== previous["indent"]);
-          output.push(`${index === 0 ? "" : adjacentLists ? "\n" : "\n\n"}${render2(child)}`);
+          output2.push(`${index === 0 ? "" : adjacentLists ? "\n" : "\n\n"}${render2(child)}`);
         }
-        return output.join("");
+        return output2.join("");
       }
       case "rich_text_section":
         return richInline(elements, users);
@@ -21914,32 +22091,32 @@ function slackBlocksToMarkdown(blocks, users) {
         return richInline(elements, users).split("\n").map((line) => `> ${line}`).join("\n");
       case "rich_text_list":
         return elements.map((element, index) => {
-          const indent = block["indent"] === void 0 ? 0 : block["indent"];
-          const offset = block["offset"] === void 0 ? 0 : block["offset"];
-          const prefix = block["style"] === "ordered" ? `${offset + index + 1}. ` : "- ";
+          const indent = block2["indent"] === void 0 ? 0 : block2["indent"];
+          const offset = block2["offset"] === void 0 ? 0 : block2["offset"];
+          const prefix = block2["style"] === "ordered" ? `${offset + index + 1}. ` : "- ";
           return `${"    ".repeat(indent)}${prefix}${richInline(element["elements"], users).replace(/\n/g, `
 ${"    ".repeat(indent)}${" ".repeat(prefix.length)}`)}`;
         }).join("\n");
       case "section":
-        return [...block["text"] === void 0 ? [] : [render2(block["text"])], ...block["fields"] === void 0 ? [] : block["fields"].map(render2)].join("\n\n");
+        return [...block2["text"] === void 0 ? [] : [render2(block2["text"])], ...block2["fields"] === void 0 ? [] : block2["fields"].map(render2)].join("\n\n");
       case "mrkdwn":
-        return cleanText(block["text"]);
+        return cleanText(block2["text"]);
       case "plain_text":
-        return markdownText2(block["text"]);
+        return markdownText2(block2["text"]);
       case "header":
-        return `## ${render2(block["text"])}`;
+        return `## ${render2(block2["text"])}`;
       case "divider":
         return "---";
       case "context":
         return elements.map(render2).join(" \xB7 ");
       case "image":
-        return `![${markdownText2(block["alt_text"])}](<${block["image_url"]}>)`;
+        return `![${markdownText2(block2["alt_text"])}](<${block2["image_url"]}>)`;
       case "actions":
         return elements.map(render2).join(" \xB7 ");
       case "button":
-        return block["url"] === void 0 ? render2(block["text"]) : `[${render2(block["text"])}](<${block["url"]}>)`;
+        return block2["url"] === void 0 ? render2(block2["text"]) : `[${render2(block2["text"])}](<${block2["url"]}>)`;
       default:
-        throw new Error(`Unsupported Slack block: ${block["type"]}`);
+        throw new Error(`Unsupported Slack block: ${block2["type"]}`);
     }
   };
   return blocks.map(render2).join("\n\n");
@@ -22009,9 +22186,9 @@ var slackService = defineService({
     return Object.freeze({ service: "slack", identifier: `${parts.channel}:${threadTimestamp}`, type: "message-thread", channel_id: parts.channel, timestamp, thread_timestamp: threadTimestamp });
   },
   fetch: async (runtime2, url, source) => {
-    const session = await slackSession(runtime2);
-    const origin2 = new URL(url).hostname === "app.slack.com" ? session.origin : new URL(url).origin;
-    const { token, cookie } = session;
+    const session2 = await slackSession(runtime2);
+    const origin2 = new URL(url).hostname === "app.slack.com" ? session2.origin : new URL(url).origin;
+    const { token, cookie } = session2;
     const replies = [];
     let cursor;
     do {
@@ -22454,8 +22631,8 @@ var zoomProvider = Object.freeze({
 var serviceCatalog = createServiceRegistry().use(zoomProvider).use(notionProvider).use(slackProvider).use(chatgptProvider).use(googleDocsProvider).use(gmailProvider).use(asanaProvider).catalog();
 
 // src/extension.ts
-var execFileAsync2 = (0, import_node_util3.promisify)(import_node_child_process3.execFile);
-var authServices = ["ashby", "asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"];
+var execFileAsync2 = (0, import_node_util4.promisify)(import_node_child_process3.execFile);
+var authServices = ["ashby", "asana", "chatgpt", "codesignal", "gmail", "google-docs", "notion", "slack", "zoom"];
 var wireStatus;
 function operationPath(value, path) {
   if (value.startsWith("http://") || value.startsWith("https://")) return path;
@@ -22546,7 +22723,10 @@ async function wire(path) {
     now: capabilities.clock.now,
     open: capabilities.openFiles.open
   });
-  return withWireHooks(baseWire, { currentDirectory: projectDirectory(), home: environment(values2, "HOME"), environment: values2 });
+  return withWireHooks({ ...baseWire, view: (url) => {
+    const id = codeSignalInterviewId(url);
+    return id ? previewCodeSignal(capabilities, id) : baseWire.view(url);
+  } }, { currentDirectory: projectDirectory(), home: environment(values2, "HOME"), environment: values2 });
 }
 async function auth() {
   const values2 = await commandEnvironment(projectDirectory());
@@ -22734,6 +22914,7 @@ async function authLogin() {
     ashby: authClient.extractAshby,
     asana: authClient.extractAsana,
     chatgpt: authClient.extractChatgpt,
+    codesignal: authClient.extractCodeSignal,
     gmail: authClient.extractGmail,
     "google-docs": authClient.extractGoogleDocs,
     notion: authClient.extractNotion,

@@ -160,7 +160,7 @@ export function serializeNetscapeCookies(cookies, metadata) {
 }
 export function createCookiesCapability(filesystem, home, repositoryRoot, overrideFile) {
     const paths = (service) => {
-        if (service === "ashby")
+        if (service === "ashby" || service === "codesignal")
             return [cookiesFile(home(), service)];
         const overridePath = overrideFile?.(service);
         const repositoryRootPath = repositoryRoot?.();

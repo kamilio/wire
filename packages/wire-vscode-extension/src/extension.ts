@@ -4,11 +4,12 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
 import * as vscode from "vscode";
+import { codeSignalInterviewId, previewCodeSignal } from "../../wire/src/adapters/codesignal.js";
 import { composeAuth, composeWire, configuredWireRoot, createCookiesCapability, createGoogleTokensCapability, defaultWireBackend, defaultWireRegistryPath, extractChromeCookies, initializeWire, loadWireConfig, openWireRegistry, wireRelativePath, withWireHooks, type AuthResult, type AuthService, type RuntimeCapabilities, type WireResult } from "wire-core";
 import { serviceCatalog } from "./service-catalog.js";
 
 const execFileAsync = promisify(execFile);
-const authServices = ["ashby", "asana", "chatgpt", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
+const authServices = ["ashby", "asana", "chatgpt", "codesignal", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
 let wireStatus: vscode.StatusBarItem;
 
 function operationPath(value: string, path: string): string {
@@ -98,7 +99,7 @@ async function wire(path: string) {
     now: capabilities.clock.now,
     open: capabilities.openFiles.open
   });
-  return withWireHooks(baseWire, { currentDirectory: projectDirectory(), home: environment(values, "HOME"), environment: values });
+  return withWireHooks({ ...baseWire, view: url => { const id = codeSignalInterviewId(url); return id ? previewCodeSignal(capabilities, id) : baseWire.view(url); } }, { currentDirectory: projectDirectory(), home: environment(values, "HOME"), environment: values });
 }
 
 async function auth() {
@@ -317,6 +318,7 @@ async function authLogin(): Promise<void> {
     ashby: authClient.extractAshby,
     asana: authClient.extractAsana,
     chatgpt: authClient.extractChatgpt,
+    codesignal: authClient.extractCodeSignal,
     gmail: authClient.extractGmail,
     "google-docs": authClient.extractGoogleDocs,
     notion: authClient.extractNotion,
