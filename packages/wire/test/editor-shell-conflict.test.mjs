@@ -25,6 +25,7 @@ for (const backend of ["files","sqlite"]) {
     await writeFile(fake,`
 import {composeWire,configuredWireRoot,initializeWire,openWireRegistry,wireRelativePath} from ${JSON.stringify(core)};
 import {createRoot} from ${JSON.stringify(root)};
+import {googleDocsService} from ${JSON.stringify(new URL("../../provider-google-docs/dist/google-docs.js",import.meta.url).href)};
 import {mergeDocBlocks} from ${JSON.stringify(merge)};
 import {readFile,writeFile,stat} from "node:fs/promises";
 import {join} from "node:path";
@@ -32,7 +33,7 @@ export function createExecutableRoot(_env,cwd) {
   const remote=join(cwd,"remote");
   const fetch=async()=>{const markdown=await readFile(remote,"utf8");return {title:"Note",markdown,data:{markdown}};};
   return createRoot(composeWire({home:cwd,fetchInput:{},initialization:{backend:"files",registryPath:"records"},
-    catalog:[{name:"google-docs",matches:()=>true,parse:u=>({service:"google-docs",type:"document",identifier:u.pathname}),fetch,
+    catalog:[{name:"google-docs",matches:()=>true,parse:u=>({service:"google-docs",type:"document",identifier:u.pathname}),fetch,mergeDrafts:googleDocsService.mergeDrafts,
       synchronize:async(_input,_url,_source,base,local,_path,observe,strict)=>{
         const seen=await fetch(); await observe(seen);
         const target=mergeDocBlocks(base.markdown,local,seen.markdown);
@@ -54,25 +55,40 @@ export function createExecutableRoot(_env,cwd) {
     const old=await readFile(file,"utf8");
     await cli("shell",file,"sed -i 's/Middle/Shell middle/' document.md");
     await writeFile(file,old.replace("Title","Editor title"));
-    await assert.rejects(cli("sync",file),e=>/conflict/i.test(e.stdout+e.stderr));
     const saved=JSON.parse(await cli("conflicts",file,"--output","json"));
     assert.ok(saved.editor && saved.shell && saved.editor!==saved.shell);
-    assert.match(await cli("diff",file,"--from","editor","--to","shell"),/Shell middle/);
-    await writeFile(file,(await readFile(file,"utf8")).replace("Middle","Shell middle"));
-    await cli("resolve",file,"working");
     assert.equal(await readFile(remote,"utf8"),a);
     await writeFile(remote,a+"Remote tail\n");
     await cli("sync",file);
     assert.equal(await readFile(remote,"utf8"),"Editor title\nShell middle\nEnd\nRemote tail\n");
+    const entries=JSON.parse(await cli("history",file,"--output","json"));
+    assert.ok(entries.some(r=>r.kind==="merge" && r.parents.includes(saved.editor) && r.parents.includes(saved.shell)));
 
     const start=await readFile(file,"utf8");
     await cli("shell",file,"sed -i 's/End/Shell ending/' document.md");
     await writeFile(file,start.replace("End","Editor ending"));
     assert.match(await cli("status",file),/conflict/);
+    const untouched=await readFile(remote,"utf8");
+    await assert.rejects(cli("sync",file),e=>/conflict/i.test(e.stdout+e.stderr));
+    assert.equal(await readFile(remote,"utf8"),untouched);
+    assert.match(await cli("diff",file,"--from","editor","--to","shell"),/Shell ending/);
     await cli("resolve",file,"shell");
     assert.doesNotMatch(await readFile(remote,"utf8"),/ending/);
     await cli("sync",file);
     assert.match(await readFile(remote,"utf8"),/Shell ending/);
     assert.doesNotMatch(await readFile(remote,"utf8"),/Editor ending/);
+
+    // Two valid receipts based on different remote observations: even edits
+    // to different paragraphs must not implicitly pick one provider basis.
+    const prior=await readFile(file,"utf8");
+    const advanced=(await readFile(remote,"utf8"))+"Later remote\n";
+    await writeFile(remote,advanced);
+    await cli("sync",file);
+    await cli("shell",file,"sed -i 's/Middle/Again/g;s/Shell middle/Shell second/' document.md");
+    await writeFile(file,prior.replace("Editor title","Stale title"));
+    await assert.rejects(cli("sync",file),e=>/conflict/i.test(e.stdout+e.stderr));
+    const ambiguous=JSON.parse(await cli("conflicts",file,"--output","json"));
+    assert.notEqual(ambiguous.editorBase,ambiguous.shellBase);
+    assert.equal(await readFile(remote,"utf8"),advanced);
   });
 }

@@ -21,6 +21,7 @@ export declare const latticeService: Readonly<{
         identifier: string;
         type: import("wire-core").ResourceType;
     }>, write: import("wire-core").DownloadWriter, addMarkdown?: AddMarkdown): Promise<import("wire-core").DownloadedDocument | null>;
+    mergeDrafts?(base: string, editor: string, shell: string): string;
     synchronize?(input: RuntimeCapabilities, url: string, source: Readonly<{
         [key: string]: import("wire-core").JsonValue;
         service: string;
@@ -55,6 +56,7 @@ export declare const latticeProvider: Readonly<{
             identifier: string;
             type: import("wire-core").ResourceType;
         }>, write: import("wire-core").DownloadWriter, addMarkdown?: AddMarkdown): Promise<import("wire-core").DownloadedDocument | null>;
+        mergeDrafts?(base: string, editor: string, shell: string): string;
         synchronize?(input: RuntimeCapabilities, url: string, source: Readonly<{
             [key: string]: import("wire-core").JsonValue;
             service: string;

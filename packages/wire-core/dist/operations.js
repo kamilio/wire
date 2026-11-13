@@ -427,7 +427,7 @@ export function composeWire(dependencies) {
         resource = await registry.get(resource.id);
         if (history)
             await requireHistoryVolume(history.dir, outputDirectory);
-        if (history?.refs.conflict)
+        if (history?.refs.conflict && !("editor" in history.refs.conflict))
             throw new Error("Unresolved Wire conflict. Inspect wire conflicts and use wire resolve.");
         const snapshot = resource.data.find((item) => item.namespace === source.service && item.key === "snapshot")?.value;
         if (snapshot === undefined)
@@ -435,14 +435,36 @@ export function composeWire(dependencies) {
         if (!(await dependencies.filesystem.exists(outputPath)))
             throw new Error(`Linked file missing: ${primaryLink(resource).path} - restore it or run wire detach`);
         checkReceiptLink(resource, history);
-        const raw = history ? await working(outputPath) : await dependencies.filesystem.readText(outputPath);
+        let raw = history ? await working(outputPath) : await dependencies.filesystem.readText(outputPath);
         if (raw === null)
             throw new Error("Linked file missing: " + outputPath);
-        const view = history ? history.view(raw) : editorView(raw);
-        const markdown = view.markdown;
+        let view = history ? history.view(raw) : editorView(raw);
         await history?.checkPendingDraft(view);
-        if (history?.refs.conflict)
-            throw new Error("Unresolved Wire conflict. The editor save and shell draft are both local. Compare them with wire diff <resource> --from editor --to shell, then use wire resolve <resource> <choice>.");
+        if (history?.refs.conflict && "editor" in history.refs.conflict) {
+            const c = history.refs.conflict;
+            const merge = dependencies.catalog.find(s => s.matches(new URL(resource.urls[0])))?.mergeDrafts;
+            const base = c.editorBase === c.shellBase ? history.commonAncestor(c.editor, c.shell) : null;
+            let merged;
+            // A user may already be reconciling the file. Never overwrite edits
+            // that arrived after the two local versions were captured.
+            const editor = await history.text(c.editor);
+            if (merge && base && view.markdown === editor && view.base === c.editorBase) {
+                const before = await history.text(base), shell = await history.text(c.shell);
+                try {
+                    merged = merge(before, editor, shell);
+                }
+                catch { /* retain the saved conflict */ }
+            }
+            if (merged === undefined)
+                throw new Error("Unresolved Wire conflict. The editor save and shell draft are both local. Compare them with wire diff <resource> --from editor --to shell, then use wire resolve <resource> <choice>.");
+            const draft = await history.revision("merge", merged, [c.editor, c.shell]);
+            const receipts = { ...history.refs.editorReceipts };
+            const next = editorFile(merged, receipts, draft, c.editorBase);
+            await history.publish(outputPath, raw, next, { ...history.refs, conflict: null, editorReceipts: receipts, editorDraft: draft, draft, strict: true }, null, r => registry.put(r));
+            raw = next;
+            view = history.view(raw);
+        }
+        const markdown = view.markdown;
         // A stale receipt proves Markdown ancestry, not native paragraph positions.
         // Never attach a newer snapshot's verified revision or IDs to older bytes.
         const base = view.base && history && view.base !== history.refs.base && view.base !== history.refs.resolutionParent

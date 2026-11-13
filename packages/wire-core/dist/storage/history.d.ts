@@ -72,6 +72,7 @@ export declare class DocumentHistory {
     log(): Promise<HistoryEntry[]>;
     seed(markdown: string | null): Promise<void>;
     checkPendingDraft(view: ReturnType<typeof editorView>): Promise<void>;
+    commonAncestor(left: string, right: string): string | null;
     captureLocal(markdown: string, parent?: string | null): Promise<string>;
     observe(remote: FetchedDocument): Promise<string>;
     status(path: string): Promise<HistoryStatus>;

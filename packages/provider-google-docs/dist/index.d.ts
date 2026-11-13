@@ -22,6 +22,7 @@ export declare const googleDocsProvider: Readonly<{
             identifier: string;
             type: import("wire-core").ResourceType;
         }>, write: import("wire-core").DownloadWriter, addMarkdown?: import("wire-core").AddMarkdown): Promise<import("wire-core").DownloadedDocument | null>;
+        mergeDrafts?(base: string, editor: string, shell: string): string;
         synchronize?(input: import("wire-core").RuntimeCapabilities, url: string, source: Readonly<{
             [key: string]: import("wire-core").JsonValue;
             service: string;
@@ -54,6 +55,7 @@ export declare const googleDocsProvider: Readonly<{
             identifier: string;
             type: import("wire-core").ResourceType;
         }>, write: import("wire-core").DownloadWriter, addMarkdown?: import("wire-core").AddMarkdown): Promise<import("wire-core").DownloadedDocument | null>;
+        mergeDrafts?(base: string, editor: string, shell: string): string;
         synchronize?(input: import("wire-core").RuntimeCapabilities, url: string, source: Readonly<{
             [key: string]: import("wire-core").JsonValue;
             service: string;

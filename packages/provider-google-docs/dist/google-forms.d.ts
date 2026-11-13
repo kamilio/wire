@@ -20,6 +20,7 @@ export declare const googleFormsService: Readonly<{
         identifier: string;
         type: import("wire-core").ResourceType;
     }>, write: import("wire-core").DownloadWriter, addMarkdown?: import("wire-core").AddMarkdown): Promise<import("wire-core").DownloadedDocument | null>;
+    mergeDrafts?(base: string, editor: string, shell: string): string;
     synchronize?(input: RuntimeCapabilities, url: string, source: Readonly<{
         [key: string]: JsonValue;
         service: string;

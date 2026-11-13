@@ -887,5 +887,6 @@ export const googleDocsService = defineService<RuntimeCapabilities>({
     return Object.freeze({ service: "google-docs", identifier: documentId, type: "document", ...resource_key });
   },
   fetch: (runtime, _url, source) => fetchGoogleDocument(runtime, source),
+  mergeDrafts: (base, editor, shell) => mergeDocBlocks(base, editor, shell),
   synchronize: (runtime, url, source, base, markdown, _path, observeRemote, requireConditionalWrite) => synchronizeGoogleDocument(runtime, url, source, base, markdown, observeRemote, requireConditionalWrite),
 });

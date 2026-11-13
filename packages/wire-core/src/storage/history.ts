@@ -199,6 +199,24 @@ export class DocumentHistory {
     this.refs.conflict = { editor, shell, editorBase: view.base, shellBase: basis };
     await this.save();
   }
+  commonAncestor(left: string, right: string): string | null {
+    const graph = new Map(this.refs.revisions.map(r => [r.id,r.parents]));
+    const ancestors = (start: string) => {
+      const seen = new Set<string>(), pending = [start];
+      while (pending.length) {
+        const id = pending.pop()!;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        for (const parent of graph.get(id) ?? []) pending.push(parent);
+      }
+      return seen;
+    };
+    const a = ancestors(left), b = ancestors(right);
+    const common = new Set([...a].filter(id => b.has(id)));
+    const tips = new Set(common);
+    for (const id of common) for (const parent of graph.get(id)!) tips.delete(parent);
+    return tips.size === 1 ? [...tips][0]! : null;
+  }
   async captureLocal(markdown: string, parent = this.refs.draft ?? this.refs.base) {
     this.refs.draft = await this.revision("local", markdown, [parent]);
     await this.save();
