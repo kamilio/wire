@@ -1,3 +1,4 @@
+import { synchronizeSource, uploadSource } from "wire-core";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -5,6 +6,15 @@ import { test } from "node:test";
 import { composeWire, configuredWireRoot, initializeWire, openWireRegistry, wireRelativePath } from "../../wire-core/dist/index.js";
 import { editorFile, editorView } from "../../wire-core/dist/storage/editor-receipts.js";
 import { mergeDocBlocks } from "../../provider-google-docs/dist/doc-blocks.js";
+
+test("public SDK write entry points reject local receipts before dispatch", () => {
+  const service = { name: "notion", matches: () => true, parse: () => ({ service: "notion", identifier: "p", type: "document" }),
+    upload: assert.fail, synchronize: assert.fail };
+  for (const raw of [editorFile("# Draft", {}, "s", "b"), "text\n<!--  WIRE-EDITOR-BASIS? -->"]) {
+    assert.throws(() => uploadSource({}, [service], raw, "copy.md"), /Invalid Wire editor receipt/);
+    assert.throws(() => synchronizeSource({}, "https://notion.test/p", [service], { markdown: "" }, raw, "copy.md"), /Invalid Wire editor receipt/);
+  }
+});
 
 test("receipt codec preserves Markdown bytes; the delimiter belongs to the receipt", () => {
   const receipts = {};

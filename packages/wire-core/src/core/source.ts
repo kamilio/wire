@@ -1,3 +1,4 @@
+import { plainMarkdown } from "./editor-receipts.js";
 import type { FetchedDocument, Service, ServiceCatalog, Source, SynchronizedDocument, UploadedDocument } from "./model.js";
 
 export type ServiceProvider<FetchInput> = Readonly<{
@@ -60,6 +61,7 @@ export function synchronizeSource<FetchInput>(
   observeRemote?: (remote: FetchedDocument) => void | Promise<void>,
   requireConditionalWrite?: boolean,
 ): Promise<SynchronizedDocument> {
+  plainMarkdown(markdown);
   const url = new URL(value);
   const service = serviceForUrl(url, catalog);
   const source = service.parse(url);
@@ -72,6 +74,7 @@ export function uploadSource<FetchInput>(
   markdown: string,
   markdownPath: string,
 ): Promise<UploadedDocument> {
+  plainMarkdown(markdown);
   const header = /^(?:\uFEFF)?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(markdown)?.[1];
   if (header && /^google_doc:/m.test(header) && /^google_drive_folder:/m.test(header)) {
     throw new Error("This file is already bound to Google Drive. Use its existing sync owner.");

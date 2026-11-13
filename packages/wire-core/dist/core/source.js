@@ -1,3 +1,4 @@
+import { plainMarkdown } from "./editor-receipts.js";
 function serviceForUrl(url, catalog) {
     const service = catalog.find((item) => item.matches(url));
     if (service === undefined)
@@ -31,12 +32,14 @@ export function fetchSource(input, value, catalog) {
     return service.fetch(input, value, service.parse(url));
 }
 export function synchronizeSource(input, value, catalog, base, markdown, markdownPath, observeRemote, requireConditionalWrite) {
+    plainMarkdown(markdown);
     const url = new URL(value);
     const service = serviceForUrl(url, catalog);
     const source = service.parse(url);
     return service.synchronize === undefined ? service.fetch(input, value, source) : service.synchronize(input, value, source, base, markdown, markdownPath, observeRemote, requireConditionalWrite);
 }
 export function uploadSource(input, catalog, markdown, markdownPath) {
+    plainMarkdown(markdown);
     const header = /^(?:\uFEFF)?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(markdown)?.[1];
     if (header && /^google_doc:/m.test(header) && /^google_drive_folder:/m.test(header)) {
         throw new Error("This file is already bound to Google Drive. Use its existing sync owner.");

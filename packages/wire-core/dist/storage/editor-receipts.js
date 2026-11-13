@@ -1,25 +1,19 @@
 import { randomBytes } from "node:crypto";
+import { invalidReceipt, plainMarkdown, receiptEnvelope } from "../core/editor-receipts.js";
+export { hasEditorReceipt, plainMarkdown } from "../core/editor-receipts.js";
 const prefix = "wire-editor-basis:";
-const envelope = /<!--[ \t]*wire-editor-basis\b/gi;
-export const hasEditorReceipt = (text) => text.search(envelope) >= 0;
-const invalid = () => new Error("Invalid Wire editor receipt. The file was kept. Restore its original receipt or reconcile a plain copy before syncing.");
-export function plainMarkdown(text) {
-    if (hasEditorReceipt(text))
-        throw invalid();
-    return text;
-}
 export function editorView(raw, receipts) {
     if (!receipts)
         return { markdown: plainMarkdown(raw), shown: null, base: null };
     const mark = /\n<!-- wire-editor-basis:v1:([a-f0-9]{48}) -->/.exec(raw);
-    if (!mark || raw.match(envelope)?.length !== 1)
-        throw invalid();
+    if (!mark || raw.match(receiptEnvelope)?.length !== 1)
+        throw invalidReceipt();
     const record = receipts[mark[1]];
     if (!record || record.crlf !== (raw[mark.index - 1] === "\r"))
-        throw invalid();
+        throw invalidReceipt();
     const suffix = raw.slice(mark.index + mark[0].length);
     if (suffix && !/^(?:\r\n|\n)/.test(suffix))
-        throw invalid();
+        throw invalidReceipt();
     return { markdown: raw.slice(0, mark.index - Number(record.crlf)) + suffix, shown: record.shown, base: record.base };
 }
 export function editorFile(text, receipts, shown, base) {

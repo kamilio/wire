@@ -1,10 +1,9 @@
+export { hasEditorReceipt, plainMarkdown } from "../core/editor-receipts.js";
 export type EditorReceipts = Record<string, {
     shown: string;
     base: string;
     crlf: boolean;
 }>;
-export declare const hasEditorReceipt: (text: string) => boolean;
-export declare function plainMarkdown(text: string): string;
 export declare function editorView(raw: string, receipts?: EditorReceipts): {
     markdown: string;
     shown: null;
