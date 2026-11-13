@@ -13959,7 +13959,7 @@ function normalizeResource(resource) {
     ),
     urls: Object.freeze([...resource.urls].sort(compareStrings2)),
     filesystem_links: Object.freeze(
-      resource.filesystem_links.map((link4) => Object.freeze({ path: link4.path, role: link4.role, data: cloneObject(link4.data) })).sort((left, right) => compareStrings2(left.path, right.path) || compareStrings2(left.role, right.role))
+      resource.filesystem_links.map((link5) => Object.freeze({ path: link5.path, role: link5.role, data: cloneObject(link5.data) })).sort((left, right) => compareStrings2(left.path, right.path) || compareStrings2(left.role, right.role))
     ),
     data: Object.freeze(
       resource.data.map((item) => Object.freeze({ namespace: item.namespace, key: item.key, value: cloneValue(item.value) })).sort((left, right) => compareStrings2(left.namespace, right.namespace) || compareStrings2(left.key, right.key))
@@ -14601,7 +14601,7 @@ function compareStrings3(left, right) {
 function storageResource(resource) {
   return normalizeResource({
     ...resource,
-    filesystem_links: resource.filesystem_links.map((link4) => ({ ...link4, path: link4.path.replaceAll(import_node_path.sep, "/") }))
+    filesystem_links: resource.filesystem_links.map((link5) => ({ ...link5, path: link5.path.replaceAll(import_node_path.sep, "/") }))
   });
 }
 function fileResourceName(resourceId3) {
@@ -14617,7 +14617,7 @@ function assertUnique(values2) {
 function assertUniqueFileResource(resource) {
   assertUnique(resource.identifiers.map((identifier2) => JSON.stringify([identifier2.service, identifier2.identifier])));
   assertUnique(resource.urls);
-  assertUnique(resource.filesystem_links.map((link4) => JSON.stringify([link4.path, link4.role])));
+  assertUnique(resource.filesystem_links.map((link5) => JSON.stringify([link5.path, link5.role])));
   assertUnique(resource.data.map((item) => JSON.stringify([item.namespace, item.key])));
   assertUnique(resource.relationships.map((relationship) => JSON.stringify([resource.id, relationship.target_id, relationship.type])));
 }
@@ -14711,7 +14711,7 @@ var SqliteRegistry = class {
     const insertUrl = database.prepare("INSERT INTO resource_urls (resource_id, url) VALUES (?, ?)");
     for (const url of normalized.urls) insertUrl.run(normalized.id, url);
     const insertLink = database.prepare("INSERT INTO filesystem_links (resource_id, path, role, data_json) VALUES (?, ?, ?, ?)");
-    for (const link4 of normalized.filesystem_links) insertLink.run(normalized.id, link4.path, link4.role, stableJsonCompact(link4.data));
+    for (const link5 of normalized.filesystem_links) insertLink.run(normalized.id, link5.path, link5.role, stableJsonCompact(link5.data));
     const insertData = database.prepare("INSERT INTO resource_data (resource_id, namespace, key, value_json) VALUES (?, ?, ?, ?)");
     for (const item of normalized.data) insertData.run(normalized.id, item.namespace, item.key, stableJsonCompact(item.value));
     const insertRelationship = database.prepare("INSERT INTO resource_relationships (source_id, target_id, type, data_json) VALUES (?, ?, ?, ?)");
@@ -14812,7 +14812,7 @@ var SqliteRegistry = class {
       type: row.type,
       identifiers: identifiers.map((identifier2) => ({ service: identifier2.service, identifier: identifier2.identifier })),
       urls: urls.map((item) => item.url),
-      filesystem_links: links.map((link4) => ({ path: link4.path, role: link4.role, data: JSON.parse(link4.data_json) })),
+      filesystem_links: links.map((link5) => ({ path: link5.path, role: link5.role, data: JSON.parse(link5.data_json) })),
       data: data.map((item) => ({ namespace: item.namespace, key: item.key, value: JSON.parse(item.value_json) })),
       relationships: relationships.map((relationship) => ({ target_id: relationship.target_id, type: relationship.type, data: JSON.parse(relationship.data_json) }))
     };
@@ -14904,7 +14904,7 @@ var FileRegistry = class {
   }
   async findByPath(path) {
     const normalizedPath = path.replaceAll(import_node_path.sep, "/");
-    return (await this.listResources()).filter((resource) => resource.filesystem_links.some((link4) => link4.path === normalizedPath));
+    return (await this.listResources()).filter((resource) => resource.filesystem_links.some((link5) => link5.path === normalizedPath));
   }
   async listResources() {
     const filenames = (await (0, import_promises3.readdir)(this.path)).filter((filename) => (0, import_node_path.extname)(filename) === ".json").sort(compareStrings3);
@@ -14933,6 +14933,7 @@ function realpathSyncDirectory(path) {
 var import_node_fs3 = require("node:fs");
 var import_promises5 = require("node:fs/promises");
 var import_node_path3 = require("node:path");
+var import_node_crypto5 = require("node:crypto");
 
 // ../wire-core/src/storage/history.ts
 var import_node_crypto4 = require("node:crypto");
@@ -15108,6 +15109,13 @@ async function withHistoryLock(root, key2, run) {
     return run();
   });
 }
+async function withBackendSwitch(root, run) {
+  const dir = (0, import_node_path2.join)(root, "history");
+  return claim(dir, "switch", async () => {
+    await excludeClaims(dir, /^lock-[a-f0-9]{64}(?:\.\d+)?$/);
+    return run();
+  });
+}
 var DocumentHistory = class _DocumentHistory {
   constructor(root, id, now) {
     this.id = id;
@@ -15203,6 +15211,24 @@ var DocumentHistory = class _DocumentHistory {
     const editor = await this.revision("local", view.markdown, [view.shown]);
     this.refs.conflict = { editor, shell, editorBase: view.base, shellBase: basis };
     await this.save();
+  }
+  commonAncestor(left, right) {
+    const graph = new Map(this.refs.revisions.map((r) => [r.id, r.parents]));
+    const ancestors = (start) => {
+      const seen = /* @__PURE__ */ new Set(), pending = [start];
+      while (pending.length) {
+        const id = pending.pop();
+        if (seen.has(id)) continue;
+        seen.add(id);
+        for (const parent of graph.get(id) ?? []) pending.push(parent);
+      }
+      return seen;
+    };
+    const a = ancestors(left), b2 = ancestors(right);
+    const common = new Set([...a].filter((id) => b2.has(id)));
+    const tips = new Set(common);
+    for (const id of common) for (const parent of graph.get(id)) tips.delete(parent);
+    return tips.size === 1 ? [...tips][0] : null;
   }
   async captureLocal(markdown, parent = this.refs.draft ?? this.refs.base) {
     this.refs.draft = await this.revision("local", markdown, [parent]);
@@ -15381,32 +15407,118 @@ async function openWireRegistry(path, home) {
   const config2 = await loadWireConfig(wireRoot2);
   const registryPath = (0, import_node_path3.join)(wireRoot2, config2.path);
   protectHistory(wireRoot2, registryPath);
-  if (config2.backend === "sqlite") return new SqliteRegistry(registryPath, false);
-  if (config2.backend === "files") return new FileRegistry(registryPath, false);
-  throw new Error(config2.backend);
+  try {
+    if (config2.backend === "sqlite") return new SqliteRegistry(registryPath, false);
+    if (config2.backend === "files") return new FileRegistry(registryPath, false);
+    throw new Error(config2.backend);
+  } catch (e) {
+    if (e.code !== "ENOENT") throw e;
+    throw new Error("Configured Wire registry is missing. Restore its storage, or run wire init with the matching backend if this workspace has never stored documents.");
+  }
 }
 async function initializeWire(path, backend, registryPath) {
   const wireRoot2 = (0, import_node_path3.join)(canonicalPath(path), ".wire");
   await (0, import_promises5.mkdir)(wireRoot2, { recursive: true });
   protectHistory(wireRoot2, (0, import_node_path3.join)(wireRoot2, registryPath));
-  const configPath = (0, import_node_path3.join)(wireRoot2, "config.json");
-  if ((0, import_node_fs3.existsSync)(configPath) && (0, import_node_fs3.statSync)(configPath).isFile()) {
-    const existing = await loadWireConfig(wireRoot2);
-    if (existing.backend !== backend || existing.path !== registryPath) throw new Error(`Wire workspace already initialized with ${existing.backend} registry at ${existing.path}. Existing registries are not overwritten.`);
-    return { root: wireRoot2, backend: existing.backend, path: (0, import_node_path3.join)(wireRoot2, existing.path), created: false };
-  }
-  const config2 = { backend, path: registryPath };
-  await (0, import_promises5.writeFile)(configPath, `${stableJsonPretty(config2)}
-`, "utf8");
   const fullRegistryPath = (0, import_node_path3.join)(wireRoot2, registryPath);
-  if (backend === "sqlite") new SqliteRegistry(fullRegistryPath);
-  else if (backend === "files") new FileRegistry(fullRegistryPath);
-  else throw new Error(backend);
-  return { root: wireRoot2, backend, path: fullRegistryPath, created: true };
+  const config2 = { backend, path: registryPath };
+  const hasConfig = async () => {
+    const existing = await loadWireConfig(wireRoot2).catch((e) => {
+      if (e.code !== "ENOENT") throw e;
+    });
+    if (existing && (existing.backend !== backend || existing.path !== registryPath)) throw new Error(`Wire workspace already initialized with ${existing.backend} registry at ${existing.path}. Existing registries are not overwritten.`);
+    return !!existing;
+  };
+  const occupied = async (path2) => (0, import_promises5.lstat)(path2).then(() => true, (e) => {
+    if (e.code !== "ENOENT") throw e;
+    return false;
+  });
+  const result = (created) => ({ root: wireRoot2, backend, path: fullRegistryPath, created });
+  if (await hasConfig() && await occupied(fullRegistryPath)) return result(false);
+  const kept = "Configured Wire registry is missing but prior workspace storage exists. Restore the registry; wire init will not replace it.";
+  const history = (0, import_node_path3.join)(wireRoot2, "history");
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await withBackendSwitch(wireRoot2, async () => {
+        const configured = await hasConfig(), storeExists = await occupied(fullRegistryPath);
+        if (configured && storeExists) return result(false);
+        if (!storeExists) {
+          const priorFiles = await (0, import_promises5.readdir)(wireRoot2);
+          const firstNames = /* @__PURE__ */ new Set(["config.json", "auth", "hooks", "history", registryPath.split(import_node_path3.sep)[0]]);
+          if (priorFiles.some((name) => !firstNames.has(name) && !/^\.wire-init-[a-f0-9-]{36}$/.test(name)) || (await (0, import_promises5.readdir)(history)).some((name) => !/^switch(?:\.\d+)?$/.test(name))) throw new Error(kept);
+          if (backend === "sqlite") {
+            for (const suffix of ["-journal", "-wal", "-shm"]) if (await occupied(fullRegistryPath + suffix)) throw new Error(kept);
+          }
+          await (0, import_promises5.mkdir)((0, import_node_path3.dirname)(fullRegistryPath), { recursive: true });
+          if (backend === "files") await (0, import_promises5.mkdir)(fullRegistryPath, { mode: 448 });
+          else if (backend === "sqlite") {
+            const staged = (0, import_node_path3.join)((0, import_node_path3.dirname)(fullRegistryPath), ".wire-init-" + (0, import_node_crypto5.randomUUID)());
+            try {
+              new SqliteRegistry(staged);
+              await (0, import_promises5.link)(staged, fullRegistryPath);
+            } finally {
+              await (0, import_promises5.unlink)(staged).catch((e) => {
+                if (e.code !== "ENOENT") throw e;
+              });
+            }
+          } else throw new Error(backend);
+          const parent = await (0, import_promises5.open)((0, import_node_path3.dirname)(fullRegistryPath), "r");
+          try {
+            await parent.sync();
+          } finally {
+            await parent.close();
+          }
+        }
+        if (!configured) {
+          const registry = backend === "sqlite" ? new SqliteRegistry(fullRegistryPath, false) : new FileRegistry(fullRegistryPath, false);
+          await registry.listResources();
+        }
+        await markRegistryReady(wireRoot2);
+        if (!configured) await writeConfig(wireRoot2, config2);
+        return result(true);
+      });
+    } catch (e) {
+      if (!(e instanceof Error) || !e.message.startsWith("Another Wire operation owns") || attempt >= 8) throw e;
+      await new Promise((r) => setTimeout(r, 5 * (attempt + 1)));
+    }
+  }
+}
+async function markRegistryReady(wireRoot2) {
+  const history = (0, import_node_path3.join)(wireRoot2, "history");
+  await (0, import_promises5.mkdir)((0, import_node_path3.join)(history, "registry-ready"), { recursive: true, mode: 448 });
+  const dir = await (0, import_promises5.open)(history, "r");
+  try {
+    await dir.sync();
+  } finally {
+    await dir.close();
+  }
+}
+async function writeConfig(wireRoot2, config2) {
+  const nextConfig = (0, import_node_path3.join)(wireRoot2, (0, import_node_crypto5.randomUUID)());
+  try {
+    const handle = await (0, import_promises5.open)(nextConfig, "wx", 384);
+    try {
+      await handle.writeFile(stableJsonPretty(config2) + "\n");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await (0, import_promises5.rename)(nextConfig, (0, import_node_path3.join)(wireRoot2, "config.json"));
+    const directory = await (0, import_promises5.open)(wireRoot2, "r");
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
+  } finally {
+    await (0, import_promises5.unlink)(nextConfig).catch((e) => {
+      if (e.code !== "ENOENT") throw e;
+    });
+  }
 }
 
 // ../wire-core/src/operations.ts
-var import_node_crypto5 = require("node:crypto");
+var import_node_crypto6 = require("node:crypto");
 var import_node_path4 = require("node:path");
 
 // ../wire-core/src/core/owner.ts
@@ -15439,12 +15551,12 @@ function watchConfig(config2) {
   };
 }
 function primaryLink(resource) {
-  return resource.filesystem_links.find((link4) => link4.role === "primary");
+  return resource.filesystem_links.find((link5) => link5.role === "primary");
 }
 function collisionFilename(title2, service, identifier2) {
   const base = markdownFilename(title2).slice(0, -3);
   const suffix = `${service}-${identifier2}`.replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^-+|-+$/g, "");
-  const compact2 = suffix.length <= 48 ? suffix : `${suffix.slice(0, 32).replace(/[-_.]+$/g, "")}-${(0, import_node_crypto5.createHash)("sha256").update(suffix).digest("hex").slice(0, 10)}`;
+  const compact2 = suffix.length <= 48 ? suffix : `${suffix.slice(0, 32).replace(/[-_.]+$/g, "")}-${(0, import_node_crypto6.createHash)("sha256").update(suffix).digest("hex").slice(0, 10)}`;
   return `${base}-${compact2}.md`;
 }
 async function availableMarkdownPath(directory, title2, service, identifier2, occupied) {
@@ -15590,16 +15702,16 @@ function composeWire(dependencies) {
       if (baseMarkdown !== null && previous !== baseMarkdown) throw new Error(`Local edits exist for ${primaryLink(current).path}. Run \`wire sync ${primaryLink(current).path}\` before attaching this URL again.`);
     }
     const id = resourceId(source);
-    const primary = current?.filesystem_links.find((link5) => link5.path === relativePath && link5.role === "primary");
-    const link4 = { path: relativePath, role: "primary", data: { ...primary?.data ?? { format: "markdown" }, ...enableReceipts ? { editor_receipts: true } : {} } };
+    const primary = current?.filesystem_links.find((link6) => link6.path === relativePath && link6.role === "primary");
+    const link5 = { path: relativePath, role: "primary", data: { ...primary?.data ?? { format: "markdown" }, ...enableReceipts ? { editor_receipts: true } : {} } };
     const resource = {
       id,
       type: source.type,
       identifiers: [{ service: source.service, identifier: source.identifier }],
       urls: [url],
-      filesystem_links: current === null ? [link4] : [
-        ...current.filesystem_links.filter((link5) => !(link5.path === relativePath && link5.role === "primary")),
-        link4
+      filesystem_links: current === null ? [link5] : [
+        ...current.filesystem_links.filter((link6) => !(link6.path === relativePath && link6.role === "primary")),
+        link5
       ],
       data: [
         ...current?.data.filter((item) => item.namespace !== "wire" && !(item.namespace === source.service && item.key === "snapshot")) ?? [],
@@ -15776,17 +15888,37 @@ function composeWire(dependencies) {
     const history = await restore(root, registry, source, outputPath);
     resource = await registry.get(resource.id);
     if (history) await requireHistoryVolume(history.dir, outputDirectory);
-    if (history?.refs.conflict) throw new Error("Unresolved Wire conflict. Inspect wire conflicts and use wire resolve.");
+    if (history?.refs.conflict && !("editor" in history.refs.conflict)) throw new Error("Unresolved Wire conflict. Inspect wire conflicts and use wire resolve.");
     const snapshot = resource.data.find((item) => item.namespace === source.service && item.key === "snapshot")?.value;
     if (snapshot === void 0) throw new Error(`Missing saved snapshot for ${primaryLink(resource).path}. Keep the local file and download a separate copy to reconcile before syncing.`);
     if (!await dependencies.filesystem.exists(outputPath)) throw new Error(`Linked file missing: ${primaryLink(resource).path} - restore it or run wire detach`);
     checkReceiptLink(resource, history);
-    const raw = history ? await working(outputPath) : await dependencies.filesystem.readText(outputPath);
+    let raw = history ? await working(outputPath) : await dependencies.filesystem.readText(outputPath);
     if (raw === null) throw new Error("Linked file missing: " + outputPath);
-    const view2 = history ? history.view(raw) : editorView(raw);
-    const markdown = view2.markdown;
+    let view2 = history ? history.view(raw) : editorView(raw);
     await history?.checkPendingDraft(view2);
-    if (history?.refs.conflict) throw new Error("Unresolved Wire conflict. The editor save and shell draft are both local. Compare them with wire diff <resource> --from editor --to shell, then use wire resolve <resource> <choice>.");
+    if (history?.refs.conflict && "editor" in history.refs.conflict) {
+      const c = history.refs.conflict;
+      const merge = dependencies.catalog.find((s) => s.matches(new URL(resource.urls[0])))?.mergeDrafts;
+      const base2 = c.editorBase === c.shellBase ? history.commonAncestor(c.editor, c.shell) : null;
+      let merged;
+      const editor = await history.text(c.editor);
+      if (merge && base2 && view2.markdown === editor && view2.base === c.editorBase) {
+        const before = await history.text(base2), shell = await history.text(c.shell);
+        try {
+          merged = merge(before, editor, shell);
+        } catch {
+        }
+      }
+      if (merged === void 0) throw new Error("Unresolved Wire conflict. The editor save and shell draft are both local. Compare them with wire diff <resource> --from editor --to shell, then use wire resolve <resource> <choice>.");
+      const draft = await history.revision("merge", merged, [c.editor, c.shell]);
+      const receipts = { ...history.refs.editorReceipts };
+      const next = editorFile(merged, receipts, draft, c.editorBase);
+      await history.publish(outputPath, raw, next, { ...history.refs, conflict: null, editorReceipts: receipts, editorDraft: draft, draft, strict: true }, null, (r) => registry.put(r));
+      raw = next;
+      view2 = history.view(raw);
+    }
+    const markdown = view2.markdown;
     const base = view2.base && history && view2.base !== history.refs.base && view2.base !== history.refs.resolutionParent ? { markdown: await history.text(view2.base) } : history?.refs.resolution && (!view2.base || view2.base === history.refs.resolutionParent) ? storedSnapshot(history.refs.resolution) : syncBase(source.service, snapshot, resource.data);
     if (history) await history.seed(markdownSnapshot(snapshot));
     const baseMarkdown = markdownSnapshot(base) ?? (history?.refs.base ? await history.text(history.refs.base) : null);
@@ -15795,7 +15927,7 @@ function composeWire(dependencies) {
     if (source.service === "google-docs" && source["document_tab"] === "t.0") {
       const registered = findResource(await registry.listResources(), source, dependencies.catalog);
       if (registered && legacyDefaultTab(registered, dependencies.catalog)) {
-        if (registered.urls.length !== 1 || registered.identifiers.length !== 1 || registered.identifiers[0].identifier !== source["document_id"] || registered.filesystem_links.filter((link4) => link4.role === "primary").length !== 1 || !registry.rekey) {
+        if (registered.urls.length !== 1 || registered.identifiers.length !== 1 || registered.identifiers[0].identifier !== source["document_id"] || registered.filesystem_links.filter((link5) => link5.role === "primary").length !== 1 || !registry.rekey) {
           throw new Error(`Cannot migrate the ambiguous default-tab registration ${registered.id}. Back up the linked files and check the URLs, primary paths, and registry backend before syncing. No files were changed.`);
         }
         if (baseMarkdown === null || markdown !== baseMarkdown) {
@@ -16443,11 +16575,11 @@ function resourceId2(source) {
 var require3 = (0, import_node_module2.createRequire)("/wire-core/storage/registry.js");
 
 // ../wire-core/dist/storage/history.js
-var import_node_crypto6 = require("node:crypto");
+var import_node_crypto7 = require("node:crypto");
 var import_node_os2 = require("node:os");
 var import_node_path5 = require("node:path");
 var import_promises6 = require("node:fs/promises");
-var hash2 = (value) => (0, import_node_crypto6.createHash)("sha256").update(value).digest("hex");
+var hash2 = (value) => (0, import_node_crypto7.createHash)("sha256").update(value).digest("hex");
 var code2 = (error) => error.code;
 var missing2 = (error) => code2(error) === "ENOENT";
 async function privateDirectory2(path) {
@@ -16483,7 +16615,7 @@ async function claimState2(path) {
 }
 async function claim2(dir, name, run) {
   await privateDirectory2(dir);
-  const owner = (0, import_node_os2.hostname)() + ":" + process.pid + ":" + (0, import_node_crypto6.randomUUID)();
+  const owner = (0, import_node_os2.hostname)() + ":" + process.pid + ":" + (0, import_node_crypto7.randomUUID)();
   for (let n = 0; ; n++) {
     const path = (0, import_node_path5.join)(dir, name + (n ? "." + n : ""));
     try {
@@ -16530,7 +16662,7 @@ var sourceLock2 = (source) => source.service === "google-docs" && source.type ==
 // ../wire/src/hooks.ts
 var execFileAsync = (0, import_node_util.promisify)(import_node_child_process2.execFile);
 function primaryFilesystemLink(resource) {
-  return resource.filesystem_links.find((link4) => link4.role === "primary");
+  return resource.filesystem_links.find((link5) => link5.role === "primary");
 }
 function wireTitle(resource) {
   return resource.data.find((item) => item.namespace === "wire" && item.key === "title").value;
@@ -16608,7 +16740,7 @@ async function updateMovedResult(options, wireRoot2, result, movedPath, tracked)
   const outputPath = (0, import_node_path6.isAbsolute)(movedPath) ? movedPath : (0, import_node_path6.resolve)(workspace2, movedPath);
   const relativePath = wireRelativePath(outputPath, wireRoot2);
   const primary = primaryFilesystemLink(result.resource);
-  const moveLink = (r) => ({ ...r, filesystem_links: r.filesystem_links.map((link4) => link4.role === "primary" && link4.path === primary.path ? { ...link4, path: relativePath } : link4) });
+  const moveLink = (r) => ({ ...r, filesystem_links: r.filesystem_links.map((link5) => link5.role === "primary" && link5.path === primary.path ? { ...link5, path: relativePath } : link5) });
   let resource = moveLink(result.resource);
   if (result.summary.action !== "detached" && tracked) {
     const source = result.resource.identifiers.find((i) => i.service + ":" + i.identifier === result.resource.id);
@@ -18634,10 +18766,10 @@ async function connectChatgpt(runtime2, referer, onCooldown) {
 }
 
 // ../provider-chatgpt/src/download.ts
-var import_node_crypto7 = require("node:crypto");
+var import_node_crypto8 = require("node:crypto");
 function segment(value) {
   const safe = value.replace(/[^\p{L}\p{N}._-]/gu, "-").slice(0, 64);
-  return safe === value && safe !== "." && safe !== ".." && safe !== "" ? safe : `${safe || "item"}-${(0, import_node_crypto7.createHash)("sha256").update(value).digest("hex").slice(0, 12)}`;
+  return safe === value && safe !== "." && safe !== ".." && safe !== "" ? safe : `${safe || "item"}-${(0, import_node_crypto8.createHash)("sha256").update(value).digest("hex").slice(0, 12)}`;
 }
 function items(value) {
   if (!Array.isArray(value)) throw new Error("ChatGPT list response is missing items");
@@ -18770,10 +18902,10 @@ async function downloadChatgpt(runtime2, url, source, write2, render2) {
         const downloadUrl = text(metadata["download_url"]) ?? text(metadata["content_url"]);
         if (downloadUrl === void 0) throw new Error(`ChatGPT file is unavailable (${String(metadata["status"] ?? "missing URL")})`);
         const bytes = await client.bytes(downloadUrl);
-        const name = `${(0, import_node_crypto7.createHash)("sha256").update(asset.key).digest("hex").slice(0, 12)}-${segment(asset.name)}`;
+        const name = `${(0, import_node_crypto8.createHash)("sha256").update(asset.key).digest("hex").slice(0, 12)}-${segment(asset.name)}`;
         const path2 = `${directory}/assets/${name}`;
         await save(path2, bytes);
-        files.push({ path: path2, source: asset.endpoint, bytes: bytes.byteLength, sha256: (0, import_node_crypto7.createHash)("sha256").update(bytes).digest("hex") });
+        files.push({ path: path2, source: asset.endpoint, bytes: bytes.byteLength, sha256: (0, import_node_crypto8.createHash)("sha256").update(bytes).digest("hex") });
         links.push(`- [${asset.name.replace(/[\[\]\r\n]/g, " ")}](assets/${encodeURIComponent(name)})`);
       });
     }
@@ -19365,7 +19497,7 @@ async function googleRead(runtime2, url, init) {
 }
 
 // ../provider-google-docs/src/native-docs.ts
-var import_node_crypto8 = require("node:crypto");
+var import_node_crypto9 = require("node:crypto");
 function eligible(scopes, requireWrite) {
   const has = (name) => scopes?.includes("https://www.googleapis.com/auth/" + name);
   if (!requireWrite && (has("documents.readonly") || has("documents") || has("drive.readonly"))) return true;
@@ -19428,11 +19560,11 @@ function paragraph(line) {
       }
       if (c === "!" && s[i + 1] === "[" || c === "`" || c === "<" && /^<\/?[\w!]/.test(s.slice(i)) || c === "&" && /^&(?:#\d+|#x[\da-f]+|[a-z]+);/i.test(s.slice(i))) return unsafe("unsupported inline content");
       if (c === "[") {
-        const link4 = /^\[([^\[\]]+)\]\((https?:\/\/[^\s()]+|mailto:[^\s()]+)\)/.exec(s.slice(i));
-        if (!link4) return unsafe("unsupported link syntax");
+        const link5 = /^\[([^\[\]]+)\]\((https?:\/\/[^\s()]+|mailto:[^\s()]+)\)/.exec(s.slice(i));
+        if (!link5) return unsafe("unsupported link syntax");
         emit(s.slice(begin, i), style);
-        read(link4[1], { ...style, link: { url: link4[2] } }, depth + 1);
-        begin = i += link4[0].length;
+        read(link5[1], { ...style, link: { url: link5[2] } }, depth + 1);
+        begin = i += link5[0].length;
         continue;
       }
       const marker = /^(\*{1,3}|_{1,3}|~~)/.exec(s.slice(i))?.[0];
@@ -19496,7 +19628,7 @@ function nativeDocMarkdownEqual(left, right) {
   });
   return JSON.stringify(numberStarts(spacedBlocks(left))) === JSON.stringify(numberStarts(spacedBlocks(right))) && JSON.stringify(normalized(left)) === JSON.stringify(normalized(right));
 }
-var digest2 = (s) => (0, import_node_crypto8.createHash)("sha256").update(s).digest("hex");
+var digest2 = (s) => (0, import_node_crypto9.createHash)("sha256").update(s).digest("hex");
 var labels = (md) => spacedBlocks(md).map((line) => {
   try {
     return paragraph(line).text;
@@ -20908,6 +21040,7 @@ var googleDocsService = defineService({
     return Object.freeze({ service: "google-docs", identifier: documentId, type: "document", ...resource_key });
   },
   fetch: (runtime2, _url, source) => fetchGoogleDocument(runtime2, source),
+  mergeDrafts: (base, editor, shell) => mergeDocBlocks(base, editor, shell),
   synchronize: (runtime2, url, source, base, markdown, _path, observeRemote, requireConditionalWrite) => synchronizeGoogleDocument(runtime2, url, source, base, markdown, observeRemote, requireConditionalWrite)
 });
 
@@ -21080,7 +21213,7 @@ var googleDocsProvider = Object.freeze({
 });
 
 // ../provider-notion/src/notion-sync.ts
-var import_node_crypto9 = require("node:crypto");
+var import_node_crypto10 = require("node:crypto");
 var import_node_path7 = require("node:path");
 function object4(value) {
   return value;
@@ -21110,7 +21243,7 @@ function compact(value) {
   return stableJsonCompact(value);
 }
 function hash3(value) {
-  return `sha256:${(0, import_node_crypto9.createHash)("sha256").update(compact(value)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto10.createHash)("sha256").update(compact(value)).digest("hex")}`;
 }
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -21205,10 +21338,10 @@ function parseInline(value) {
       rest = rest.slice(rest.length === 1 ? 1 : 2);
       continue;
     }
-    const link4 = markdownLink(rest);
-    if (link4 !== null) {
-      pushMarked(link4.label, ["a", link4.url]);
-      rest = rest.slice(link4.length);
+    const link5 = markdownLink(rest);
+    if (link5 !== null) {
+      pushMarked(link5.label, ["a", link5.url]);
+      rest = rest.slice(link5.length);
       continue;
     }
     const dateSpan = /^<span data-notion-date="([^"]+)">(.*?)<\/span>/.exec(rest);
@@ -21298,21 +21431,21 @@ function parseInline(value) {
 }
 function renderSegment(content, marks) {
   let rendered = marks.some((raw) => raw[0] === "c") ? content : escapeInlineMarkdown(content);
-  let link4 = null;
+  let link5 = null;
   for (const raw of renderMarks(marks)) {
     const mark = raw;
     if (mark[0] === "c") rendered = inlineCode(rendered);
     else if (mark[0] === "s") rendered = `~~${rendered}~~`;
     else if (mark[0] === "i") rendered = `*${rendered}*`;
     else if (mark[0] === "b") rendered = `**${rendered}**`;
-    else if (mark[0] === "a") link4 = mark[1];
+    else if (mark[0] === "a") link5 = mark[1];
     else if (mark[0] === "_") rendered = `<u>${rendered}</u>`;
     else if (mark[0] === "h") rendered = `<span data-notion-color="${escapeHtml(mark[1])}">${rendered}</span>`;
     else if (mark[0] === "e") rendered = `<span data-notion-equation="${escapeHtml(mark[1])}">${rendered}</span>`;
     else if (mark[0] === "p" || mark[0] === "u") rendered = `<span data-notion-mention="${mark[0]}" data-notion-id="${escapeHtml(mark[1])}"${mark[0] === "p" ? ` data-notion-space-id="${escapeHtml(mark[2])}"` : ""}>${rendered}</span>`;
     else if (mark[0] === "d") rendered = `<span data-notion-date="${escapeHtml(compact(mark[1]))}">${rendered}</span>`;
   }
-  return link4 === null ? rendered : `[${rendered}](${link4})`;
+  return link5 === null ? rendered : `[${rendered}](${link5})`;
 }
 function renderRichText(value) {
   return normalizeRichText(value).map((segment2) => renderSegment(text2(segment2[0]), segment2[1] ?? [])).join("");
@@ -21597,7 +21730,7 @@ function tableColumnOrder(remote, local) {
   const remoteColumns = object4(remote["format"])["table_block_column_order"];
   const used = /* @__PURE__ */ new Set();
   return localColumns.map((column, index) => {
-    const value = index < remoteColumns.length ? remoteColumns[index] : used.has(column) ? `column_${index}_${(0, import_node_crypto9.randomUUID)().replaceAll("-", "")}` : column;
+    const value = index < remoteColumns.length ? remoteColumns[index] : used.has(column) ? `column_${index}_${(0, import_node_crypto10.randomUUID)().replaceAll("-", "")}` : column;
     used.add(value);
     return value;
   });
@@ -21618,7 +21751,7 @@ function parserBlockToNotionBlock(block, id, parentId, parentTable, spaceId, use
   if (["header", "sub_header", "sub_sub_header"].includes(block.type)) return { ...base, properties: { title: block.rich_text }, ...block.properties["format"] === void 0 ? {} : { format: block.properties["format"] } };
   return { ...base, properties: { title: block.rich_text } };
 }
-function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTime, createId = () => (0, import_node_crypto9.randomUUID)(), initialTableColumnOrder) {
+function buildNotionCreateOperations(blocks, pageId, spaceId, userId, currentTime, createId = () => (0, import_node_crypto10.randomUUID)(), initialTableColumnOrder) {
   const operations = [];
   const topLevelIds = [];
   const lastAtIndent = /* @__PURE__ */ new Map();
@@ -21705,7 +21838,7 @@ function localTree(blocks) {
   return roots;
 }
 function outputNode(node, remoteNode, parentId, remote, currentTime, columnOrder) {
-  const id = remoteNode?.id ?? formatBlockId((0, import_node_crypto9.randomUUID)().replaceAll("-", ""));
+  const id = remoteNode?.id ?? formatBlockId((0, import_node_crypto10.randomUUID)().replaceAll("-", ""));
   const block = parserBlockToNotionBlock(node.block, id, parentId, "block", remote.spaceId, remote.userId, currentTime, node.block.type === "table" ? tableColumnOrder(remoteNode?.block, node.block) : node.block.type === "table_row" ? columnOrder : void 0);
   const nextColumnOrder = block["type"] === "table" ? object4(block["format"])["table_block_column_order"] : columnOrder;
   return { id, block, children: node.children.map((child, index) => outputNode(child, remoteNode?.children[index], id, remote, currentTime, nextColumnOrder)) };
@@ -21898,7 +22031,7 @@ function renderNotionTreeToMarkdown(tree, mentions, emailMentions = {}, download
     ...renderNode(child, 0, "", download)
   ]);
   let markdown = [`# ${title2}`, ...body2.length === 0 ? [] : ["", ...body2]].join("\n").trim();
-  for (const [id, link4] of Object.entries(emailMentions)) markdown = markdown.replace(new RegExp(`<span data-notion-mention="u" data-notion-id="${escapeRegExp(escapeHtml(id))}">.*?</span>`, "g"), () => link4);
+  for (const [id, link5] of Object.entries(emailMentions)) markdown = markdown.replace(new RegExp(`<span data-notion-mention="u" data-notion-id="${escapeRegExp(escapeHtml(id))}">.*?</span>`, "g"), () => link5);
   return mentions === void 0 ? markdown : renderUserMentions(markdown, mentions);
 }
 async function notionPost(runtime2, path, cookie, body2, headers) {
@@ -21932,16 +22065,16 @@ async function resolveNotionEmailMentions(runtime2, blocks, cookie, spaceId, hea
   const users = response["users"];
   for (const segment2 of segments) {
     const marks = segment2[1];
-    const link4 = marks.find((mark) => mark[0] === "a" && mark[1].startsWith("mailto:"));
-    const email = decodeURIComponent(link4[1].slice(7));
+    const link5 = marks.find((mark) => mark[0] === "a" && mark[1].startsWith("mailto:"));
+    const email = decodeURIComponent(link5[1].slice(7));
     if (!/^[^@\s?]+@[^@\s?]+$/.test(email)) throw new Error(`Invalid mention email: ${email}`);
     const matches = users.filter((user) => user["aliases"]?.some((alias) => alias.toLowerCase() === email.toLowerCase()));
     if (matches.length !== 1) throw new Error(`Expected one Notion user for ${email}, found ${matches.length}`);
     const id = matches[0]["userId"];
     mentions[id] = `[${escapeInlineMarkdown(segment2[0])}](mailto:${email})`;
     segment2[0] = "\u2023";
-    link4[0] = "u";
-    link4[1] = id;
+    link5[0] = "u";
+    link5[1] = id;
   }
 }
 async function fetchComments(runtime2, tree, spaceId, cookie, headers) {
@@ -21978,9 +22111,9 @@ function renderComments(pageId, discussions, commentsById, users) {
     const comments = discussion["comments"].map((id) => commentsById.get(id)).filter((comment) => comment["alive"] === true);
     if (comments.length === 0) return "";
     const context = discussion["context"] === void 0 ? "" : renderRichText(discussion["context"]);
-    const link4 = `https://www.notion.so/${pageId.replaceAll("-", "")}#${discussion["parent_id"].replaceAll("-", "")}`;
+    const link5 = `https://www.notion.so/${pageId.replaceAll("-", "")}#${discussion["parent_id"].replaceAll("-", "")}`;
     return [
-      `### [${discussion["parent_id"] === pageId ? "Page comment" : "Inline comment"}](${link4})${discussion["resolved"] === true ? " (resolved)" : ""}`,
+      `### [${discussion["parent_id"] === pageId ? "Page comment" : "Inline comment"}](${link5})${discussion["resolved"] === true ? " (resolved)" : ""}`,
       ...context === "" ? [] : [context.split("\n").map((line) => `> ${line}`).join("\n")],
       ...comments.map((comment) => `**${escapeInlineMarkdown(users.get(comment["created_by_id"])["name"])}** \u2014 ${new Date(comment["created_time"]).toISOString()}
 
@@ -22158,7 +22291,7 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
   const spaceView = object4(object4(spaces[userId])["space_view"]);
   if (Object.keys(spaceView).length !== 1) throw new Error("Notion upload requires an explicit target workspace.");
   const spaceId = object4(spaceView[Object.keys(spaceView)[0]])["spaceId"];
-  const pageId = (0, import_node_crypto9.randomUUID)();
+  const pageId = (0, import_node_crypto10.randomUUID)();
   const compactPageId = pageId.replaceAll("-", "");
   const currentTime = runtime2.clock.now().getTime();
   const headers = { "x-notion-active-user-header": userId, "x-notion-space-id": spaceId, referer: `https://www.notion.so/${compactPageId}`, ...csrf === void 0 ? {} : { "x-csrf-token": csrf } };
@@ -22187,7 +22320,7 @@ async function uploadNotionDocument(runtime2, markdown, _markdownPath) {
   const emailMentions = {};
   await resolveNotionEmailMentions(runtime2, localBlocks, cookie, spaceId, headers, emailMentions);
   const operations = [pageOperation, ...buildNotionCreateOperations(localBlocks, pageId, spaceId, userId, currentTime).operations];
-  await notionPost(runtime2, "saveTransactionsFanout", cookie, { requestId: (0, import_node_crypto9.randomUUID)(), transactions: [{ id: (0, import_node_crypto9.randomUUID)(), spaceId, operations }] }, headers);
+  await notionPost(runtime2, "saveTransactionsFanout", cookie, { requestId: (0, import_node_crypto10.randomUUID)(), transactions: [{ id: (0, import_node_crypto10.randomUUID)(), spaceId, operations }] }, headers);
   const pageTree = {
     id: pageId,
     block: pageOperation.args,
@@ -22209,7 +22342,7 @@ async function synchronizeNotionDocument(runtime2, url, source, base, markdown, 
   const save = async (operations2) => {
     if (operations2.length === 0) return;
     if (requireConditionalWrite) throw new Error("Notion cannot condition a save on the revision read. Local draft preserved; apply the edit in Notion.");
-    await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto9.randomUUID)(), transactions: [{ id: (0, import_node_crypto9.randomUUID)(), spaceId: remote.spaceId, operations: operations2 }] }, remote.headers);
+    await notionPost(runtime2, "saveTransactionsFanout", remote.cookie, { requestId: (0, import_node_crypto10.randomUUID)(), transactions: [{ id: (0, import_node_crypto10.randomUUID)(), spaceId: remote.spaceId, operations: operations2 }] }, remote.headers);
   };
   const baseObject = object4(base);
   const mentions = baseUserMentions(baseObject);
@@ -22975,7 +23108,7 @@ var slackProvider = Object.freeze({
 });
 
 // ../provider-zoom/src/zoom-hub.ts
-var import_node_crypto10 = require("node:crypto");
+var import_node_crypto11 = require("node:crypto");
 var import_node_path8 = require("node:path");
 var import_promises9 = require("node:timers/promises");
 var userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
@@ -23226,7 +23359,7 @@ async function scrapeZoom(runtime2, directory) {
   ), path);
   const seen = /* @__PURE__ */ new Set();
   const counts2 = { downloaded: 0, unchanged: 0, unavailable: 0, locallyModified: 0 };
-  const digest3 = (text3) => (0, import_node_crypto10.createHash)("sha256").update(text3).digest("hex");
+  const digest3 = (text3) => (0, import_node_crypto11.createHash)("sha256").update(text3).digest("hex");
   const sync = async (file) => {
     const id = file["id"];
     const notes = file["meetingNotes"];
