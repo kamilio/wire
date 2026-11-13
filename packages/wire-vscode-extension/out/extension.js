@@ -14632,8 +14632,9 @@ function missingUrl(url) {
 }
 var SqliteRegistry = class {
   path;
-  constructor(path) {
-    this.path = realpathSyncParent(path);
+  constructor(path, create = true) {
+    this.path = create ? realpathSyncParent(path) : (0, import_node_fs.realpathSync)(path);
+    if (!create) return;
     const database = this.connect();
     database.exec(`
       PRAGMA journal_mode=DELETE;
@@ -14737,7 +14738,7 @@ var SqliteRegistry = class {
     }
   }
   async get(resourceId3) {
-    const database = this.connect();
+    const database = this.connect(true);
     const row = database.prepare("SELECT id FROM resources WHERE id = ?").get(resourceId3);
     if (row === void 0) {
       database.close();
@@ -14750,7 +14751,7 @@ var SqliteRegistry = class {
     return resource;
   }
   async findByIdentifier(service, identifier2) {
-    const database = this.connect();
+    const database = this.connect(true);
     database.exec("BEGIN");
     const row = database.prepare("SELECT resource_id FROM resource_identifiers WHERE service = ? AND identifier = ?").get(service, identifier2);
     if (row === void 0) {
@@ -14763,7 +14764,7 @@ var SqliteRegistry = class {
     return resource;
   }
   async findByUrl(url) {
-    const database = this.connect();
+    const database = this.connect(true);
     database.exec("BEGIN");
     const row = database.prepare("SELECT resource_id FROM resource_urls WHERE url = ?").get(url);
     if (row === void 0) {
@@ -14776,7 +14777,7 @@ var SqliteRegistry = class {
     return resource;
   }
   async findByPath(path) {
-    const database = this.connect();
+    const database = this.connect(true);
     database.exec("BEGIN");
     const rows = database.prepare("SELECT DISTINCT resource_id FROM filesystem_links WHERE path = ? ORDER BY resource_id").all(path.replaceAll(import_node_path.sep, "/"));
     const resources = rows.map((row) => this.getResource(database, row.resource_id));
@@ -14785,7 +14786,7 @@ var SqliteRegistry = class {
     return resources;
   }
   async listResources() {
-    const database = this.connect();
+    const database = this.connect(true);
     database.exec("BEGIN");
     const rows = database.prepare("SELECT id FROM resources ORDER BY id").all();
     const resources = rows.map((row) => this.getResource(database, row.id));
@@ -14816,16 +14817,16 @@ var SqliteRegistry = class {
       relationships: relationships.map((relationship) => ({ target_id: relationship.target_id, type: relationship.type, data: JSON.parse(relationship.data_json) }))
     };
   }
-  connect() {
-    const database = new (require2("node:sqlite")).DatabaseSync(this.path);
+  connect(readOnly = false) {
+    const database = new (require2("node:sqlite")).DatabaseSync(this.path, { readOnly });
     database.exec("PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON");
     return database;
   }
 };
 var FileRegistry = class {
   path;
-  constructor(path) {
-    this.path = realpathSyncDirectory(path);
+  constructor(path, create = true) {
+    this.path = create ? realpathSyncDirectory(path) : (0, import_node_fs.realpathSync)(path);
   }
   async put(resource) {
     const normalized = storageResource(resource);
@@ -14929,82 +14930,16 @@ function realpathSyncDirectory(path) {
 }
 
 // ../wire-core/src/storage/workspace.ts
-var import_node_fs2 = require("node:fs");
-var import_promises4 = require("node:fs/promises");
-var import_node_path2 = require("node:path");
-var defaultWireBackend = "files";
-var defaultWireRegistryPath = "records";
-function canonicalPath(path) {
-  const resolved = (0, import_node_path2.resolve)(path);
-  if ((0, import_node_fs2.existsSync)(resolved)) return (0, import_node_fs2.realpathSync)(resolved);
-  return (0, import_node_path2.join)(canonicalPath((0, import_node_path2.dirname)(resolved)), (0, import_node_path2.basename)(resolved));
-}
-function protectHistory(root, path) {
-  const history = canonicalPath((0, import_node_path2.join)(root, "history")), registry = canonicalPath(path);
-  if (registry === history || registry.startsWith(history + import_node_path2.sep) || history.startsWith(registry + import_node_path2.sep)) throw new Error("The Wire registry must not overlap private document history.");
-}
-async function discoverWireRoot(path, home) {
-  const homePath = canonicalPath(home);
-  let currentPath = canonicalPath(path);
-  if (!(0, import_node_fs2.existsSync)(currentPath) || !(0, import_node_fs2.statSync)(currentPath).isDirectory()) currentPath = (0, import_node_path2.dirname)(currentPath);
-  while (true) {
-    const wirePath = (0, import_node_path2.join)(currentPath, ".wire");
-    if ((0, import_node_fs2.existsSync)(wirePath) && (0, import_node_fs2.statSync)(wirePath).isDirectory()) return wirePath;
-    const parentPath = (0, import_node_path2.dirname)(currentPath);
-    if (parentPath === currentPath) return (0, import_node_path2.join)(homePath, ".wire");
-    currentPath = parentPath;
-  }
-}
-async function configuredWireRoot(path, home) {
-  const wireRoot2 = await discoverWireRoot(path, home);
-  const configPath = (0, import_node_path2.join)(wireRoot2, "config.json");
-  return (0, import_node_fs2.existsSync)(configPath) && (0, import_node_fs2.statSync)(configPath).isFile() ? wireRoot2 : null;
-}
-function wireRelativePath(path, wireRoot2) {
-  return (0, import_node_path2.relative)((0, import_node_path2.dirname)(canonicalPath(wireRoot2)), canonicalPath(path)).replaceAll(import_node_path2.sep, "/");
-}
-async function loadWireConfig(wireRoot2) {
-  return JSON.parse(await (0, import_promises4.readFile)((0, import_node_path2.join)(wireRoot2, "config.json"), "utf8"));
-}
-async function openWireRegistry(path, home) {
-  const wireRoot2 = await discoverWireRoot(path, home);
-  const config2 = await loadWireConfig(wireRoot2);
-  const registryPath = (0, import_node_path2.join)(wireRoot2, config2.path);
-  protectHistory(wireRoot2, registryPath);
-  if (config2.backend === "sqlite") return new SqliteRegistry(registryPath);
-  if (config2.backend === "files") return new FileRegistry(registryPath);
-  throw new Error(config2.backend);
-}
-async function initializeWire(path, backend, registryPath) {
-  const wireRoot2 = (0, import_node_path2.join)(canonicalPath(path), ".wire");
-  await (0, import_promises4.mkdir)(wireRoot2, { recursive: true });
-  protectHistory(wireRoot2, (0, import_node_path2.join)(wireRoot2, registryPath));
-  const configPath = (0, import_node_path2.join)(wireRoot2, "config.json");
-  if ((0, import_node_fs2.existsSync)(configPath) && (0, import_node_fs2.statSync)(configPath).isFile()) {
-    const existing = await loadWireConfig(wireRoot2);
-    if (existing.backend !== backend || existing.path !== registryPath) throw new Error(`Wire workspace already initialized with ${existing.backend} registry at ${existing.path}. Existing registries are not overwritten.`);
-    return { root: wireRoot2, backend: existing.backend, path: (0, import_node_path2.join)(wireRoot2, existing.path), created: false };
-  }
-  const config2 = { backend, path: registryPath };
-  await (0, import_promises4.writeFile)(configPath, `${stableJsonPretty(config2)}
-`, "utf8");
-  const fullRegistryPath = (0, import_node_path2.join)(wireRoot2, registryPath);
-  if (backend === "sqlite") new SqliteRegistry(fullRegistryPath);
-  else if (backend === "files") new FileRegistry(fullRegistryPath);
-  else throw new Error(backend);
-  return { root: wireRoot2, backend, path: fullRegistryPath, created: true };
-}
-
-// ../wire-core/src/operations.ts
-var import_node_crypto5 = require("node:crypto");
-var import_node_path4 = require("node:path");
+var import_node_fs3 = require("node:fs");
+var import_promises5 = require("node:fs/promises");
+var import_node_path3 = require("node:path");
 
 // ../wire-core/src/storage/history.ts
 var import_node_crypto4 = require("node:crypto");
-var import_node_fs3 = require("node:fs");
+var import_node_fs2 = require("node:fs");
 var import_node_os = require("node:os");
-var import_node_path3 = require("node:path");
-var import_promises5 = require("node:fs/promises");
+var import_node_path2 = require("node:path");
+var import_promises4 = require("node:fs/promises");
 
 // ../wire-core/src/storage/editor-receipts.ts
 var import_node_crypto2 = require("node:crypto");
@@ -15050,7 +14985,8 @@ function validateRefs(refs) {
       if (!/^[a-f0-9]{48}$/.test(key2) || !record || typeof record.crlf !== "boolean" || !known.has(record.shown) || !known.has(record.base)) return corrupt();
     }
   }
-  if (refs.conflict && ![refs.conflict.base, refs.conflict.local, refs.conflict.remote].every((ref) => known.has(ref))) return corrupt();
+  const c = refs.conflict;
+  if (c && !("editor" in c ? [c.editor, c.shell, c.editorBase, c.shellBase] : [c.base, c.local, c.remote]).every((ref) => known.has(ref))) return corrupt();
 }
 
 // ../wire-core/src/storage/history.ts
@@ -15058,22 +14994,26 @@ var hash = (value) => (0, import_node_crypto4.createHash)("sha256").update(value
 var code = (error) => error.code;
 var missing = (error) => code(error) === "ENOENT";
 async function exists(path) {
-  return (0, import_promises5.lstat)(path).then(() => true, (e) => {
+  return (0, import_promises4.lstat)(path).then(() => true, (e) => {
     if (missing(e)) return false;
     throw e;
   });
 }
 async function privateDirectory(path) {
   try {
-    await (0, import_promises5.mkdir)(path, { mode: 448 });
+    await (0, import_promises4.mkdir)(path, { mode: 448 });
   } catch (e) {
     if (code(e) !== "EEXIST") throw e;
   }
-  const info = await (0, import_promises5.lstat)(path);
+  const info = await (0, import_promises4.lstat)(path);
   if (!info.isDirectory() || (info.mode & 63) !== 0) throw new Error("Unsafe Wire history directory: " + path);
 }
+async function requireHistoryVolume(historyDirectory, markdownDirectory) {
+  const [history, markdown] = await Promise.all([(0, import_promises4.stat)(historyDirectory), (0, import_promises4.stat)(markdownDirectory)]);
+  if (history.dev !== markdown.dev) throw new Error("Wire history and tracked Markdown must be on the same filesystem. Run wire init in the document folder on that volume, then attach the source URL there. Keep any existing edits until you have reconciled the new attachment.");
+}
 async function syncDir(path) {
-  const fd = await (0, import_promises5.open)(path, "r");
+  const fd = await (0, import_promises4.open)(path, "r");
   try {
     await fd.sync();
   } finally {
@@ -15081,7 +15021,7 @@ async function syncDir(path) {
   }
 }
 async function write(path, value, mode = 384) {
-  const fd = await (0, import_promises5.open)(path, "wx", mode);
+  const fd = await (0, import_promises4.open)(path, "wx", mode);
   try {
     await fd.writeFile(value);
     await fd.sync();
@@ -15090,19 +15030,19 @@ async function write(path, value, mode = 384) {
   }
 }
 async function json(path, value) {
-  const tmp = (0, import_node_path3.join)((0, import_node_path3.dirname)(path), (0, import_node_crypto4.randomUUID)());
+  const tmp = (0, import_node_path2.join)((0, import_node_path2.dirname)(path), (0, import_node_crypto4.randomUUID)());
   try {
     await write(tmp, JSON.stringify(value));
-    await (0, import_promises5.rename)(tmp, path);
-    await syncDir((0, import_node_path3.dirname)(path));
+    await (0, import_promises4.rename)(tmp, path);
+    await syncDir((0, import_node_path2.dirname)(path));
   } finally {
-    await (0, import_promises5.rm)(tmp, { force: true });
+    await (0, import_promises4.rm)(tmp, { force: true });
   }
 }
 async function working(path) {
   let fd;
   try {
-    fd = await (0, import_promises5.open)(path, import_node_fs3.constants.O_RDONLY | import_node_fs3.constants.O_NOFOLLOW | import_node_fs3.constants.O_NONBLOCK);
+    fd = await (0, import_promises4.open)(path, import_node_fs2.constants.O_RDONLY | import_node_fs2.constants.O_NOFOLLOW | import_node_fs2.constants.O_NONBLOCK);
   } catch (e) {
     if (missing(e)) return null;
     throw e;
@@ -15115,61 +15055,72 @@ async function working(path) {
   }
 }
 var empty = () => ({ base: null, draft: null, remote: null, conflict: null, strict: false, revisions: [], resolution: null, resolutionParent: null });
-async function withHistoryLock(root, key2, run) {
-  const dir = (0, import_node_path3.join)(root, "history");
-  await privateDirectory(dir);
-  const own = (0, import_node_os.hostname)() + ":" + process.pid + ":" + (0, import_node_crypto4.randomUUID)();
-  const lock = (0, import_node_path3.join)(dir, "lock-" + hash(key2));
-  for (let n = 0; ; n++) {
-    const path = lock + (n ? "." + n : "");
+async function claimState(path) {
+  let owner;
+  try {
+    owner = await (0, import_promises4.readlink)(path);
+  } catch (e) {
+    if (missing(e)) return "missing";
+    throw e;
+  }
+  const [host, pid] = owner.split(":");
+  if (host === (0, import_node_os.hostname)() && /^\d+$/.test(pid ?? "")) {
     try {
-      await (0, import_promises5.symlink)(own, path);
+      process.kill(Number(pid), 0);
+    } catch (e) {
+      if (code(e) === "ESRCH" && await (0, import_promises4.readlink)(path).catch(() => "") === owner) return "dead";
+    }
+  }
+  return "active";
+}
+async function claim(dir, name, run) {
+  await privateDirectory(dir);
+  const owner = (0, import_node_os.hostname)() + ":" + process.pid + ":" + (0, import_node_crypto4.randomUUID)();
+  for (let n = 0; ; n++) {
+    const path = (0, import_node_path2.join)(dir, name + (n ? "." + n : ""));
+    try {
+      await (0, import_promises4.symlink)(owner, path);
     } catch (e) {
       if (code(e) !== "EEXIST") throw e;
-      let owner;
-      try {
-        owner = await (0, import_promises5.readlink)(path);
-      } catch (r) {
-        if (missing(r)) {
-          n--;
-          continue;
-        }
-        throw r;
-      }
-      const [host, pid] = owner.split(":");
-      if (host === (0, import_node_os.hostname)() && /^\d+$/.test(pid ?? "")) {
-        try {
-          process.kill(Number(pid), 0);
-        } catch (k2) {
-          if (code(k2) === "ESRCH") {
-            if (await (0, import_promises5.readlink)(path).catch(() => "") === owner) continue;
-            n--;
-            continue;
-          }
-        }
+      const state = await claimState(path);
+      if (state !== "active") {
+        if (state === "missing") n--;
+        continue;
       }
       throw new Error("Another Wire operation owns this document. Retry when it finishes.");
     }
     try {
       return await run();
     } finally {
-      await (0, import_promises5.unlink)(path);
+      await (0, import_promises4.unlink)(path);
     }
   }
+}
+async function excludeClaims(dir, names) {
+  for (const name of await (0, import_promises4.readdir)(dir)) {
+    if (names.test(name) && await claimState((0, import_node_path2.join)(dir, name)) === "active") throw new Error("Wire storage is busy. Retry the backend switch or document operation when it finishes.");
+  }
+}
+async function withHistoryLock(root, key2, run) {
+  const dir = (0, import_node_path2.join)(root, "history");
+  return claim(dir, "lock-" + hash(key2), async () => {
+    await excludeClaims(dir, /^switch(?:\.\d+)?$/);
+    return run();
+  });
 }
 var DocumentHistory = class _DocumentHistory {
   constructor(root, id, now) {
     this.id = id;
     this.now = now;
-    this.dir = (0, import_node_path3.join)(root, "history", hash(id));
+    this.dir = (0, import_node_path2.join)(root, "history", hash(id));
   }
   dir;
   refs = empty();
   static async load(root, id, now) {
     const history = new _DocumentHistory(root, id, now);
-    await privateDirectory((0, import_node_path3.join)(root, "history"));
+    await privateDirectory((0, import_node_path2.join)(root, "history"));
     await privateDirectory(history.dir);
-    const raw = await working((0, import_node_path3.join)(history.dir, "refs.json"));
+    const raw = await working((0, import_node_path2.join)(history.dir, "refs.json"));
     if (raw !== null) {
       history.refs = JSON.parse(raw);
       validateRefs(history.refs);
@@ -15177,7 +15128,7 @@ var DocumentHistory = class _DocumentHistory {
     return history;
   }
   async save() {
-    await json((0, import_node_path3.join)(this.dir, "refs.json"), this.refs);
+    await json((0, import_node_path2.join)(this.dir, "refs.json"), this.refs);
   }
   async revision(kind, markdown, parents) {
     plainMarkdown(markdown);
@@ -15185,14 +15136,14 @@ var DocumentHistory = class _DocumentHistory {
     if (ancestry.length === 1 && this.refs.revisions.find((r) => r.id === ancestry[0])?.blob === blob) return ancestry[0];
     const id = hash(JSON.stringify([kind, blob, ancestry]));
     if (!this.refs.revisions.some((r) => r.id === id)) {
-      const path = (0, import_node_path3.join)(this.dir, blob + ".md");
+      const path = (0, import_node_path2.join)(this.dir, blob + ".md");
       if (!await exists(path)) {
-        const tmp = (0, import_node_path3.join)(this.dir, (0, import_node_crypto4.randomUUID)());
+        const tmp = (0, import_node_path2.join)(this.dir, (0, import_node_crypto4.randomUUID)());
         try {
           await write(tmp, markdown);
-          await (0, import_promises5.rename)(tmp, path);
+          await (0, import_promises4.rename)(tmp, path);
         } finally {
-          await (0, import_promises5.rm)(tmp, { force: true });
+          await (0, import_promises4.rm)(tmp, { force: true });
         }
       }
       this.refs.revisions.push({ id, kind, at: this.now().toISOString(), blob, parents: ancestry });
@@ -15210,16 +15161,16 @@ var DocumentHistory = class _DocumentHistory {
   async text(ref) {
     const r = this.refs.revisions.find((r2) => r2.id === ref);
     if (!r) throw new Error("Unknown document revision: " + ref);
-    const value = await working((0, import_node_path3.join)(this.dir, r.blob + ".md"));
+    const value = await working((0, import_node_path2.join)(this.dir, r.blob + ".md"));
     if (value === null || hash(value) !== r.blob) throw new Error("Corrupt Wire history snapshot: " + ref);
     return value;
   }
   async log() {
     const known = new Set(this.refs.revisions.map((r) => r.blob));
     const count = this.refs.revisions.length;
-    for (const name of await (0, import_promises5.readdir)(this.dir)) {
+    for (const name of await (0, import_promises4.readdir)(this.dir)) {
       if (!name.endsWith(".old") || !transactionId.test(name.slice(0, -4))) continue;
-      const path = (0, import_node_path3.join)(this.dir, name);
+      const path = (0, import_node_path2.join)(this.dir, name);
       let view;
       try {
         const raw = await working(path);
@@ -15244,6 +15195,15 @@ var DocumentHistory = class _DocumentHistory {
       await this.save();
     }
   }
+  async checkPendingDraft(view) {
+    const shell = this.refs.editorDraft;
+    if (!shell || !view.shown || !view.base || shell === view.shown || this.refs.conflict) return;
+    const basis = Object.values(this.refs.editorReceipts ?? {}).find((r) => r.shown === shell)?.base;
+    if (!basis) throw new Error("Missing receipt for the saved shell draft. Both files were kept.");
+    const editor = await this.revision("local", view.markdown, [view.shown]);
+    this.refs.conflict = { editor, shell, editorBase: view.base, shellBase: basis };
+    await this.save();
+  }
   async captureLocal(markdown, parent = this.refs.draft ?? this.refs.base) {
     this.refs.draft = await this.revision("local", markdown, [parent]);
     await this.save();
@@ -15262,44 +15222,46 @@ var DocumentHistory = class _DocumentHistory {
   // Moving the actual old inode out first lets us verify what we displaced. link()
   // publishes only into a vacant name; it cannot overwrite a concurrent editor save.
   async publish(path, expected, next, refs, resource, put, acknowledged = false) {
+    await requireHistoryVolume(this.dir, (0, import_node_path2.dirname)(path));
     const token = (0, import_node_crypto4.randomUUID)();
     const pending = { path, expected, next, refs, resource, token, acknowledged };
-    await json((0, import_node_path3.join)(this.dir, "pending.json"), pending);
+    await json((0, import_node_path2.join)(this.dir, "pending.json"), pending);
     await this.finish(pending, put);
   }
   async detach(path, expected, next, refs, detached, remove) {
+    await requireHistoryVolume(this.dir, (0, import_node_path2.dirname)(path));
     const intent = { path, expected, next, refs, detached, resource: null, token: (0, import_node_crypto4.randomUUID)(), acknowledged: false };
-    await json((0, import_node_path3.join)(this.dir, "pending.json"), intent);
+    await json((0, import_node_path2.join)(this.dir, "pending.json"), intent);
     await this.finish(intent, void 0, remove);
   }
   async recover(path, put, remove) {
-    const file = (0, import_node_path3.join)(this.dir, "pending.json");
+    const file = (0, import_node_path2.join)(this.dir, "pending.json");
     const raw = await working(file);
     if (raw === null) return;
     const pending = JSON.parse(raw);
     if (!transactionId.test(pending.token) || typeof pending.next !== "string" || pending.expected !== null && typeof pending.expected !== "string" || typeof pending.acknowledged !== "boolean") throw new Error("Corrupt Wire publication journal.");
     validateRefs(pending.refs);
-    if (path !== void 0 && (0, import_node_path3.resolve)(path) !== pending.path) throw new Error("Wire publication pending at another path: " + pending.path);
+    if (path !== void 0 && (0, import_node_path2.resolve)(path) !== pending.path) throw new Error("Wire publication pending at another path: " + pending.path);
     if (pending.detached && (pending.detached.id !== this.id || pending.resource || pending.acknowledged || !remove)) throw new Error("Corrupt Wire detach journal.");
     await this.finish(pending, put, remove);
     return pending.detached;
   }
   async finish(p, put, remove) {
-    const pending = (0, import_node_path3.join)(this.dir, "pending.json"), stage = (0, import_node_path3.join)(this.dir, p.token + ".new"), old = (0, import_node_path3.join)(this.dir, p.token + ".old"), delivered = (0, import_node_path3.join)(this.dir, p.token + ".ok");
+    const pending = (0, import_node_path2.join)(this.dir, "pending.json"), stage = (0, import_node_path2.join)(this.dir, p.token + ".new"), old = (0, import_node_path2.join)(this.dir, p.token + ".old"), delivered = (0, import_node_path2.join)(this.dir, p.token + ".ok");
     const cleanup = async () => {
-      await (0, import_promises5.unlink)(pending);
+      await (0, import_promises4.unlink)(pending);
       await syncDir(this.dir);
-      await (0, import_promises5.rm)(stage, { force: true });
-      await (0, import_promises5.rm)(delivered, { force: true });
+      await (0, import_promises4.rm)(stage, { force: true });
+      await (0, import_promises4.rm)(delivered, { force: true });
     };
     const retry = async () => {
       if (await exists(old)) {
         try {
-          await (0, import_promises5.link)(old, p.path);
+          await (0, import_promises4.link)(old, p.path);
         } catch (e) {
           if (code(e) !== "EEXIST") throw e;
         }
-        if ((await (0, import_promises5.lstat)(old)).isFile()) {
+        if ((await (0, import_promises4.lstat)(old)).isFile()) {
           const saved = await working(old).catch((e) => {
             if (e instanceof TypeError) return null;
             throw e;
@@ -15315,25 +15277,25 @@ var DocumentHistory = class _DocumentHistory {
         }
       }
       await cleanup();
-      throw new Error("Local file changed during sync: " + (0, import_node_path3.basename)(p.path) + ". Local changes were preserved. Run wire sync again.");
+      throw new Error("Local file changed during sync: " + (0, import_node_path2.basename)(p.path) + ". Local changes were preserved. Run wire sync again.");
     };
     if (!p.acknowledged && !await exists(delivered)) {
       let current = await working(p.path);
       if (p.expected === null && current !== null) {
         if (!await exists(stage)) return retry();
-        const staged = await (0, import_promises5.stat)(stage), installed = await (0, import_promises5.stat)(p.path);
+        const staged = await (0, import_promises4.stat)(stage), installed = await (0, import_promises4.stat)(p.path);
         if (staged.dev !== installed.dev || staged.ino !== installed.ino) return retry();
       }
       if (current !== p.next) {
         if (!await exists(stage)) {
-          const mode = current === null ? 384 : (await (0, import_promises5.stat)(p.path)).mode & 511;
-          const tmp = (0, import_node_path3.join)(this.dir, (0, import_node_crypto4.randomUUID)());
+          const mode = current === null ? 384 : (await (0, import_promises4.stat)(p.path)).mode & 511;
+          const tmp = (0, import_node_path2.join)(this.dir, (0, import_node_crypto4.randomUUID)());
           try {
             await write(tmp, p.next, mode);
-            await (0, import_promises5.rename)(tmp, stage);
+            await (0, import_promises4.rename)(tmp, stage);
             await syncDir(this.dir);
           } finally {
-            await (0, import_promises5.rm)(tmp, { force: true });
+            await (0, import_promises4.rm)(tmp, { force: true });
           }
         } else if (await working(stage) !== p.next) {
           throw new Error("Corrupt prepared Markdown. No file was published.");
@@ -15341,14 +15303,14 @@ var DocumentHistory = class _DocumentHistory {
         if (p.expected !== null && !await exists(old)) {
           if (current !== p.expected) return retry();
           try {
-            (0, import_node_fs3.renameSync)(p.path, old);
+            (0, import_node_fs2.renameSync)(p.path, old);
           } catch (e) {
             if (missing(e)) return retry();
             throw e;
           }
-          if (!(0, import_node_fs3.lstatSync)(old).isFile() || !(0, import_node_fs3.readFileSync)(old).equals(Buffer.from(p.expected))) return retry();
+          if (!(0, import_node_fs2.lstatSync)(old).isFile() || !(0, import_node_fs2.readFileSync)(old).equals(Buffer.from(p.expected))) return retry();
           try {
-            (0, import_node_fs3.linkSync)(stage, p.path);
+            (0, import_node_fs2.linkSync)(stage, p.path);
           } catch (e) {
             if (code(e) === "EEXIST") return retry();
             throw e;
@@ -15359,7 +15321,7 @@ var DocumentHistory = class _DocumentHistory {
           if (current !== null && current !== p.next) return retry();
           if (current === null) {
             try {
-              await (0, import_promises5.link)(stage, p.path);
+              await (0, import_promises4.link)(stage, p.path);
             } catch (e) {
               if (code(e) === "EEXIST") return retry();
               throw e;
@@ -15367,7 +15329,7 @@ var DocumentHistory = class _DocumentHistory {
           }
         }
       }
-      await syncDir((0, import_node_path3.dirname)(p.path));
+      await syncDir((0, import_node_path2.dirname)(p.path));
       await write(delivered, "");
       await syncDir(this.dir);
     }
@@ -15378,6 +15340,74 @@ var DocumentHistory = class _DocumentHistory {
     await cleanup();
   }
 };
+
+// ../wire-core/src/storage/workspace.ts
+var defaultWireBackend = "files";
+var defaultWireRegistryPath = "records";
+function canonicalPath(path) {
+  const resolved = (0, import_node_path3.resolve)(path);
+  if ((0, import_node_fs3.existsSync)(resolved)) return (0, import_node_fs3.realpathSync)(resolved);
+  return (0, import_node_path3.join)(canonicalPath((0, import_node_path3.dirname)(resolved)), (0, import_node_path3.basename)(resolved));
+}
+function protectHistory(root, path) {
+  const history = canonicalPath((0, import_node_path3.join)(root, "history")), registry = canonicalPath(path);
+  if (registry === history || registry.startsWith(history + import_node_path3.sep) || history.startsWith(registry + import_node_path3.sep)) throw new Error("The Wire registry must not overlap private document history.");
+}
+async function discoverWireRoot(path, home) {
+  const homePath = canonicalPath(home);
+  let currentPath = canonicalPath(path);
+  if (!(0, import_node_fs3.existsSync)(currentPath) || !(0, import_node_fs3.statSync)(currentPath).isDirectory()) currentPath = (0, import_node_path3.dirname)(currentPath);
+  while (true) {
+    const wirePath = (0, import_node_path3.join)(currentPath, ".wire");
+    if ((0, import_node_fs3.existsSync)(wirePath) && (0, import_node_fs3.statSync)(wirePath).isDirectory()) return wirePath;
+    const parentPath = (0, import_node_path3.dirname)(currentPath);
+    if (parentPath === currentPath) return (0, import_node_path3.join)(homePath, ".wire");
+    currentPath = parentPath;
+  }
+}
+async function configuredWireRoot(path, home) {
+  const wireRoot2 = await discoverWireRoot(path, home);
+  const configPath = (0, import_node_path3.join)(wireRoot2, "config.json");
+  return (0, import_node_fs3.existsSync)(configPath) && (0, import_node_fs3.statSync)(configPath).isFile() ? wireRoot2 : null;
+}
+function wireRelativePath(path, wireRoot2) {
+  return (0, import_node_path3.relative)((0, import_node_path3.dirname)(canonicalPath(wireRoot2)), canonicalPath(path)).replaceAll(import_node_path3.sep, "/");
+}
+async function loadWireConfig(wireRoot2) {
+  return JSON.parse(await (0, import_promises5.readFile)((0, import_node_path3.join)(wireRoot2, "config.json"), "utf8"));
+}
+async function openWireRegistry(path, home) {
+  const wireRoot2 = await discoverWireRoot(path, home);
+  const config2 = await loadWireConfig(wireRoot2);
+  const registryPath = (0, import_node_path3.join)(wireRoot2, config2.path);
+  protectHistory(wireRoot2, registryPath);
+  if (config2.backend === "sqlite") return new SqliteRegistry(registryPath, false);
+  if (config2.backend === "files") return new FileRegistry(registryPath, false);
+  throw new Error(config2.backend);
+}
+async function initializeWire(path, backend, registryPath) {
+  const wireRoot2 = (0, import_node_path3.join)(canonicalPath(path), ".wire");
+  await (0, import_promises5.mkdir)(wireRoot2, { recursive: true });
+  protectHistory(wireRoot2, (0, import_node_path3.join)(wireRoot2, registryPath));
+  const configPath = (0, import_node_path3.join)(wireRoot2, "config.json");
+  if ((0, import_node_fs3.existsSync)(configPath) && (0, import_node_fs3.statSync)(configPath).isFile()) {
+    const existing = await loadWireConfig(wireRoot2);
+    if (existing.backend !== backend || existing.path !== registryPath) throw new Error(`Wire workspace already initialized with ${existing.backend} registry at ${existing.path}. Existing registries are not overwritten.`);
+    return { root: wireRoot2, backend: existing.backend, path: (0, import_node_path3.join)(wireRoot2, existing.path), created: false };
+  }
+  const config2 = { backend, path: registryPath };
+  await (0, import_promises5.writeFile)(configPath, `${stableJsonPretty(config2)}
+`, "utf8");
+  const fullRegistryPath = (0, import_node_path3.join)(wireRoot2, registryPath);
+  if (backend === "sqlite") new SqliteRegistry(fullRegistryPath);
+  else if (backend === "files") new FileRegistry(fullRegistryPath);
+  else throw new Error(backend);
+  return { root: wireRoot2, backend, path: fullRegistryPath, created: true };
+}
+
+// ../wire-core/src/operations.ts
+var import_node_crypto5 = require("node:crypto");
+var import_node_path4 = require("node:path");
 
 // ../wire-core/src/core/owner.ts
 function assertWireOwner(resources, source, service) {
@@ -15561,7 +15591,7 @@ function composeWire(dependencies) {
     }
     const id = resourceId(source);
     const primary = current?.filesystem_links.find((link5) => link5.path === relativePath && link5.role === "primary");
-    const link4 = { path: relativePath, role: "primary", data: { format: "markdown", ...primary?.data, ...enableReceipts ? { editor_receipts: true } : {} } };
+    const link4 = { path: relativePath, role: "primary", data: { ...primary?.data ?? { format: "markdown" }, ...enableReceipts ? { editor_receipts: true } : {} } };
     const resource = {
       id,
       type: source.type,
@@ -15625,9 +15655,10 @@ function composeWire(dependencies) {
     return attachAt(url, path, void 0, editorReceipts);
   };
   const attachAt = async (url, path, fixed, editorReceipts = false) => {
-    const root = await wireRoot(dependencies, path), registry = await dependencies.workspace.openRegistry(root, dependencies.home);
+    const root = await wireRoot(dependencies, path), initial = await dependencies.workspace.openRegistry(root, dependencies.home);
     const source = parseSourceUrl(url, dependencies.catalog);
-    return locked(root, registry, sourceLock(source), async () => {
+    return locked(root, initial, sourceLock(source), async () => {
+      const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
       await owner(registry, source, url);
       const h = await restore(root, registry, source);
       const current = findResource(await registry.listResources(), source, dependencies.catalog);
@@ -15639,6 +15670,7 @@ function composeWire(dependencies) {
       if (h?.refs.conflict) throw new Error("Unresolved Wire conflict. Use wire resolve.");
       if (h?.refs.strict) throw new Error("Sync the pending Wire draft before attaching again.");
       const trackedPath = current ? (0, import_node_path4.join)((0, import_node_path4.dirname)(root), primaryLink(current).path) : fixed;
+      if (h) await requireHistoryVolume(h.dir, trackedPath ? (0, import_node_path4.dirname)(trackedPath) : path);
       const raw = trackedPath && h ? await working(trackedPath) : void 0;
       const existing = raw == null ? raw : h.view(raw).markdown;
       const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
@@ -15729,6 +15761,7 @@ function composeWire(dependencies) {
     const relativePath = dependencies.workspace.relativePath(candidatePath, root);
     const pathResources = await registry.findByPath(relativePath);
     if (pathResources.length === 0 && await dependencies.filesystem.exists(candidatePath)) {
+      if (durable(registry)) await requireHistoryVolume((0, import_node_path4.join)(root, "history"), (0, import_node_path4.dirname)(candidatePath));
       const markdown2 = durable(registry) ? await working(candidatePath) : await dependencies.filesystem.readText(candidatePath);
       if (markdown2 === null) throw new Error("Cannot upload a missing Markdown file.");
       const uploaded2 = await uploadSource(dependencies.fetchInput, dependencies.catalog, plainMarkdown(markdown2), candidatePath);
@@ -15742,6 +15775,7 @@ function composeWire(dependencies) {
     await owner(registry, source, resource.urls[0]);
     const history = await restore(root, registry, source, outputPath);
     resource = await registry.get(resource.id);
+    if (history) await requireHistoryVolume(history.dir, outputDirectory);
     if (history?.refs.conflict) throw new Error("Unresolved Wire conflict. Inspect wire conflicts and use wire resolve.");
     const snapshot = resource.data.find((item) => item.namespace === source.service && item.key === "snapshot")?.value;
     if (snapshot === void 0) throw new Error(`Missing saved snapshot for ${primaryLink(resource).path}. Keep the local file and download a separate copy to reconcile before syncing.`);
@@ -15751,7 +15785,8 @@ function composeWire(dependencies) {
     if (raw === null) throw new Error("Linked file missing: " + outputPath);
     const view2 = history ? history.view(raw) : editorView(raw);
     const markdown = view2.markdown;
-    if (view2.shown && history?.refs.editorDraft && view2.shown !== history.refs.editorDraft) throw new Error("An older editor buffer replaced a pending Wire draft. Both versions were kept; reconcile them before syncing.");
+    await history?.checkPendingDraft(view2);
+    if (history?.refs.conflict) throw new Error("Unresolved Wire conflict. The editor save and shell draft are both local. Compare them with wire diff <resource> --from editor --to shell, then use wire resolve <resource> <choice>.");
     const base = view2.base && history && view2.base !== history.refs.base && view2.base !== history.refs.resolutionParent ? { markdown: await history.text(view2.base) } : history?.refs.resolution && (!view2.base || view2.base === history.refs.resolutionParent) ? storedSnapshot(history.refs.resolution) : syncBase(source.service, snapshot, resource.data);
     if (history) await history.seed(markdownSnapshot(snapshot));
     const baseMarkdown = markdownSnapshot(base) ?? (history?.refs.base ? await history.text(history.refs.base) : null);
@@ -15878,7 +15913,7 @@ function composeWire(dependencies) {
     return { resource, path: outputPath, markdown: fetched.markdown, summary: { action: "detached", ...changeSummary(previous, fetched.markdown), remote: resource.urls[0], local: outputPath } };
   };
   const detach = (v2, p) => underResourceLock(v2, p, () => detachInner(v2, p));
-  const unlink4 = detach;
+  const unlink5 = detach;
   const runWatchHooks = async (hooks, command, result) => {
     let current = result;
     for (const hook of hooks) current = await hook(command, current);
@@ -16004,7 +16039,11 @@ function composeWire(dependencies) {
     await h.seed(markdownSnapshot(r.data.find((i) => i.namespace === source.service && i.key === "snapshot")?.value ?? null));
     return run(h, path, registry, r);
   });
-  const historyStatus = (v2, p) => withDocument(v2, p, (h, path) => h.status(path));
+  const historyStatus = (v2, p) => withDocument(v2, p, async (h, path) => {
+    const raw = await working(path);
+    if (raw !== null) await h.checkPendingDraft(h.view(raw));
+    return h.status(path);
+  });
   const historyLog = (v2, p) => withDocument(v2, p, (h) => h.log());
   const historyDiff = (v2, p, from = "base", to = "working") => withDocument(v2, p, async (h, path) => {
     const raw = await working(path);
@@ -16014,7 +16053,8 @@ function composeWire(dependencies) {
         if (current === null) throw new Error("Linked Markdown is missing.");
         return current;
       }
-      const id = ref === "base" ? h.refs.conflict?.base ?? h.refs.base : ref === "remote" ? h.refs.remote : ref === "local" ? h.refs.conflict?.local ?? h.refs.draft ?? h.refs.base : ref;
+      const c = h.refs.conflict;
+      const id = c && "editor" in c && (ref === "editor" || ref === "shell") ? c[ref] : ref === "base" ? c && "base" in c ? c.base : h.refs.base : ref === "remote" ? h.refs.remote : ref === "local" ? c && "local" in c ? c.local : h.refs.draft ?? h.refs.base : ref;
       if (!id) throw new Error("No saved " + ref + " revision.");
       return h.text(id);
     };
@@ -16025,7 +16065,8 @@ function composeWire(dependencies) {
     const view2 = raw === null ? null : h.view(raw);
     if (!view2 || view2.markdown !== expected || token !== h.token(raw)) throw new Error("Stale shell edit. The document changed; rerun the command.");
     if (expected !== markdown) {
-      if (view2.shown && h.refs.editorDraft && view2.shown !== h.refs.editorDraft) throw new Error("An older editor buffer replaced a pending Wire draft. Both versions were kept; reconcile them before editing.");
+      await h.checkPendingDraft(view2);
+      if (h.refs.conflict && "editor" in h.refs.conflict) throw new Error("Unresolved Wire conflict. Edit the working file and run wire resolve <resource> working, or choose editor or shell before using wire shell.");
       plainMarkdown(markdown);
       const prior = await h.captureLocal(expected, view2.shown ?? void 0);
       const draft = await h.revision("local", markdown, [prior]);
@@ -16037,19 +16078,33 @@ function composeWire(dependencies) {
     return h.status(path);
   });
   const resolveConflict = (v2, p, choice) => withDocument(v2, p, async (h, path, reg) => {
-    const conflict2 = h.refs.conflict;
-    if (!conflict2 || !h.refs.resolution) throw new Error("No saved conflict for this document.");
     const raw = await working(path);
-    const current = raw === null ? null : h.view(raw).markdown;
-    if (current === null) throw new Error("Linked Markdown is missing.");
-    const local = await h.text(conflict2.local), remote = await h.text(conflict2.remote);
-    if (choice !== "working" && current !== local) throw new Error("Working file changed since the conflict. Choose working to retain those edits.");
-    if (!["working", "local", "remote"].includes(choice)) throw new Error("Choose local, remote or working.");
-    const next = choice === "working" ? current : choice === "local" ? local : remote;
-    const draft = await h.revision("resolve", next, [conflict2.local, conflict2.remote]);
+    if (raw === null) throw new Error("Linked Markdown is missing.");
+    const view2 = h.view(raw), current = view2.markdown;
+    await h.checkPendingDraft(view2);
+    const conflict2 = h.refs.conflict;
+    if (!conflict2) throw new Error("No saved conflict for this document.");
+    let next, basis, parents;
+    if ("editor" in conflict2) {
+      if (!["working", "editor", "shell"].includes(choice)) throw new Error("Both drafts are local. Choose editor, shell or working.");
+      if (choice !== "working" && current !== await h.text(conflict2.editor)) throw new Error("Working file changed since the conflict. Choose working to retain those edits.");
+      basis = choice === "shell" ? conflict2.shellBase : conflict2.editorBase;
+      if (choice === "working" && view2.base !== conflict2.editorBase) throw new Error("The working file has a different receipt. Restore the conflicted editor receipt before resolving.");
+      next = choice === "working" ? current : await h.text(choice === "shell" ? conflict2.shell : conflict2.editor);
+      parents = [conflict2.editor, conflict2.shell];
+    } else {
+      if (!h.refs.resolution) throw new Error("Missing saved provider conflict snapshot.");
+      if (!["working", "local", "remote"].includes(choice)) throw new Error("Choose local, remote or working.");
+      const local = await h.text(conflict2.local);
+      if (choice !== "working" && current !== local) throw new Error("Working file changed since the conflict. Choose working to retain those edits.");
+      next = choice === "working" ? current : choice === "local" ? local : await h.text(conflict2.remote);
+      basis = conflict2.remote;
+      parents = [conflict2.local, conflict2.remote];
+    }
+    const draft = await h.revision("resolve", next, parents);
     const refs = { ...h.refs, draft, strict: true, conflict: null, ...h.refs.editorReceipts ? { editorDraft: draft } : {} };
     if (refs.editorReceipts) refs.editorReceipts = { ...refs.editorReceipts };
-    const materialized = refs.editorReceipts ? editorFile(next, refs.editorReceipts, draft, conflict2.remote) : next;
+    const materialized = refs.editorReceipts ? editorFile(next, refs.editorReceipts, draft, basis) : next;
     await h.publish(path, raw, materialized, refs, null, (r) => reg.put(r));
     return h.status(path);
   });
@@ -16067,7 +16122,7 @@ function composeWire(dependencies) {
     sync,
     download,
     detach,
-    unlink: unlink4,
+    unlink: unlink5,
     watch,
     openResource: openResource2,
     syncAll,
@@ -16406,40 +16461,41 @@ async function privateDirectory2(path) {
   if (!info.isDirectory() || (info.mode & 63) !== 0)
     throw new Error("Unsafe Wire history directory: " + path);
 }
-async function withHistoryLock2(root, key2, run) {
-  const dir = (0, import_node_path5.join)(root, "history");
-  await privateDirectory2(dir);
-  const own = (0, import_node_os2.hostname)() + ":" + process.pid + ":" + (0, import_node_crypto6.randomUUID)();
-  const lock = (0, import_node_path5.join)(dir, "lock-" + hash2(key2));
-  for (let n = 0; ; n++) {
-    const path = lock + (n ? "." + n : "");
+async function claimState2(path) {
+  let owner;
+  try {
+    owner = await (0, import_promises6.readlink)(path);
+  } catch (e) {
+    if (missing2(e))
+      return "missing";
+    throw e;
+  }
+  const [host, pid] = owner.split(":");
+  if (host === (0, import_node_os2.hostname)() && /^\d+$/.test(pid ?? "")) {
     try {
-      await (0, import_promises6.symlink)(own, path);
+      process.kill(Number(pid), 0);
+    } catch (e) {
+      if (code2(e) === "ESRCH" && await (0, import_promises6.readlink)(path).catch(() => "") === owner)
+        return "dead";
+    }
+  }
+  return "active";
+}
+async function claim2(dir, name, run) {
+  await privateDirectory2(dir);
+  const owner = (0, import_node_os2.hostname)() + ":" + process.pid + ":" + (0, import_node_crypto6.randomUUID)();
+  for (let n = 0; ; n++) {
+    const path = (0, import_node_path5.join)(dir, name + (n ? "." + n : ""));
+    try {
+      await (0, import_promises6.symlink)(owner, path);
     } catch (e) {
       if (code2(e) !== "EEXIST")
         throw e;
-      let owner;
-      try {
-        owner = await (0, import_promises6.readlink)(path);
-      } catch (r) {
-        if (missing2(r)) {
+      const state = await claimState2(path);
+      if (state !== "active") {
+        if (state === "missing")
           n--;
-          continue;
-        }
-        throw r;
-      }
-      const [host, pid] = owner.split(":");
-      if (host === (0, import_node_os2.hostname)() && /^\d+$/.test(pid ?? "")) {
-        try {
-          process.kill(Number(pid), 0);
-        } catch (k2) {
-          if (code2(k2) === "ESRCH") {
-            if (await (0, import_promises6.readlink)(path).catch(() => "") === owner)
-              continue;
-            n--;
-            continue;
-          }
-        }
+        continue;
       }
       throw new Error("Another Wire operation owns this document. Retry when it finishes.");
     }
@@ -16449,6 +16505,19 @@ async function withHistoryLock2(root, key2, run) {
       await (0, import_promises6.unlink)(path);
     }
   }
+}
+async function excludeClaims2(dir, names) {
+  for (const name of await (0, import_promises6.readdir)(dir)) {
+    if (names.test(name) && await claimState2((0, import_node_path5.join)(dir, name)) === "active")
+      throw new Error("Wire storage is busy. Retry the backend switch or document operation when it finishes.");
+  }
+}
+async function withHistoryLock2(root, key2, run) {
+  const dir = (0, import_node_path5.join)(root, "history");
+  return claim2(dir, "lock-" + hash2(key2), async () => {
+    await excludeClaims2(dir, /^switch(?:\.\d+)?$/);
+    return run();
+  });
 }
 
 // ../wire-core/dist/core/transform.js
@@ -22425,9 +22494,9 @@ function applyStyles(text3, styles) {
   if (!supportsColor() || styles.length === 0) {
     return text3;
   }
-  const open4 = styles.map((style) => style.open).join("");
-  const output = text3.includes(reset) ? replaceAll(text3, reset, `${reset}${open4}`) : text3;
-  return `${open4}${output}${reset}`;
+  const open5 = styles.map((style) => style.open).join("");
+  const output = text3.includes(reset) ? replaceAll(text3, reset, `${reset}${open5}`) : text3;
+  return `${open5}${output}${reset}`;
 }
 function clampRgb(value) {
   if (Number.isNaN(value)) {
