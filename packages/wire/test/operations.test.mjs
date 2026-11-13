@@ -12,6 +12,7 @@ import {
   defineService,
   defineServiceCatalog,
   initializeWire,
+  googleDocsService,
   loadWireConfig,
   openWireRegistry,
   switchWireBackend,
@@ -725,6 +726,74 @@ test("an unseen remote change is not recorded as the local base when an editor s
     assert.equal(stored.data.find((item) => item.key === "snapshot").value.markdown, "# Remote\n");
   }
 });
+
+for (const backend of ["sqlite", "files"]) {
+  test(`${backend} migrates an explicit first-tab registration in place, preserves pending edits, and refuses scope collisions`, async () => {
+    const project = join(testRoot, `legacy-doc-tab-${backend}`);
+    await mkdir(project);
+    await initializeWire(project, backend, backend === "files" ? "records" : "registry.sqlite3");
+    const registry = await openWireRegistry(project, project);
+    const url = "https://docs.google.com/document/d/migration/edit?tab=t.0";
+    const source = googleDocsService.parse(new URL(url));
+    const id = "google-docs:migration", scoped = id + "#tab=t.0";
+    const combined = "# One\n\n# Two\n", firstTab = "# One\n";
+    const file = join(project, "Original.md");
+    const legacy = await registry.put({
+      id, type: "document", identifiers: [{ service: "google-docs", identifier: "migration" }], urls: [url],
+      filesystem_links: [{ role: "primary", path: "Original.md", data: { kept: true } }],
+      data: [{ namespace: "google-docs", key: "snapshot", value: { document_id: "migration", markdown: combined } },
+        { namespace: "private", key: "kept", value: true }], relationships: [],
+    });
+    let calls = 0;
+    const wire = composeWire({
+      home: project, filesystem: filesystem(), workspace, fetchInput: {},
+      catalog: defineServiceCatalog([{ ...googleDocsService, fetch: async () => { throw new Error("Unexpected download"); },
+        synchronize: async (_input, _url, selected, base, markdown) => {
+          calls++;
+          if (calls === 1) throw new Error("Could not read the tab");
+          assert.equal(selected.identifier, source.identifier);
+          assert.equal(base.markdown, markdown);
+          return { title: "Changed title", markdown: firstTab, data: { document_id: "migration", document_tab: "t.0" } };
+        } }]),
+      initialization: { backend, registryPath: backend === "files" ? "records" : "registry.sqlite3" },
+      now: () => new Date("2026-06-10T12:00:00Z"), open: async () => {},
+    });
+
+    await writeFile(file, combined + "Unsaved edit\n");
+    for (const target of [url, file]) await assert.rejects(() => wire.sync(target, project), /Copy the local file somewhere safe/);
+    await assert.rejects(() => wire.sync(url.split("?")[0], project), /registered to the explicit default tab/);
+    assert.deepEqual(await registry.listResources(), [legacy]);
+    assert.equal(await readFile(file, "utf8"), combined + "Unsaved edit\n");
+    // A genuinely separate registration may have a different URL for the same tab.
+    const newer = { ...legacy, id: scoped, identifiers: [{ service: "google-docs", identifier: source.identifier }], urls: [url + "&usp=sharing"],
+      filesystem_links: [{ role: "primary", path: "Separate.md", data: {} }] };
+    await registry.put(newer);
+    await writeFile(join(project, "Separate.md"), "Separate edit\n");
+    await writeFile(file, combined);
+    for (const target of [file, url, join(project, "Separate.md")]) await assert.rejects(() => wire.sync(target, project), /Two Wire records.*Original.md.*Separate.md/);
+    assert.equal(await readFile(file, "utf8"), combined);
+    assert.equal(await readFile(join(project, "Separate.md"), "utf8"), "Separate edit\n");
+    assert.equal(calls, 0);
+    await registry.delete(scoped);
+
+    if (backend === "files") {
+      // Crash after publishing the replacement, before unlinking the old record.
+      await writeFile(join(project, ".wire", "records", scoped + ".json"), JSON.stringify({ ...legacy, id: scoped, identifiers: newer.identifiers }));
+    }
+    await assert.rejects(() => wire.sync(backend === "files" ? file : url, project), /Could not read the tab/);
+    assert.deepEqual((await registry.get(scoped)).data, legacy.data);
+    assert.equal(await readFile(file, "utf8"), combined);
+    const migrated = await wire.sync(backend === "files" ? file : url, project);
+    assert.equal(migrated.path, file);
+    assert.equal(migrated.resource.id, scoped);
+    assert.deepEqual(migrated.resource.filesystem_links, legacy.filesystem_links);
+    assert.equal(migrated.resource.data.find((entry) => entry.key === "kept").value, true);
+    assert.deepEqual((await registry.listResources()).map((item) => item.id), [scoped]);
+    assert.equal(await readFile(file, "utf8"), firstTab);
+    assert.equal((await wire.sync(backend === "files" ? url : file, project)).path, file);
+    assert.equal(calls, 3);
+  });
+}
 
 test("sync-all invokes service synchronization for every registered resource", async () => {
   const project = join(testRoot, "service-sync-all");

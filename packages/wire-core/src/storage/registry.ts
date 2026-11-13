@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
-import { open, readdir, readFile, rename, unlink } from "node:fs/promises";
+import { link, open, readdir, readFile, rename, unlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { basename, dirname, extname, join, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
 import { stableJsonCompact, stableJsonPretty } from "../core/json.js";
-import type { JsonObject, JsonValue, Registry, Resource, ResourceType } from "../core/model.js";
+import type { Identifier, JsonObject, JsonValue, Registry, Resource, ResourceType } from "../core/model.js";
 import { normalizeResource } from "../core/resource.js";
 
 type ResourceRow = Readonly<{ id: string; type: ResourceType }>;
@@ -164,6 +164,24 @@ export class SqliteRegistry implements Registry {
     return normalized;
   }
 
+  async rekey(previous: Resource, identifier: Identifier): Promise<Resource> {
+    const database = this.connect();
+    const id = `${identifier.service}:${identifier.identifier}`;
+    try {
+      database.exec("BEGIN IMMEDIATE; PRAGMA defer_foreign_keys=ON");
+      if (stableJsonCompact(this.getResource(database, previous.id)) !== stableJsonCompact(previous)) throw new Error("The Wire record changed during migration. Retry sync.");
+      database.prepare("UPDATE resources SET id = ? WHERE id = ?").run(id, previous.id);
+      database.prepare("UPDATE resource_identifiers SET resource_id = ?, identifier = ? WHERE resource_id = ?").run(id, identifier.identifier, previous.id);
+      for (const table of ["resource_urls", "filesystem_links", "resource_data"]) database.prepare(`UPDATE ${table} SET resource_id = ? WHERE resource_id = ?`).run(id, previous.id);
+      database.prepare("UPDATE resource_relationships SET source_id = ? WHERE source_id = ?").run(id, previous.id);
+      const migrated = this.getResource(database, id);
+      database.exec("COMMIT");
+      return migrated;
+    } finally {
+      database.close();
+    }
+  }
+
   async get(resourceId: string): Promise<Resource> {
     const database = this.connect();
     const row = database.prepare("SELECT id FROM resources WHERE id = ?").get(resourceId) as IdRow | undefined;
@@ -284,6 +302,27 @@ export class FileRegistry implements Registry {
     await handle.close();
     await rename(tempPath, this.resourcePath(normalized.id));
     return normalized;
+  }
+
+  async rekey(previous: Resource, identifier: Identifier): Promise<Resource> {
+    const migrated = storageResource({ ...previous, id: `${identifier.service}:${identifier.identifier}`, identifiers: [identifier] });
+    if (stableJsonCompact(await this.get(previous.id)) !== stableJsonCompact(previous)) throw new Error("The Wire record changed during migration. Retry sync.");
+    // Publish a complete replacement without overwriting another record. If the
+    // process stops before unlinking the old file, a retry recognizes its exact copy.
+    const temp = join(this.path, randomUUID());
+    const handle = await open(temp, "wx", 0o600);
+    try {
+      try { await handle.writeFile(`${stableJsonPretty(migrated)}\n`, "utf8"); } finally { await handle.close(); }
+      try {
+        await link(temp, this.resourcePath(migrated.id));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST" || stableJsonCompact(await this.get(migrated.id)) !== stableJsonCompact(migrated)) throw error;
+      }
+      await unlink(this.resourcePath(previous.id));
+    } finally {
+      await unlink(temp);
+    }
+    return migrated;
   }
 
   async get(resourceId: string): Promise<Resource> {

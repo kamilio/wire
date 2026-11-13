@@ -1,8 +1,9 @@
-import type { Registry, Resource } from "../core/model.js";
+import type { Identifier, Registry, Resource } from "../core/model.js";
 export declare class SqliteRegistry implements Registry {
     readonly path: string;
     constructor(path: string);
     put(resource: Resource): Promise<Resource>;
+    rekey(previous: Resource, identifier: Identifier): Promise<Resource>;
     get(resourceId: string): Promise<Resource>;
     findByIdentifier(service: string, identifier: string): Promise<Resource>;
     findByUrl(url: string): Promise<Resource>;
@@ -16,6 +17,7 @@ export declare class FileRegistry implements Registry {
     readonly path: string;
     constructor(path: string);
     put(resource: Resource): Promise<Resource>;
+    rekey(previous: Resource, identifier: Identifier): Promise<Resource>;
     get(resourceId: string): Promise<Resource>;
     findByIdentifier(service: string, identifier: string): Promise<Resource>;
     findByUrl(url: string): Promise<Resource>;

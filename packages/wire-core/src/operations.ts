@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
+import { stableJsonCompact } from "./core/json.js";
 import { extractRelationships, markdownFilename } from "./core/transform.js";
-import type { FetchedDocument, JsonObject, JsonValue, Registry, Resource, ResourceData, ServiceCatalog } from "./core/model.js";
+import type { FetchedDocument, JsonObject, JsonValue, Registry, Resource, ResourceData, ServiceCatalog, Source } from "./core/model.js";
 import { resourceId } from "./core/resource.js";
 import { fetchSource, parseSourceUrl, synchronizeSource, uploadSource } from "./core/source.js";
 import type { InitializedWire, SwitchedWireBackend, WatchCapability, WatchHandle, WireBackend, WireConfig, WireWatchConfig, WireWorkspace } from "./ports.js";
@@ -139,9 +140,28 @@ function changeSummary(before: string, after: string) {
   return { added: added - modified, removed: removed - modified, modified };
 }
 
-async function existingResource(registry: Registry, service: string, identifier: string): Promise<Resource | null> {
-  const resources = await registry.listResources();
-  return resources.find((resource) => resource.identifiers.some((item) => item.service === service && item.identifier === identifier)) ?? null;
+function legacyDefaultTab<FetchInput>(resource: Resource, catalog: ServiceCatalog<FetchInput>): Source | null {
+  if (resource.type !== "document" || !resource.id.startsWith("google-docs:") || resource.id.includes("#tab=")) return null;
+  for (const url of resource.urls) {
+    const parsed = new URL(url);
+    const service = catalog.find((item) => item.name === "google-docs" && item.matches(parsed));
+    const source = service?.parse(parsed);
+    if (source && source["document_tab"] === "t.0" && resource.id === `google-docs:${source["document_id"]}`) return source;
+  }
+  return null;
+}
+
+function findResource<FetchInput>(resources: readonly Resource[], source: Source, catalog: ServiceCatalog<FetchInput>): Resource | null {
+  const current = resources.find((item) => item.identifiers.some((identifier) => identifier.service === source.service && identifier.identifier === source.identifier));
+  if (source.service !== "google-docs" || source.type !== "document") return current ?? null;
+  if (current && legacyDefaultTab(current, catalog) && !source["document_tab"]) throw new Error(`The existing file ${primaryLink(current).path} is registered to the explicit default tab. Sync that path before attaching the whole document.`);
+  if (source["document_tab"] !== "t.0") return current ?? null;
+  const legacy = resources.find((item) => item.id === `google-docs:${source["document_id"]}` && legacyDefaultTab(item, catalog) !== null);
+  if (!legacy) return current ?? null;
+  if (current && stableJsonCompact({ ...legacy, id: resourceId(source), identifiers: [{ service: source.service, identifier: source.identifier }] }) !== stableJsonCompact(current)) {
+    throw new Error(`Two Wire records point to the default tab: ${primaryLink(legacy).path} and ${primaryLink(current).path}. Back up both files and reconcile them before detaching the duplicate by its resource ID (${current.id}). No files were changed.`);
+  }
+  return legacy;
 }
 
 function jsonObject(value: JsonValue): value is JsonObject {
@@ -195,7 +215,8 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     const source = parseSourceUrl(url, dependencies.catalog);
     const root = await wireRoot(dependencies, path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
-    const current = await existingResource(registry, source.service, source.identifier);
+    const current = findResource(await registry.listResources(), source, dependencies.catalog);
+    if (current && legacyDefaultTab(current, dependencies.catalog)) throw new Error(`Sync ${primaryLink(current).path} first to migrate its default-tab registration.`);
     let outputPath: string;
     if (current !== null) outputPath = join(dirname(root), primaryLink(current).path);
     else if (fixedOutputPath !== undefined) outputPath = fixedOutputPath;
@@ -312,8 +333,8 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     if (value.startsWith("http://") || value.startsWith("https://")) {
       const source = parseSourceUrl(value, dependencies.catalog);
       const resources = await registry.listResources();
-      const resource = resources.find((item) => item.identifiers.some((identifier) => identifier.service === source.service && identifier.identifier === source.identifier));
-      if (resource === undefined) throw new Error(`Resource URL not found: ${value}`);
+      const resource = findResource(resources, source, dependencies.catalog);
+      if (resource === null) throw new Error(`Resource URL not found: ${value}`);
       return resource;
     }
     const candidatePath = resolve(path, value);
@@ -321,6 +342,10 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     const resources = await registry.findByPath(relativePath);
     if (resources.length > 0 || await dependencies.filesystem.exists(candidatePath)) {
       if (resources.length === 0) throw new Error(`Resource path is not registered: ${value}`);
+      if (resources.length === 2) {
+        const tab = resources.map((item) => legacyDefaultTab(item, dependencies.catalog)).find((item) => item !== null);
+        if (tab && resources.some((item) => item.id === resourceId(tab))) return findResource(resources, tab, dependencies.catalog)!;
+      }
       if (resources.length > 1) throw new Error(`Ambiguous resource path ${relativePath}: ${resources.map((resource) => resource.id).join(", ")}. Use a resource id or URL.`);
       return resources[0]!;
     }
@@ -342,14 +367,27 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     const resource = await resolveResource(registry, value, root, path);
     const outputPath = join(dirname(root), primaryLink(resource).path);
     const outputDirectory = dirname(outputPath);
-    const source = parseSourceUrl(resource.urls[0]!, dependencies.catalog);
-    const snapshot = resource.data.find((item) => item.namespace === source.service && item.key === "snapshot")!.value;
+    const source = legacyDefaultTab(resource, dependencies.catalog) ?? parseSourceUrl(resource.urls[0]!, dependencies.catalog);
+    const snapshot = resource.data.find((item) => item.namespace === source.service && item.key === "snapshot")?.value;
+    if (snapshot === undefined) throw new Error(`Missing saved snapshot for ${primaryLink(resource).path}. Keep the local file and download a separate copy to reconcile before syncing.`);
     if (!(await dependencies.filesystem.exists(outputPath))) throw new Error(`Linked file missing: ${primaryLink(resource).path} - restore it or run wire detach`);
     const markdown = await dependencies.filesystem.readText(outputPath);
     const base = syncBase(source.service, snapshot, resource.data);
     const baseMarkdown = markdownSnapshot(base);
     const localChanged = baseMarkdown !== null && markdown !== baseMarkdown;
     if (localChanged && !serviceCanSynchronize(resource.urls[0]!, dependencies.catalog)) throw new Error(`${source.service} is download-only and the local file has edits. Run \`wire download ${primaryLink(resource).path}\` to discard them.`);
+    if (source.service === "google-docs" && source["document_tab"] === "t.0") {
+      const registered = findResource(await registry.listResources(), source, dependencies.catalog);
+      if (registered && legacyDefaultTab(registered, dependencies.catalog)) {
+        if (registered.urls.length !== 1 || registered.identifiers.length !== 1 || registered.identifiers[0]!.identifier !== source["document_id"] || registered.filesystem_links.filter((link) => link.role === "primary").length !== 1 || !registry.rekey) {
+          throw new Error(`Cannot migrate the ambiguous default-tab registration ${registered.id}. Back up the linked files and check the URLs, primary paths, and registry backend before syncing. No files were changed.`);
+        }
+        if (baseMarkdown === null || markdown !== baseMarkdown) {
+          throw new Error(`Cannot migrate the old default-tab registration for ${primaryLink(registered).path}. Copy the local file somewhere safe, restore the linked file to its saved snapshot, then sync it and reapply only the edits for this tab. The local file and saved snapshot were kept.`);
+        }
+        await registry.rekey(registered, { service: source.service, identifier: source.identifier });
+      }
+    }
     const fetched = await synchronizeSource(dependencies.fetchInput, resource.urls[0]!, dependencies.catalog, base, markdown, outputPath);
     const action = localChanged ? fetched.markdown === baseMarkdown ? "synced" : "uploaded" : fetched.markdown === markdown ? "synced" : "downloaded";
     return store(resource.urls[0]!, outputDirectory, fetched, markdown, action, undefined, action === "uploaded" && baseMarkdown !== null ? baseMarkdown : undefined, action === "uploaded" ? markdown : fetched.markdown);

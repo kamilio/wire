@@ -64,6 +64,7 @@ export type Service<FetchInput = never> = Readonly<{
 export type ServiceCatalog<FetchInput = never> = readonly Service<FetchInput>[];
 export type Registry = Readonly<{
     put(resource: Resource): Promise<Resource>;
+    rekey?(previous: Resource, identifier: Identifier): Promise<Resource>;
     get(resourceId: string): Promise<Resource>;
     findByIdentifier(service: string, identifier: string): Promise<Resource>;
     findByUrl(url: string): Promise<Resource>;
