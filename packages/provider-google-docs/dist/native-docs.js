@@ -204,6 +204,35 @@ function characterMatches(a, b) {
     matches.push([a.length, b.length]);
     return matches;
 }
+// The LCS can match a space to an earlier copy in newly inserted text,
+// leaving an insertion exactly on an otherwise intact protected boundary.
+// Keep its neighboring space attached to a unique, already matched span.
+function alignProtectedSpaces(range, start, old, next, from, to, keep) {
+    const lo = range.startIndex - start, hi = range.endIndex - start;
+    if (lo < 0 || hi > old.text.length || lo >= hi)
+        return;
+    const span = old.text.slice(lo, hi);
+    if (old.text.indexOf(span) !== old.text.lastIndexOf(span) || next.text.indexOf(span) !== next.text.lastIndexOf(span))
+        return;
+    const k = keep.findIndex(([i]) => from[i]?.pos === lo);
+    if (k < 0)
+        return;
+    const [i, j] = keep[k];
+    // The existing diff must retain every character, on exact UTF-16 boundaries.
+    let n = 0;
+    while (from[i + n] && from[i + n].pos < hi) {
+        if (keep[k + n]?.[0] !== i + n || keep[k + n]?.[1] !== j + n)
+            return;
+        n++;
+    }
+    if ((from[i + n]?.pos ?? old.text.length) !== hi)
+        return;
+    for (const [pair, neighbor, target] of [[keep[k - 1], i - 1, j - 1], [keep[k + n], i + n, j + n]]) {
+        if (pair?.[0] === neighbor && from[neighbor]?.text === " " && to[target]?.text === " "
+            && JSON.stringify(from[neighbor].style) === JSON.stringify(to[target].style))
+            pair[1] = target;
+    }
+}
 function plan(tab, previous, desired, comments, allowDuplicatePosition) {
     const oldLayout = spacedBlocks(previous), newLayout = spacedBlocks(desired);
     if (JSON.stringify(numberStarts(oldLayout)) !== JSON.stringify(numberStarts(newLayout)))
@@ -356,6 +385,8 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
             if (structure && o.block.numbered)
                 return unsafe("recreating an existing numbered paragraph could restart its list");
             const from = characters(o.block), to = characters(b), keep = characterMatches(from, to);
+            for (const r of protectedRanges)
+                alignProtectedSpaces(r, o.start, o.block, b, from, to, keep);
             let ai = 0, bi = 0;
             const edits = [];
             const previous = new Map();

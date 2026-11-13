@@ -18651,6 +18651,24 @@ function characterMatches(a, b2) {
   matches.push([a.length, b2.length]);
   return matches;
 }
+function alignProtectedSpaces(range, start, old, next, from, to, keep) {
+  const lo = range.startIndex - start, hi = range.endIndex - start;
+  if (lo < 0 || hi > old.text.length || lo >= hi) return;
+  const span = old.text.slice(lo, hi);
+  if (old.text.indexOf(span) !== old.text.lastIndexOf(span) || next.text.indexOf(span) !== next.text.lastIndexOf(span)) return;
+  const k2 = keep.findIndex(([i2]) => from[i2]?.pos === lo);
+  if (k2 < 0) return;
+  const [i, j2] = keep[k2];
+  let n = 0;
+  while (from[i + n] && from[i + n].pos < hi) {
+    if (keep[k2 + n]?.[0] !== i + n || keep[k2 + n]?.[1] !== j2 + n) return;
+    n++;
+  }
+  if ((from[i + n]?.pos ?? old.text.length) !== hi) return;
+  for (const [pair, neighbor, target] of [[keep[k2 - 1], i - 1, j2 - 1], [keep[k2 + n], i + n, j2 + n]]) {
+    if (pair?.[0] === neighbor && from[neighbor]?.text === " " && to[target]?.text === " " && JSON.stringify(from[neighbor].style) === JSON.stringify(to[target].style)) pair[1] = target;
+  }
+}
 function plan(tab, previous, desired, comments, allowDuplicatePosition) {
   const oldLayout = spacedBlocks(previous), newLayout = spacedBlocks(desired);
   if (JSON.stringify(numberStarts(oldLayout)) !== JSON.stringify(numberStarts(newLayout))) return unsafe("cannot reproduce a change in native list numbering");
@@ -18762,6 +18780,7 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
       const structure = b2.heading !== o.block.heading || b2.level !== o.block.level || b2.numbered !== o.block.numbered;
       if (structure && o.block.numbered) return unsafe("recreating an existing numbered paragraph could restart its list");
       const from = characters(o.block), to = characters(b2), keep = characterMatches(from, to);
+      for (const r of protectedRanges) alignProtectedSpaces(r, o.start, o.block, b2, from, to, keep);
       let ai = 0, bi = 0;
       const edits = [];
       const previous2 = /* @__PURE__ */ new Map();

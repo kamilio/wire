@@ -210,3 +210,33 @@ test("numbered siblings inherit native glyphs and counters; uncertain continuity
     assert.equal(nativeDocMarkdownEqual(old,"4. First\n5. Last"),false);
   }
 });
+
+test("an unchanged space stays next to a unique protected Unicode run when the LCS picked a different space",async()=>{
+  const anchor="👩🏽‍💻 café", original="draft "+anchor+" fin", edited="ready for publication 🦊 "+anchor+" finalized";
+  const startIndex=7, endIndex=startIndex+anchor.length;
+  const options={namedRanges:{emoji:{namedRanges:[{ranges:[{startIndex,endIndex}]}]}}};
+  const f=fixture([original],options);
+  await f.write(original,edited);
+  assert.equal(f.posts.length,1);
+  // Requests are submitted in descending offset order. Apply them and track
+  // both named-range endpoints exactly as strictly exterior edits move them.
+  let text=original, lo=startIndex, hi=endIndex;
+  for(const req of f.posts[0].requests){
+    if(req.insertText){
+      const pos=req.insertText.location.index, value=req.insertText.text;
+      assert.ok(pos<lo||pos>hi);
+      text=text.slice(0,pos-1)+value+text.slice(pos-1);
+      if(pos<lo){lo+=value.length;hi+=value.length;}
+    }else if(req.deleteContentRange){
+      const {startIndex:a,endIndex:b}=req.deleteContentRange.range;
+      assert.ok(b<=lo||a>=hi);
+      text=text.slice(0,a-1)+text.slice(b-1);
+      if(b<=lo){lo-=b-a;hi-=b-a;}
+    }
+  }
+  assert.equal(text,edited);assert.equal(text.slice(lo-1,hi-1),anchor);
+  for(const target of [original.replace("café","tea"),original.replace(" fin"," appended fin").replace(anchor+" ",anchor+"! ")]) {
+    const refused=fixture([original],options);
+    await assert.rejects(refused.write(original,target),/named range/);assert.equal(refused.posts.length,0);
+  }
+});
