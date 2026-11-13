@@ -153,6 +153,7 @@ async function sheetLinks(runtime, id) {
         throw new Error("Sheets HTTP " + response.status + ": " + (await response.text()).slice(0, 600));
     const { sheets } = await response.json();
     const links = Object.create(null);
+    const labels = new Map();
     for (const tab of sheets)
         for (const grid of tab.data ?? []) {
             for (const [r, row] of (grid.rowData ?? []).entries())
@@ -161,6 +162,7 @@ async function sheetLinks(runtime, id) {
                         cell.userEnteredFormat?.textFormat?.link?.uri,
                         ...(cell.textFormatRuns ?? []).map(run => run.format?.link?.uri),
                         ...(cell.chipRuns ?? []).map(run => run.chip?.richLinkProperties?.uri)];
+                    const targets = new Set();
                     for (const text of texts)
                         for (const m of (text ?? "").matchAll(/https?:\/\/[^\s"'<>]+/gi)) {
                             let url;
@@ -175,6 +177,7 @@ async function sheetLinks(runtime, id) {
                             const target = /\/(?:d|folders)\/([\w-]+)(?:\/|$)/.exec(url.pathname)?.[1] ?? url.searchParams.get("id");
                             if (!target || !/^[\w-]+$/.test(target) || target === id)
                                 continue;
+                            targets.add(target);
                             let n = c + (grid.startColumn ?? 0) + 1, col = "";
                             while (n) {
                                 n--;
@@ -186,11 +189,17 @@ async function sheetLinks(runtime, id) {
                             if (!refs.includes(ref))
                                 refs.push(ref);
                         }
+                    const label = cell.formattedValue?.trim();
+                    if (targets.size === 1 && label && label.length <= 120 && !/https?:\/\//i.test(label)) {
+                        const [target] = targets;
+                        if (!labels.has(target))
+                            labels.set(target, label);
+                    }
                 }
         }
-    return links;
+    return { links, labels };
 }
-export async function scrapeDrive(runtime, cwd, url) {
+export async function scrapeDrive(runtime, cwd, url, deleteVerifiedPdfs = false) {
     const sheet = url?.match(sheetUrl)?.[1], folder = url?.match(folderUrl)?.[1];
     if (url && !sheet && !folder)
         throw new Error("Expected a Google Drive folder or Google Sheets URL.");
@@ -221,6 +230,8 @@ export async function scrapeDrive(runtime, cwd, url) {
     root ??= await metadata(source);
     let downloaded = 0, unchanged = 0, removed = 0;
     const errors = [], skipped = [], images = [];
+    const priorPaths = new Map(Object.values(state.entries).filter(e => e.path).map(e => [e.id, e.path]));
+    let labels = new Map();
     async function visit(files, dir) {
         for await (const f of files) {
             try {
@@ -232,10 +243,16 @@ export async function scrapeDrive(runtime, cwd, url) {
                     skipped.push(f.name);
                     continue;
                 }
-                const name = safeName(f.name);
-                const suff = format?.[0] ?? "";
+                const extension = extname(f.name), title = basename(f.name, extension);
+                const opaque = title === f.id || /^(?:[a-f\d]{24,}|[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12})$/i.test(title);
+                const label = labels.get(f.id);
+                const name = safeName(opaque && label ? label + (label.toLowerCase().endsWith(extension.toLowerCase()) ? "" : extension) : f.name);
+                const suff = format?.[0] ?? (pdf && !/\.pdf$/i.test(name) ? ".pdf" : "");
                 let path = join(dir, name + (name.endsWith(suff) ? "" : suff));
-                const paths = () => (pdf ? [path, path + ".md"] : [path]);
+                // Existing scrapes keep their original sidecar paths.
+                const markdownPath = () => state.entries[key(path + ".md")]?.id !== f.id && /\.pdf$/i.test(path)
+                    ? path.slice(0, -4) + ".md" : path + ".md";
+                const paths = () => (pdf ? [path, markdownPath()] : [path]);
                 const key = (p) => "./" + p.normalize("NFC").toLowerCase();
                 const occupied = async () => {
                     for (const p of paths()) {
@@ -245,11 +262,19 @@ export async function scrapeDrive(runtime, cwd, url) {
                     }
                     return false;
                 };
-                if (await occupied()) {
-                    const ext = extname(path);
-                    path = (ext ? path.slice(0, -ext.length) : path) + " (" + f.id + ")" + ext;
-                    if (await occupied())
+                const base = path, ext = extname(base), stem = base.slice(0, base.length - ext.length);
+                const prior = priorPaths.get(f.id);
+                const oldName = safeName(f.name), oldExt = format?.[0] ?? "";
+                const oldBase = join(dir, oldName + (oldName.endsWith(oldExt) ? "" : oldExt));
+                const oldSuffix = extname(oldBase);
+                const legacy = [oldBase, oldBase.slice(0, oldBase.length - oldSuffix.length) + " (" + f.id + ")" + oldSuffix];
+                const saved = prior && dirname(prior) === dirname(base) ? prior : legacy.find(p => state.entries[key(p)]?.id === f.id);
+                if (saved)
+                    path = saved;
+                for (let n = 2; await occupied(); n++) {
+                    if (saved)
                         throw new Error("Destination name is already in use.");
+                    path = stem + " (" + n + ")" + ext;
                 }
                 const full = join(cwd, path);
                 if (folder) {
@@ -257,7 +282,7 @@ export async function scrapeDrive(runtime, cwd, url) {
                         await mkdir(full, { mode: 0o700 });
                     if (!(await lstat(full)).isDirectory())
                         throw new Error("Expected a local directory.");
-                    state.entries[key(path)] = { id: f.id };
+                    state.entries[key(path)] = { id: f.id, path };
                     await visit(children(runtime, f.id), path);
                     continue;
                 }
@@ -311,8 +336,9 @@ export async function scrapeDrive(runtime, cwd, url) {
                 if (current) {
                     if (state.entries[key(path)]?.noText)
                         images.push(path);
-                    if (pdf && !original?.noText && (await stat(full)))
-                        await removeVerified(await readFile(full), await readFile(full + ".md"));
+                    if (pdf && deleteVerifiedPdfs && !original?.noText && (await stat(full)))
+                        await removeVerified(await readFile(full), await readFile(join(cwd, markdownPath())));
+                    original.path = path;
                     unchanged++;
                     continue;
                 }
@@ -323,7 +349,7 @@ export async function scrapeDrive(runtime, cwd, url) {
                 const doc = f.mimeType === google + "document" ? await extractDocImages(runtime, f.id, full, Buffer.from(raw).toString("utf8")) : undefined;
                 const bytes = doc?.bytes ?? raw;
                 await save(full, bytes);
-                state.entries[key(path)] = { id: f.id, version: f.version, hash: digest(bytes), ...(doc ? { images: doc.images, originalImages: true } : {}) };
+                state.entries[key(path)] = { id: f.id, path, version: f.version, hash: digest(bytes), ...(doc ? { images: doc.images, originalImages: true } : {}) };
                 if (pdf) {
                     const { pdfMarkdown } = await import("./drive-pdf.js");
                     const text = pdfMarkdown(bytes);
@@ -334,9 +360,11 @@ export async function scrapeDrive(runtime, cwd, url) {
                         continue;
                     }
                     const md = Buffer.from(text);
-                    await save(full + ".md", md);
-                    state.entries[key(path + ".md")] = { id: f.id, version: f.version, hash: digest(md) };
-                    await removeVerified(bytes, md);
+                    const sidecar = markdownPath();
+                    await save(join(cwd, sidecar), md);
+                    state.entries[key(sidecar)] = { id: f.id, version: f.version, hash: digest(md) };
+                    if (deleteVerifiedPdfs)
+                        await removeVerified(bytes, md);
                 }
                 downloaded++;
             }
@@ -348,7 +376,9 @@ export async function scrapeDrive(runtime, cwd, url) {
     try {
         if (state.spreadsheet) {
             await visit([root], "");
-            state.links = await sheetLinks(runtime, source);
+            const cells = await sheetLinks(runtime, source);
+            state.links = cells.links;
+            labels = cells.labels;
             for (const [id, refs] of Object.entries(state.links)) {
                 try {
                     const file = await metadata(id);

@@ -2,7 +2,7 @@ import { zip } from "./support/zip.mjs";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import test from "node:test";
 import { PdfDocument } from "@poe-platform/safe-bash/pdf-ast";
@@ -111,9 +111,11 @@ test("verified PDFs stay Markdown-only on refresh; edits, missing copies and war
     },
   };
   const path = join(dir, "packet.pdf"),
-    md = path + ".md";
+    md = join(dir, "packet.md");
   try {
     await scrapeDrive(runtime, dir, "https://drive.google.com/drive/folders/source");
+    assert.deepEqual(await readFile(path), Buffer.from(bytes));
+    assert.match(await scrapeDrive(runtime, dir, undefined, true), /removed 1 local PDF/);
     await assert.rejects(readFile(path), { code: "ENOENT" });
     assert.match(await readFile(md, "utf8"), /Keep this response/);
     await scrapeDrive(runtime, dir);
@@ -130,14 +132,14 @@ test("verified PDFs stay Markdown-only on refresh; edits, missing copies and war
     delete state.entries["./packet.pdf"].markdownOnly;
     await writeFile(manifest, JSON.stringify(state));
     await writeFile(path, bytes);
-    await scrapeDrive(runtime, dir);
+    await scrapeDrive(runtime, dir, undefined, true);
     await assert.rejects(readFile(path), { code: "ENOENT" });
     assert.equal(media, 2);
     const figure = doc.addPage();
     figure.drawRect({ x: 10, y: 10, width: 100, height: 100 });
     bytes = doc.save();
     version = "2";
-    await scrapeDrive(runtime, dir);
+    await scrapeDrive(runtime, dir, undefined, true);
     assert.deepEqual(await readFile(path), Buffer.from(bytes));
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -276,15 +278,71 @@ test("spreadsheet scrape downloads all tabs and directly linked files, without w
   try {
     await assert.rejects(scrapeDrive(runtime, dir, "https://docs.google.com/spreadsheets/d/tracker/edit"), /3 downloaded.*\n.*linked folder.*\nSecond!AA5 \(third\).*403/s);
     assert.equal(await readFile(join(target, "Eng tracker.xlsx"), "utf8"), "workbook export bytes");
-    assert.equal(await readFile(join(target, "Review (second).md"), "utf8"), "document second");
+    assert.equal(await readFile(join(target, "Review (2).md"), "utf8"), "document second");
     assert.deepEqual(hits, ["tracker", "doc", "second", "group", "third"]);
     const state = JSON.parse(await readFile(join(target, ".wire-gdrive.json")));
     assert.deepEqual(state.links.doc, ["First!A1", "Second!AB5"]);
+    // A scrape created by an older Wire already owns its ID-suffixed path.
+    await rename(join(target, "Review (2).md"), join(target, "Review (second).md"));
+    const previous = state.entries["./review (2).md"];
+    delete previous.path;
+    state.entries["./review (second).md"] = previous;
+    delete state.entries["./review (2).md"];
+    await writeFile(join(target, ".wire-gdrive.json"), JSON.stringify(state));
     denied = false;
     assert.match(await scrapeDrive(runtime, target), /1 downloaded, 3 unchanged/);
+    assert.equal(await readFile(join(target, "Review (second).md"), "utf8"), "document second");
+    assert.equal(await readFile(join(target, "Review (2).md"), "utf8"), "document third");
     assert.deepEqual(exports.map(v => v[0]), ["tracker", "doc", "second", "third"]);
     await writeFile(join(target, "Review.md"), "local edit");
     await assert.rejects(scrapeDrive(runtime, target), /Local file changed/);
     assert.equal(await readFile(join(target, "Review.md"), "utf8"), "local edit");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("spreadsheet PDFs use the linked title, preserve the original, and keep edits after titles change", async () => {
+  const dir = await mkdtemp(join(import.meta.dirname, "gdrive-sheet-pdf-"));
+  const pdf = PdfDocument.create();
+  pdf.addPage().drawText("A concrete example", { x: 30, y: 600, size: 12 });
+  const bytes = pdf.save();
+  let label = "Feedback packet", downloads = 0;
+  const runtime = {
+    googleFormsTokens: { load: async () => ({ token: "saved" }) },
+    http: { request: async input => {
+      const u = new URL(input);
+      if (u.hostname === "sheets.googleapis.com") return Response.json({ sheets: [
+        { properties: { title: "Team" }, data: [{ rowData: [{ values: [
+          { hyperlink: "https://docs.google.com/document/d/note/edit" },
+          { formattedValue: label, hyperlink: "https://drive.google.com/file/d/packet/view" },
+        ] }] }] },
+      ] });
+      if (u.searchParams.has("alt")) { downloads++; return new Response(bytes); }
+      if (u.pathname.endsWith("/note")) return Response.json({ id: "note", name: "Feedback packet", mimeType: "application/vnd.google-apps.document", version: "1" });
+      if (u.pathname.endsWith("/export")) return new Response("workbook");
+      return Response.json(u.pathname.endsWith("/tracker")
+        ? { id: "tracker", name: basename(dir), mimeType: "application/vnd.google-apps.spreadsheet", version: "1" }
+        : { id: "packet", name: "1b8ca16bfc68be755861cc1b9f720e8b.pdf", mimeType: "application/pdf", version: "1" });
+    } },
+  };
+  const original = join(dir, "Feedback packet (2).pdf"), md = join(dir, "Feedback packet (2).md");
+  try {
+    await scrapeDrive(runtime, dir, "https://docs.google.com/spreadsheets/d/tracker/edit");
+    assert.equal(await readFile(join(dir, "Feedback packet.md"), "utf8"), "workbook");
+    assert.deepEqual(await readFile(original), Buffer.from(bytes));
+    assert.match(await readFile(md, "utf8"), /A concrete example/);
+    label = "Renamed sheet link";
+    assert.match(await scrapeDrive(runtime, dir), /3 unchanged/);
+    assert.equal(downloads, 1);
+    await writeFile(md, "my edit");
+    await assert.rejects(scrapeDrive(runtime, dir, undefined, true), /Local file changed/);
+    assert.equal(await readFile(md, "utf8"), "my edit");
+    assert.deepEqual(await readFile(original), Buffer.from(bytes));
+    await writeFile(md, pdfMarkdown(bytes));
+    if (spawnSync("pdftotext", ["-v"]).status === 0) {
+      assert.match(await scrapeDrive(runtime, dir, undefined, true), /removed 1 local PDF/);
+      await assert.rejects(readFile(original), { code: "ENOENT" });
+      assert.match(await scrapeDrive(runtime, dir), /3 unchanged/);
+      assert.equal(downloads, 1);
+    }
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
