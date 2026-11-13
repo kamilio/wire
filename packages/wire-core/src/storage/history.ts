@@ -28,6 +28,10 @@ async function privateDirectory(path: string) {
   const info = await lstat(path);
   if (!info.isDirectory() || (info.mode & 0o077) !== 0) throw new Error('Unsafe Wire history directory: ' + path);
 }
+export async function requireHistoryVolume(historyDirectory: string, markdownDirectory: string) {
+  const [history, markdown] = await Promise.all([stat(historyDirectory), stat(markdownDirectory)]);
+  if (history.dev !== markdown.dev) throw new Error("Wire history and tracked Markdown must be on the same filesystem. Run wire init in the document folder on that volume, then attach the source URL there. Keep any existing edits until you have reconciled the new attachment.");
+}
 async function syncDir(path: string) {
   const fd = await open(path, "r");
   try { await fd.sync(); } finally { await fd.close(); }
@@ -213,12 +217,14 @@ export class DocumentHistory {
             try { view = this.view(saved); } catch { /* retain raw .old */ }
             if (view) await this.captureLocal(view.markdown, view.shown ?? undefined);
           }
+    await requireHistoryVolume(this.dir, dirname(path));
         }
       }
       await cleanup();
       throw new Error("Local file changed during sync: " + basename(p.path) + ". Local changes were preserved. Run wire sync again.");
     };
     // A private hard link to the displaced inode is retained, even if another
+    await requireHistoryVolume(this.dir, dirname(path));
     // application still has a writable file descriptor open on it.
     if (!p.acknowledged && !await exists(delivered)) {
       let current = await working(p.path);

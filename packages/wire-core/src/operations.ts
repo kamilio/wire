@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { FileRegistry, SqliteRegistry } from "./storage/registry.js";
-import { DocumentHistory, withHistoryLock, working, type HistoryDiff, type HistoryEntry, type HistoryStatus } from "./storage/history.js";
+import { DocumentHistory, requireHistoryVolume, withHistoryLock, working, type HistoryDiff, type HistoryEntry, type HistoryStatus } from "./storage/history.js";
 import { editorFile, editorView, plainMarkdown } from "./storage/editor-receipts.js";
 import { assertWireOwner } from "./core/owner.js";
 import { stableJsonCompact } from "./core/json.js";
@@ -364,6 +364,7 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
       if (h?.refs.conflict) throw new Error("Unresolved Wire conflict. Use wire resolve.");
       if (h?.refs.strict) throw new Error("Sync the pending Wire draft before attaching again.");
       const trackedPath = current ? join(dirname(root), primaryLink(current).path) : fixed;
+      if (h) await requireHistoryVolume(h.dir, trackedPath ? dirname(trackedPath) : path);
       const raw = trackedPath && h ? await working(trackedPath) : undefined;
       const existing = raw == null ? raw : h!.view(raw).markdown;
       const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
@@ -461,6 +462,7 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     const relativePath = dependencies.workspace.relativePath(candidatePath, root);
     const pathResources = await registry.findByPath(relativePath);
     if (pathResources.length === 0 && await dependencies.filesystem.exists(candidatePath)) {
+      if (durable(registry)) await requireHistoryVolume(join(root, "history"), dirname(candidatePath));
       const markdown = durable(registry) ? await working(candidatePath) : await dependencies.filesystem.readText(candidatePath);
       if (markdown === null) throw new Error("Cannot upload a missing Markdown file.");
       const uploaded = await uploadSource(dependencies.fetchInput, dependencies.catalog, plainMarkdown(markdown), candidatePath);
@@ -474,6 +476,7 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     await owner(registry, source, resource.urls[0]!);
     const history = await restore(root, registry, source, outputPath);
     resource = await registry.get(resource.id);
+    if (history) await requireHistoryVolume(history.dir, outputDirectory);
     if (history?.refs.conflict) throw new Error("Unresolved Wire conflict. Inspect wire conflicts and use wire resolve.");
     const snapshot = resource.data.find((item) => item.namespace === source.service && item.key === "snapshot")?.value;
     if (snapshot === undefined) throw new Error(`Missing saved snapshot for ${primaryLink(resource).path}. Keep the local file and download a separate copy to reconcile before syncing.`);
