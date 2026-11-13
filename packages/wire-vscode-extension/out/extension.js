@@ -1879,8 +1879,8 @@ var require_dom = __commonJS({
         }
       });
     }
-    function walkDOM(node, context2, callbacks) {
-      var stack = [{ node, context: context2, phase: walkDOM.ENTER }];
+    function walkDOM(node, context, callbacks) {
+      var stack = [{ node, context, phase: walkDOM.ENTER }];
       while (stack.length > 0) {
         var frame = stack.pop();
         if (frame.phase === walkDOM.ENTER) {
@@ -11811,15 +11811,15 @@ var require_cst_scalar = __commonJS({
       }
       return null;
     }
-    function createScalarToken(value, context2) {
-      const { implicitKey = false, indent, inFlow = false, offset = -1, type = "PLAIN" } = context2;
+    function createScalarToken(value, context) {
+      const { implicitKey = false, indent, inFlow = false, offset = -1, type = "PLAIN" } = context;
       const source = stringifyString.stringifyString({ type, value }, {
         implicitKey,
         indent: indent > 0 ? " ".repeat(indent) : "",
         inFlow,
         options: { blockQuote: true, lineWidth: -1 }
       });
-      const end = context2.end ?? [
+      const end = context.end ?? [
         { type: "newline", offset: -1, indent, source: "\n" }
       ];
       switch (source[0]) {
@@ -11843,8 +11843,8 @@ var require_cst_scalar = __commonJS({
           return { type: "scalar", offset, indent, source, end };
       }
     }
-    function setScalarValue(token, value, context2 = {}) {
-      let { afterKey = false, implicitKey = false, inFlow = false, type } = context2;
+    function setScalarValue(token, value, context = {}) {
+      let { afterKey = false, implicitKey = false, inFlow = false, type } = context;
       let indent = "indent" in token ? token.indent : null;
       if (afterKey && typeof indent === "number")
         indent += 2;
@@ -13959,7 +13959,7 @@ function normalizeResource(resource) {
     ),
     urls: Object.freeze([...resource.urls].sort(compareStrings2)),
     filesystem_links: Object.freeze(
-      resource.filesystem_links.map((link) => Object.freeze({ path: link.path, role: link.role, data: cloneObject(link.data) })).sort((left, right) => compareStrings2(left.path, right.path) || compareStrings2(left.role, right.role))
+      resource.filesystem_links.map((link2) => Object.freeze({ path: link2.path, role: link2.role, data: cloneObject(link2.data) })).sort((left, right) => compareStrings2(left.path, right.path) || compareStrings2(left.role, right.role))
     ),
     data: Object.freeze(
       resource.data.map((item) => Object.freeze({ namespace: item.namespace, key: item.key, value: cloneValue(item.value) })).sort((left, right) => compareStrings2(left.namespace, right.namespace) || compareStrings2(left.key, right.key))
@@ -14584,7 +14584,7 @@ function compareStrings3(left, right) {
 function storageResource(resource) {
   return normalizeResource({
     ...resource,
-    filesystem_links: resource.filesystem_links.map((link) => ({ ...link, path: link.path.replaceAll(import_node_path.sep, "/") }))
+    filesystem_links: resource.filesystem_links.map((link2) => ({ ...link2, path: link2.path.replaceAll(import_node_path.sep, "/") }))
   });
 }
 function fileResourceName(resourceId3) {
@@ -14600,7 +14600,7 @@ function assertUnique(values2) {
 function assertUniqueFileResource(resource) {
   assertUnique(resource.identifiers.map((identifier2) => JSON.stringify([identifier2.service, identifier2.identifier])));
   assertUnique(resource.urls);
-  assertUnique(resource.filesystem_links.map((link) => JSON.stringify([link.path, link.role])));
+  assertUnique(resource.filesystem_links.map((link2) => JSON.stringify([link2.path, link2.role])));
   assertUnique(resource.data.map((item) => JSON.stringify([item.namespace, item.key])));
   assertUnique(resource.relationships.map((relationship) => JSON.stringify([resource.id, relationship.target_id, relationship.type])));
 }
@@ -14693,7 +14693,7 @@ var SqliteRegistry = class {
     const insertUrl = database.prepare("INSERT INTO resource_urls (resource_id, url) VALUES (?, ?)");
     for (const url of normalized.urls) insertUrl.run(normalized.id, url);
     const insertLink = database.prepare("INSERT INTO filesystem_links (resource_id, path, role, data_json) VALUES (?, ?, ?, ?)");
-    for (const link of normalized.filesystem_links) insertLink.run(normalized.id, link.path, link.role, stableJsonCompact(link.data));
+    for (const link2 of normalized.filesystem_links) insertLink.run(normalized.id, link2.path, link2.role, stableJsonCompact(link2.data));
     const insertData = database.prepare("INSERT INTO resource_data (resource_id, namespace, key, value_json) VALUES (?, ?, ?, ?)");
     for (const item of normalized.data) insertData.run(normalized.id, item.namespace, item.key, stableJsonCompact(item.value));
     const insertRelationship = database.prepare("INSERT INTO resource_relationships (source_id, target_id, type, data_json) VALUES (?, ?, ?, ?)");
@@ -14701,6 +14701,23 @@ var SqliteRegistry = class {
     database.exec("COMMIT");
     database.close();
     return normalized;
+  }
+  async rekey(previous, identifier2) {
+    const database = this.connect();
+    const id = `${identifier2.service}:${identifier2.identifier}`;
+    try {
+      database.exec("BEGIN IMMEDIATE; PRAGMA defer_foreign_keys=ON");
+      if (stableJsonCompact(this.getResource(database, previous.id)) !== stableJsonCompact(previous)) throw new Error("The Wire record changed during migration. Retry sync.");
+      database.prepare("UPDATE resources SET id = ? WHERE id = ?").run(id, previous.id);
+      database.prepare("UPDATE resource_identifiers SET resource_id = ?, identifier = ? WHERE resource_id = ?").run(id, identifier2.identifier, previous.id);
+      for (const table of ["resource_urls", "filesystem_links", "resource_data"]) database.prepare(`UPDATE ${table} SET resource_id = ? WHERE resource_id = ?`).run(id, previous.id);
+      database.prepare("UPDATE resource_relationships SET source_id = ? WHERE source_id = ?").run(id, previous.id);
+      const migrated = this.getResource(database, id);
+      database.exec("COMMIT");
+      return migrated;
+    } finally {
+      database.close();
+    }
   }
   async get(resourceId3) {
     const database = this.connect();
@@ -14777,7 +14794,7 @@ var SqliteRegistry = class {
       type: row.type,
       identifiers: identifiers.map((identifier2) => ({ service: identifier2.service, identifier: identifier2.identifier })),
       urls: urls.map((item) => item.url),
-      filesystem_links: links.map((link) => ({ path: link.path, role: link.role, data: JSON.parse(link.data_json) })),
+      filesystem_links: links.map((link2) => ({ path: link2.path, role: link2.role, data: JSON.parse(link2.data_json) })),
       data: data.map((item) => ({ namespace: item.namespace, key: item.key, value: JSON.parse(item.value_json) })),
       relationships: relationships.map((relationship) => ({ target_id: relationship.target_id, type: relationship.type, data: JSON.parse(relationship.data_json) }))
     };
@@ -14814,6 +14831,29 @@ var FileRegistry = class {
     await (0, import_promises3.rename)(tempPath, this.resourcePath(normalized.id));
     return normalized;
   }
+  async rekey(previous, identifier2) {
+    const migrated = storageResource({ ...previous, id: `${identifier2.service}:${identifier2.identifier}`, identifiers: [identifier2] });
+    if (stableJsonCompact(await this.get(previous.id)) !== stableJsonCompact(previous)) throw new Error("The Wire record changed during migration. Retry sync.");
+    const temp = (0, import_node_path.join)(this.path, (0, import_node_crypto.randomUUID)());
+    const handle = await (0, import_promises3.open)(temp, "wx", 384);
+    try {
+      try {
+        await handle.writeFile(`${stableJsonPretty(migrated)}
+`, "utf8");
+      } finally {
+        await handle.close();
+      }
+      try {
+        await (0, import_promises3.link)(temp, this.resourcePath(migrated.id));
+      } catch (error) {
+        if (error.code !== "EEXIST" || stableJsonCompact(await this.get(migrated.id)) !== stableJsonCompact(migrated)) throw error;
+      }
+      await (0, import_promises3.unlink)(this.resourcePath(previous.id));
+    } finally {
+      await (0, import_promises3.unlink)(temp);
+    }
+    return migrated;
+  }
   async get(resourceId3) {
     if (!(0, import_node_fs.existsSync)(this.resourcePath(resourceId3))) throw missingResource(resourceId3);
     return parseResource(await (0, import_promises3.readFile)(this.resourcePath(resourceId3), "utf8"));
@@ -14830,7 +14870,7 @@ var FileRegistry = class {
   }
   async findByPath(path) {
     const normalizedPath = path.replaceAll(import_node_path.sep, "/");
-    return (await this.listResources()).filter((resource) => resource.filesystem_links.some((link) => link.path === normalizedPath));
+    return (await this.listResources()).filter((resource) => resource.filesystem_links.some((link2) => link2.path === normalizedPath));
   }
   async listResources() {
     const filenames = (await (0, import_promises3.readdir)(this.path)).filter((filename) => (0, import_node_path.extname)(filename) === ".json").sort(compareStrings3);
@@ -14933,7 +14973,7 @@ function watchConfig(config2) {
   };
 }
 function primaryLink(resource) {
-  return resource.filesystem_links.find((link) => link.role === "primary");
+  return resource.filesystem_links.find((link2) => link2.role === "primary");
 }
 function collisionFilename(title2, service, identifier2) {
   const base = markdownFilename(title2).slice(0, -3);
@@ -14969,9 +15009,27 @@ function changeSummary(before, after) {
   const modified = Math.min(removed, added);
   return { added: added - modified, removed: removed - modified, modified };
 }
-async function existingResource(registry, service, identifier2) {
-  const resources = await registry.listResources();
-  return resources.find((resource) => resource.identifiers.some((item) => item.service === service && item.identifier === identifier2)) ?? null;
+function legacyDefaultTab(resource, catalog) {
+  if (resource.type !== "document" || !resource.id.startsWith("google-docs:") || resource.id.includes("#tab=")) return null;
+  for (const url of resource.urls) {
+    const parsed = new URL(url);
+    const service = catalog.find((item) => item.name === "google-docs" && item.matches(parsed));
+    const source = service?.parse(parsed);
+    if (source && source["document_tab"] === "t.0" && resource.id === `google-docs:${source["document_id"]}`) return source;
+  }
+  return null;
+}
+function findResource(resources, source, catalog) {
+  const current = resources.find((item) => item.identifiers.some((identifier2) => identifier2.service === source.service && identifier2.identifier === source.identifier));
+  if (source.service !== "google-docs" || source.type !== "document") return current ?? null;
+  if (current && legacyDefaultTab(current, catalog) && !source["document_tab"]) throw new Error(`The existing file ${primaryLink(current).path} is registered to the explicit default tab. Sync that path before attaching the whole document.`);
+  if (source["document_tab"] !== "t.0") return current ?? null;
+  const legacy = resources.find((item) => item.id === `google-docs:${source["document_id"]}` && legacyDefaultTab(item, catalog) !== null);
+  if (!legacy) return current ?? null;
+  if (current && stableJsonCompact({ ...legacy, id: resourceId(source), identifiers: [{ service: source.service, identifier: source.identifier }] }) !== stableJsonCompact(current)) {
+    throw new Error(`Two Wire records point to the default tab: ${primaryLink(legacy).path} and ${primaryLink(current).path}. Back up both files and reconcile them before detaching the duplicate by its resource ID (${current.id}). No files were changed.`);
+  }
+  return legacy;
 }
 function jsonObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -15015,7 +15073,8 @@ function composeWire(dependencies) {
     const source = parseSourceUrl(url, dependencies.catalog);
     const root = await wireRoot(dependencies, path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
-    const current = await existingResource(registry, source.service, source.identifier);
+    const current = findResource(await registry.listResources(), source, dependencies.catalog);
+    if (current && legacyDefaultTab(current, dependencies.catalog)) throw new Error(`Sync ${primaryLink(current).path} first to migrate its default-tab registration.`);
     let outputPath;
     if (current !== null) outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(current).path);
     else if (fixedOutputPath !== void 0) outputPath = fixedOutputPath;
@@ -15023,22 +15082,26 @@ function composeWire(dependencies) {
       outputPath = await availableMarkdownPath(path, fetched.title, source.service, source.identifier, async (candidate) => await dependencies.filesystem.exists(candidate) || (await registry.findByPath(dependencies.workspace.relativePath(candidate, root))).length > 0);
     }
     const relativePath = dependencies.workspace.relativePath(outputPath, root);
-    const previous = previousMarkdown === null ? await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "" : previousMarkdown;
+    const onDisk = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
+    const previous = (previousMarkdown === void 0 ? onDisk : previousMarkdown) ?? "";
+    const concurrentEdit = previousMarkdown !== void 0 && onDisk !== previousMarkdown && onDisk !== fetched.markdown;
+    const retry = `Local file changed during sync: ${relativePath}. Local changes were preserved. Run wire sync again.`;
+    if (concurrentEdit && current !== null && fetched.markdown !== previousMarkdown) throw new Error(retry);
     if (action === "attached" && current !== null) {
       const snapshot = current.data.find((item) => item.namespace === source.service && item.key === "snapshot").value;
       const baseMarkdown = markdownSnapshot(syncBase(source.service, snapshot, current.data));
       if (baseMarkdown !== null && previous !== baseMarkdown) throw new Error(`Local edits exist for ${primaryLink(current).path}. Run \`wire sync ${primaryLink(current).path}\` before attaching this URL again.`);
     }
-    await dependencies.filesystem.writeText(outputPath, fetched.markdown);
+    if (!concurrentEdit && onDisk !== fetched.markdown) await dependencies.filesystem.writeText(outputPath, fetched.markdown);
     const id = resourceId(source);
-    const primary = current?.filesystem_links.find((link) => link.path === relativePath && link.role === "primary");
+    const primary = current?.filesystem_links.find((link2) => link2.path === relativePath && link2.role === "primary");
     const resource = {
       id,
       type: source.type,
       identifiers: [{ service: source.service, identifier: source.identifier }],
       urls: [url],
       filesystem_links: current === null ? [{ path: relativePath, role: "primary", data: { format: "markdown" } }] : [
-        ...current.filesystem_links.filter((link) => !(link.path === relativePath && link.role === "primary")),
+        ...current.filesystem_links.filter((link2) => !(link2.path === relativePath && link2.role === "primary")),
         primary ?? { path: relativePath, role: "primary", data: { format: "markdown" } }
       ],
       data: [
@@ -15050,13 +15113,14 @@ function composeWire(dependencies) {
       relationships: extractRelationships(fetched.markdown, id, dependencies.catalog)
     };
     const stored = await registry.put(resource);
+    if (concurrentEdit) throw new Error(retry);
     const changes = changeSummary(summaryMarkdown ?? previous, summaryAfterMarkdown);
     const resolvedAction = action === "attached" && current !== null && previous !== "" ? changes.added === 0 && changes.modified === 0 && changes.removed === 0 ? "synced" : "downloaded" : action;
     return { resource: stored, path: outputPath, markdown: fetched.markdown, summary: { action: resolvedAction, ...changes, remote: url, local: outputPath } };
   };
   const attach = async (url, path) => {
     const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
-    return store(url, path, fetched, null, "attached", void 0, void 0, fetched.markdown);
+    return store(url, path, fetched, void 0, "attached", void 0, void 0, fetched.markdown);
   };
   const create = attach;
   const view = (url) => fetchSource(dependencies.fetchInput, url, dependencies.catalog);
@@ -15115,8 +15179,8 @@ function composeWire(dependencies) {
     if (value.startsWith("http://") || value.startsWith("https://")) {
       const source = parseSourceUrl(value, dependencies.catalog);
       const resources2 = await registry.listResources();
-      const resource = resources2.find((item) => item.identifiers.some((identifier2) => identifier2.service === source.service && identifier2.identifier === source.identifier));
-      if (resource === void 0) throw new Error(`Resource URL not found: ${value}`);
+      const resource = findResource(resources2, source, dependencies.catalog);
+      if (resource === null) throw new Error(`Resource URL not found: ${value}`);
       return resource;
     }
     const candidatePath = (0, import_node_path3.resolve)(path, value);
@@ -15124,6 +15188,10 @@ function composeWire(dependencies) {
     const resources = await registry.findByPath(relativePath);
     if (resources.length > 0 || await dependencies.filesystem.exists(candidatePath)) {
       if (resources.length === 0) throw new Error(`Resource path is not registered: ${value}`);
+      if (resources.length === 2) {
+        const tab = resources.map((item) => legacyDefaultTab(item, dependencies.catalog)).find((item) => item !== null);
+        if (tab && resources.some((item) => item.id === resourceId(tab))) return findResource(resources, tab, dependencies.catalog);
+      }
       if (resources.length > 1) throw new Error(`Ambiguous resource path ${relativePath}: ${resources.map((resource) => resource.id).join(", ")}. Use a resource id or URL.`);
       return resources[0];
     }
@@ -15144,14 +15212,27 @@ function composeWire(dependencies) {
     const resource = await resolveResource(registry, value, root, path);
     const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
     const outputDirectory = (0, import_node_path3.dirname)(outputPath);
-    const source = parseSourceUrl(resource.urls[0], dependencies.catalog);
-    const snapshot = resource.data.find((item) => item.namespace === source.service && item.key === "snapshot").value;
+    const source = legacyDefaultTab(resource, dependencies.catalog) ?? parseSourceUrl(resource.urls[0], dependencies.catalog);
+    const snapshot = resource.data.find((item) => item.namespace === source.service && item.key === "snapshot")?.value;
+    if (snapshot === void 0) throw new Error(`Missing saved snapshot for ${primaryLink(resource).path}. Keep the local file and download a separate copy to reconcile before syncing.`);
     if (!await dependencies.filesystem.exists(outputPath)) throw new Error(`Linked file missing: ${primaryLink(resource).path} - restore it or run wire detach`);
     const markdown = await dependencies.filesystem.readText(outputPath);
     const base = syncBase(source.service, snapshot, resource.data);
     const baseMarkdown = markdownSnapshot(base);
     const localChanged = baseMarkdown !== null && markdown !== baseMarkdown;
     if (localChanged && !serviceCanSynchronize(resource.urls[0], dependencies.catalog)) throw new Error(`${source.service} is download-only and the local file has edits. Run \`wire download ${primaryLink(resource).path}\` to discard them.`);
+    if (source.service === "google-docs" && source["document_tab"] === "t.0") {
+      const registered = findResource(await registry.listResources(), source, dependencies.catalog);
+      if (registered && legacyDefaultTab(registered, dependencies.catalog)) {
+        if (registered.urls.length !== 1 || registered.identifiers.length !== 1 || registered.identifiers[0].identifier !== source["document_id"] || registered.filesystem_links.filter((link2) => link2.role === "primary").length !== 1 || !registry.rekey) {
+          throw new Error(`Cannot migrate the ambiguous default-tab registration ${registered.id}. Back up the linked files and check the URLs, primary paths, and registry backend before syncing. No files were changed.`);
+        }
+        if (baseMarkdown === null || markdown !== baseMarkdown) {
+          throw new Error(`Cannot migrate the old default-tab registration for ${primaryLink(registered).path}. Copy the local file somewhere safe, restore the linked file to its saved snapshot, then sync it and reapply only the edits for this tab. The local file and saved snapshot were kept.`);
+        }
+        await registry.rekey(registered, { service: source.service, identifier: source.identifier });
+      }
+    }
     const fetched = await synchronizeSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog, base, markdown, outputPath);
     const action = localChanged ? fetched.markdown === baseMarkdown ? "synced" : "uploaded" : fetched.markdown === markdown ? "synced" : "downloaded";
     return store(resource.urls[0], outputDirectory, fetched, markdown, action, void 0, action === "uploaded" && baseMarkdown !== null ? baseMarkdown : void 0, action === "uploaded" ? markdown : fetched.markdown);
@@ -15162,7 +15243,7 @@ function composeWire(dependencies) {
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const resource = await resolveResource(registry, value, root, path);
     const outputPath = (0, import_node_path3.join)((0, import_node_path3.dirname)(root), primaryLink(resource).path);
-    const markdown = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : "";
+    const markdown = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
     const fetched = await fetchSource(dependencies.fetchInput, resource.urls[0], dependencies.catalog);
     return store(resource.urls[0], (0, import_node_path3.dirname)(outputPath), fetched, markdown, "downloaded", void 0, void 0, fetched.markdown);
   };
@@ -15199,21 +15280,38 @@ function composeWire(dependencies) {
       resolveClosed = resolveClosedPromise;
     });
     const handles = [];
-    const synchronize = async () => {
-      const result = config2.mode === "download" ? await runWatchHooks(hooks, "download", await download(value, path)) : await runWatchHooks(hooks, "sync", await sync(value, path));
-      lastSyncedMarkdown = result.markdown;
+    let active = false, pending = false, poll = false, stopped = false;
+    const synchronize = async (forcePoll) => {
+      if (stopped) return;
+      pending = true;
+      poll ||= forcePoll;
+      if (active) return;
+      active = true;
+      try {
+        while (pending && !stopped) {
+          const checkRemote = poll;
+          pending = poll = false;
+          try {
+            if (!checkRemote && await dependencies.filesystem.readText(outputPath) === lastSyncedMarkdown) continue;
+            const result = config2.mode === "download" ? await runWatchHooks(hooks, "download", await download(value, path)) : await runWatchHooks(hooks, "sync", await sync(value, path));
+            lastSyncedMarkdown = result.markdown;
+          } catch (error) {
+            console.warn(`Wire watch: ${errorMessage(error)}`);
+          }
+        }
+      } finally {
+        active = false;
+        if (stopped) resolveClosed();
+      }
     };
-    const schedule = () => {
-      if (debounce !== void 0) clearTimeout(debounce);
-      debounce = setTimeout(() => {
-        debounce = void 0;
-        void synchronize();
-      }, config2.debounceMs);
-    };
-    handles.push(dependencies.watch.every(config2.pollMs, synchronize));
+    handles.push(dependencies.watch.every(config2.pollMs, () => synchronize(true)));
     if (config2.mode === "two-way") {
-      handles.push(dependencies.watch.watchFile(outputPath, async () => {
-        if (await dependencies.filesystem.readText(outputPath) !== lastSyncedMarkdown) schedule();
+      handles.push(dependencies.watch.watchFile(outputPath, () => {
+        if (debounce !== void 0) clearTimeout(debounce);
+        debounce = setTimeout(() => {
+          debounce = void 0;
+          void synchronize(false);
+        }, config2.debounceMs);
       }));
     }
     return Object.freeze({
@@ -15224,9 +15322,10 @@ function composeWire(dependencies) {
       pollMs: config2.pollMs,
       closed,
       close: () => {
+        stopped = true;
         if (debounce !== void 0) clearTimeout(debounce);
         for (const handle of handles) handle.close();
-        resolveClosed();
+        if (!active) resolveClosed();
       }
     });
   };
@@ -15593,7 +15692,7 @@ var wireWatchHooks2 = Symbol("wireWatchHooks");
 // ../wire/src/hooks.ts
 var execFileAsync = (0, import_node_util.promisify)(import_node_child_process2.execFile);
 function primaryFilesystemLink(resource) {
-  return resource.filesystem_links.find((link) => link.role === "primary");
+  return resource.filesystem_links.find((link2) => link2.role === "primary");
 }
 function wireTitle(resource) {
   return resource.data.find((item) => item.namespace === "wire" && item.key === "title").value;
@@ -15674,7 +15773,7 @@ async function updateMovedResult(options, wireRoot2, result, movedPath) {
   const resource = {
     ...result.resource,
     filesystem_links: [
-      ...result.resource.filesystem_links.filter((link) => !(link.path === primary.path && link.role === "primary")),
+      ...result.resource.filesystem_links.filter((link2) => !(link2.path === primary.path && link2.role === "primary")),
       { ...primary, path: relativePath }
     ]
   };
@@ -17714,25 +17813,25 @@ function identifier(value) {
 function endpoint(path, query) {
   return `${path}?${new URLSearchParams(query)}`;
 }
-function assets(value, context2) {
+function assets(value, context) {
   const found = /* @__PURE__ */ new Map();
   const addFile = (id, name) => {
     const queryIndex = id.indexOf("?");
     const fileId = (queryIndex === -1 ? id : id.slice(0, queryIndex)).replaceAll("#", "*");
     const query = Object.fromEntries(new URLSearchParams(queryIndex === -1 ? "" : id.slice(queryIndex + 1)));
-    if (context2.conversation !== void 0) query["conversation_id"] = context2.conversation;
-    if (context2.project !== void 0) query["gizmo_id"] = context2.project;
+    if (context.conversation !== void 0) query["conversation_id"] = context.conversation;
+    if (context.project !== void 0) query["gizmo_id"] = context.project;
     const key2 = `file:${id}`;
     found.set(key2, { key: key2, name: name ?? fileId, endpoint: endpoint(`/backend-api/files/download/${encodeURIComponent(fileId)}`, query) });
   };
   const visit = (node, message) => {
     if (typeof node === "string") {
       if (node.startsWith("file-service://") || node.startsWith("sediment://")) addFile(node.slice(node.indexOf("://") + 3));
-      if (context2.conversation !== void 0 && message !== void 0) {
+      if (context.conversation !== void 0 && message !== void 0) {
         for (const match of node.matchAll(/sandbox:(\/[^\s)\]<>"']+)/g)) {
           const path = match[1];
           const key2 = `sandbox:${message}:${path}`;
-          found.set(key2, { key: key2, name: path.split("/").pop() || "file", endpoint: endpoint(`/backend-api/conversation/${encodeURIComponent(context2.conversation)}/interpreter/download`, { message_id: message, sandbox_path: path }) });
+          found.set(key2, { key: key2, name: path.split("/").pop() || "file", endpoint: endpoint(`/backend-api/conversation/${encodeURIComponent(context.conversation)}/interpreter/download`, { message_id: message, sandbox_path: path }) });
         }
       }
     } else if (Array.isArray(node)) {
@@ -17750,7 +17849,7 @@ function assets(value, context2) {
       for (const child of Object.values(record)) visit(child, currentMessage);
     }
   };
-  visit(value, context2.message);
+  visit(value, context.message);
   return [...found.values()];
 }
 var DownloadWriteError = class extends Error {
@@ -18250,6 +18349,552 @@ var gmailProvider = Object.freeze({
   services: [gmailService]
 });
 
+// ../provider-google-docs/src/doc-blocks.ts
+function docBlocks(markdown) {
+  const result = [];
+  const lines = markdown.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+  for (let i = 0; i < lines.length; i++) {
+    let block = lines[i];
+    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(block)?.[1];
+    if (fence) {
+      const close = new RegExp("^ {0,3}" + fence[0] + "{" + fence.length + ",}\\s*$");
+      while (i + 1 < lines.length) {
+        const next = lines[++i];
+        block += next;
+        if (close.test(next)) break;
+      }
+    } else if (/^\s*\|/.test(block)) {
+      while (i + 1 < lines.length && /^\s*\|/.test(lines[i + 1])) block += lines[++i];
+    }
+    result.push(block);
+  }
+  return result;
+}
+function occurrences(blocks, start, end) {
+  const positions = /* @__PURE__ */ new Map();
+  for (let i = start; i < end; i++) positions.set(blocks[i], positions.has(blocks[i]) ? -1 : i);
+  return positions;
+}
+function docChanges(base, side) {
+  const changes = [];
+  let start = 0, s = 0, end = base.length, e = side.length;
+  const gap = (a, b2, c, d) => {
+    while (a < b2 && c < d && base[a] === side[c]) {
+      a++;
+      c++;
+    }
+    while (a < b2 && c < d && base[b2 - 1] === side[d - 1]) {
+      b2--;
+      d--;
+    }
+    if (a === b2 && c === d) return;
+    if (b2 - a === d - c) {
+      for (; a < b2; a++, c++) if (base[a] !== side[c]) changes.push({ start: a, end: a + 1, replacement: [side[c]] });
+    } else changes.push({ start: a, end: b2, replacement: side.slice(c, d) });
+  };
+  while (start < end && s < e && base[start] === side[s]) {
+    start++;
+    s++;
+  }
+  while (start < end && s < e && base[end - 1] === side[e - 1]) {
+    end--;
+    e--;
+  }
+  const old = occurrences(base, start, end), next = occurrences(side, s, e);
+  const anchors = [...old].filter(([value, i]) => i >= 0 && (next.get(value) ?? -1) >= 0);
+  if (anchors.some(([value], i) => i > 0 && next.get(value) < next.get(anchors[i - 1][0]))) {
+    changes.push({ start, end, replacement: side.slice(s, e) });
+    return changes;
+  }
+  for (const [value, i] of anchors) {
+    const j2 = next.get(value);
+    gap(start, i, s, j2);
+    start = i + 1;
+    s = j2 + 1;
+  }
+  gap(start, end, s, e);
+  return changes;
+}
+function conflict() {
+  throw new Error("Google Docs changed remotely and locally. Resolve the conflict in Google Docs or the local Markdown file before syncing again.");
+}
+function mergeDocBlocks(base, local, remote) {
+  if (base === remote || local === remote) return local;
+  if (base === local) return remote;
+  const blocks = docBlocks(base);
+  const localBlocks = docBlocks(local), remoteBlocks = docBlocks(remote);
+  const localChanges = docChanges(blocks, localBlocks), remoteChanges = docChanges(blocks, remoteBlocks);
+  const positions = occurrences(blocks, 0, blocks.length);
+  for (const [side, changes] of [[localBlocks, localChanges], [remoteBlocks, remoteChanges]]) {
+    const sidePositions = occurrences(side, 0, side.length);
+    for (const change of changes) {
+      if (change.end - change.start === change.replacement.length) continue;
+      if ([...blocks.slice(change.start, change.end), ...change.replacement].some((block) => block.trim() && (positions.get(block) === -1 || positions.has(block) && sidePositions.get(block) === -1))) conflict();
+    }
+  }
+  const all = [...localChanges, ...remoteChanges].sort((a, b2) => a.start - b2.start || a.end - b2.end);
+  let pos = 0, previous;
+  const result = [];
+  for (const change of all) {
+    if (previous && previous.start === change.start && previous.end === change.end && previous.replacement.join("") === change.replacement.join("")) continue;
+    if (change.start < pos || previous && previous.start === previous.end && change.start === change.end && previous.start === change.start) conflict();
+    result.push(blocks.slice(pos, change.start).join(""), change.replacement.join(""));
+    pos = change.end;
+    previous = change;
+  }
+  return result.join("") + blocks.slice(pos).join("");
+}
+
+// ../provider-google-docs/src/google-read.ts
+async function googleRead(runtime2, url, init) {
+  for (let attempt = 0; ; attempt++) {
+    const response = await runtime2.http.request(url, init);
+    if (![429, 502, 503, 504].includes(response.status)) return response;
+    const header = response.headers.get("retry-after")?.trim();
+    const seconds = header && /^\d+$/.test(header) ? Number(header) : void 0;
+    const date = header && /^[A-Za-z]/.test(header) ? Date.parse(header) : NaN;
+    const delay2 = seconds !== void 0 ? seconds * 1e3 : Number.isFinite(date) ? Math.max(0, date - runtime2.clock.now().getTime()) : 1e3 * 2 ** attempt;
+    if (attempt >= 3 || delay2 > 3e4) {
+      if (response.status === 429) {
+        await response.body?.cancel();
+        throw new Error(`Google Docs read rate limited (HTTP 429); retry after ${Math.ceil(delay2 / 1e3)} seconds.`);
+      }
+      return response;
+    }
+    await response.body?.cancel();
+    await new Promise((resolve5) => setTimeout(resolve5, delay2));
+  }
+}
+
+// ../provider-google-docs/src/native-docs.ts
+function eligible(scopes, requireWrite) {
+  const has = (name) => scopes?.includes("https://www.googleapis.com/auth/" + name);
+  if (!requireWrite && (has("documents.readonly") || has("documents") || has("drive.readonly"))) return true;
+  return !!(has("drive") || has("drive.file") || has("documents") && has("drive.readonly"));
+}
+async function nativeDocsGrant(runtime2, readOnly = false) {
+  const optional = (key2) => runtime2.configuration.getOptional?.(key2);
+  for (const requireWrite of readOnly ? [true, false] : [true]) for (const name of ["GOOGLE_DOCS_TOKEN_FILE", "GOOGLE_FORMS_TOKEN_FILE"]) {
+    const path = optional(name);
+    if (!path || !await runtime2.filesystem.exists(path)) continue;
+    let grant = parseGoogleToken(await runtime2.filesystem.readText(path));
+    if (!eligible(grant.scopes, requireWrite)) continue;
+    if (googleTokenExpired(grant, runtime2.clock.now())) {
+      const credentials = optional("GOOGLE_CREDENTIALS_FILE");
+      if (!credentials) throw new Error("Google Docs OAuth refresh requires GOOGLE_CREDENTIALS_FILE.");
+      const oauth = { request: (input, init) => {
+        if (String(input) !== "https://oauth2.googleapis.com/token" && String(input) !== "https://accounts.google.com/o/oauth2/token") throw new Error("Unrecognized Google OAuth token endpoint.");
+        return runtime2.http.request(input, { ...init, redirect: "error" });
+      } };
+      grant = await createGoogleTokensCapability(runtime2.filesystem, oauth, runtime2.clock, credentials, path).refresh();
+      if (!eligible(grant.scopes, requireWrite)) continue;
+    }
+    if (!grant.token) throw new Error("Google Docs OAuth token is missing.");
+    return { token: grant.token, canWrite: eligible(grant.scopes, true), driveExport: !!grant.scopes?.some((scope) => ["drive", "drive.file", "drive.readonly"].some((name2) => scope === "https://www.googleapis.com/auth/" + name2)) };
+  }
+  return null;
+}
+var unsafe = (detail) => {
+  throw new Error("Google Docs block sync cannot safely apply this edit: " + detail);
+};
+function paragraph(line) {
+  let content = line.replace(/\r?\n$/, "").replace(/ {2}$/, "");
+  if (!content || /[\n\r\u0000-\u0008\u000b-\u001f\u007f-\u009f\ue000-\uf8ff]/.test(content) || /^\s*(?:>|`{3}|~{3}|\||!\[|\[[^\]]+\]:|(?:-\s*){3,}$|(?:\*\s*){3,}$)/.test(content)) return unsafe("unsupported Markdown block");
+  const list = /^([ \t]*)([-*+]|\d+[.)]) +/.exec(content);
+  const heading = /^(#{1,6}) +/.exec(content);
+  let level = null;
+  if (list) {
+    const indent = list[1].replace(/\t/g, "  ").length;
+    if (indent % 2 || indent > 16) return unsafe("unsupported list indentation");
+    level = indent / 2;
+    content = content.slice(list[0].length);
+  } else if (heading) content = content.slice(heading[0].length);
+  let text3 = "";
+  const spans = [];
+  const emit = (value, style) => {
+    const from = text3.length;
+    text3 += value;
+    if (value && Object.keys(style).length) spans.push({ from, to: text3.length, style });
+  };
+  const read = (s, style, depth) => {
+    if (depth > 5) return unsafe("unsupported inline formatting");
+    let i = 0, begin = 0;
+    while (i < s.length) {
+      const c = s[i];
+      if (c === "\\" && /[\\`*_{}\[\]()#+\-.!|=~>]/.test(s[i + 1] ?? " ")) {
+        emit(s.slice(begin, i), style);
+        emit(s[i + 1], style);
+        begin = i += 2;
+        continue;
+      }
+      if (c === "!" && s[i + 1] === "[" || c === "`" || c === "<" && /^<\/?[\w!]/.test(s.slice(i)) || c === "&" && /^&(?:#\d+|#x[\da-f]+|[a-z]+);/i.test(s.slice(i))) return unsafe("unsupported inline content");
+      if (c === "[") {
+        const link2 = /^\[([^\[\]]+)\]\((https?:\/\/[^\s()]+|mailto:[^\s()]+)\)/.exec(s.slice(i));
+        if (!link2) return unsafe("unsupported link syntax");
+        emit(s.slice(begin, i), style);
+        read(link2[1], { ...style, link: { url: link2[2] } }, depth + 1);
+        begin = i += link2[0].length;
+        continue;
+      }
+      const marker = /^(\*{1,3}|_{1,3}|~~)/.exec(s.slice(i))?.[0];
+      if (marker && !(c === "_" && /\w/.test(s[i - 1] ?? "") && /\w/.test(s[i + marker.length] ?? ""))) {
+        const end = s.indexOf(marker, i + marker.length);
+        if (end <= i + marker.length || /\s/.test(s[i + marker.length]) || /\s/.test(s[end - 1])) return unsafe("ambiguous emphasis");
+        emit(s.slice(begin, i), style);
+        read(s.slice(i + marker.length, end), { ...style, ...marker === "~~" ? { strikethrough: true } : { ...marker.length >= 2 && { bold: true }, ...marker.length !== 2 && { italic: true } } }, depth + 1);
+        begin = i = end + marker.length;
+        continue;
+      }
+      i++;
+    }
+    emit(s.slice(begin), style);
+  };
+  read(content, {}, 0);
+  if (!text3 || text3.startsWith("	")) return unsafe("empty or tab-prefixed paragraph");
+  return { text: text3, spans, heading: heading ? "HEADING_" + heading[1].length : "NORMAL_TEXT", level, numbered: !!list && /^\d/.test(list[2]) };
+}
+var blank = "\n";
+function spacedBlocks(md) {
+  const rows = docBlocks(md).map((l) => l.replace(/\r?\n$/, "").replace(/ {2}$/, ""));
+  const separated = (s) => !!s && /^\s*(?:#{1,6}|[-*+]|\d+[.)]) +/.test(s);
+  const result = [];
+  for (let i = 0; i < rows.length; ) {
+    if (rows[i].trim()) {
+      result.push(rows[i++]);
+      continue;
+    }
+    const start = i;
+    while (i < rows.length && !rows[i].trim()) i++;
+    const optional = separated(rows[start - 1]) || separated(rows[i]);
+    for (let n = start + Number(optional); n < i; n++) result.push(blank);
+  }
+  return result;
+}
+function nativeDocMarkdownEqual(left, right) {
+  const normalized = (s) => spacedBlocks(s).map((l) => {
+    try {
+      return paragraph(l);
+    } catch {
+      return l;
+    }
+  });
+  return JSON.stringify(normalized(left)) === JSON.stringify(normalized(right));
+}
+function characters(block) {
+  let pos = 0, span = 0;
+  return Array.from(block.text, (text3) => {
+    while (span < block.spans.length && block.spans[span].to <= pos) span++;
+    const s = block.spans[span];
+    const c = { text: text3, pos, style: s && s.from <= pos ? s.style : {} };
+    pos += text3.length;
+    return c;
+  });
+}
+function characterMatches(a, b2) {
+  let l = 0, r = 0;
+  while (l < a.length && l < b2.length && a[l].text === b2[l].text) l++;
+  while (r < a.length - l && r < b2.length - l && a[a.length - r - 1].text === b2[b2.length - r - 1].text) r++;
+  const n = a.length - r - l, m2 = b2.length - r - l, stride = m2 + 1;
+  if (n && m2 && (n + 1) * stride > 1e6) return unsafe("paragraph rewrite is too large to preserve native ranges");
+  const matches = Array.from({ length: l }, (_2, i) => [i, i]);
+  if (n && m2) {
+    const dp = new Uint32Array((n + 1) * stride);
+    for (let i = n - 1; i >= 0; i--) for (let j2 = m2 - 1; j2 >= 0; j2--) {
+      dp[i * stride + j2] = a[i + l].text === b2[j2 + l].text ? dp[(i + 1) * stride + j2 + 1] + 1 : Math.max(dp[(i + 1) * stride + j2], dp[i * stride + j2 + 1]);
+    }
+    for (let i = 0, j2 = 0; i < n && j2 < m2; ) {
+      if (a[i + l].text === b2[j2 + l].text) {
+        matches.push([i + l, j2 + l]);
+        i++;
+        j2++;
+      } else if (dp[(i + 1) * stride + j2] >= dp[i * stride + j2 + 1]) i++;
+      else j2++;
+    }
+  }
+  for (let i = 0; i < r; i++) matches.push([a.length - r + i, b2.length - r + i]);
+  matches.push([a.length, b2.length]);
+  return matches;
+}
+function plan(tab, previous, desired, comments, allowDuplicatePosition) {
+  const oldLayout = spacedBlocks(previous), newLayout = spacedBlocks(desired);
+  for (const c of docChanges(oldLayout, newLayout)) {
+    const was = oldLayout.slice(c.start, c.end);
+    if ((was.includes(blank) || c.replacement.includes(blank)) && (was.length !== c.replacement.length || was.some((v2, i) => v2 === blank !== (c.replacement[i] === blank)))) return unsafe("editing blank paragraph spacing");
+  }
+  const before = oldLayout.filter((l) => l !== blank), after = newLayout.filter((l) => l !== blank);
+  let offset = 0;
+  const changes = docChanges(before, after).map((c) => {
+    const next = c.start + offset;
+    offset += c.replacement.length - (c.end - c.start);
+    return { ...c, next };
+  });
+  const body2 = tab.documentTab.body.content, last = body2.at(-1), tabId = tab.tabProperties.tabId;
+  const range = (startIndex, endIndex) => ({ startIndex, endIndex, tabId });
+  const location = (index) => ({ index, tabId });
+  const requests = [];
+  const named = Object.values(tab.documentTab.namedRanges ?? {}).flatMap((n) => n.namedRanges?.flatMap((n2) => n2.ranges) ?? []);
+  const protectedRanges = [...named, ...comments];
+  const guardText = (start, end) => {
+    if (protectedRanges.some((r) => start === end ? start >= r.startIndex && start <= r.endIndex : start < r.endIndex && end > r.startIndex)) return unsafe("edit overlaps a named range or anchored comment");
+  };
+  function matches(e, block) {
+    const p = e.paragraph;
+    return p && p.elements.every((run) => run.textRun) && p.elements.map((run) => run.textRun.content).join("") === block.text + "\n" && (p.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT") === block.heading && (p.bullet ? p.bullet.nestingLevel ?? 0 : null) === block.level;
+  }
+  let ordered;
+  function byPosition(i) {
+    if (!ordered) {
+      if (!allowDuplicatePosition || changes.some((c) => c.end - c.start !== 1 || c.replacement.length !== 1 || before.includes(c.replacement[0]))) return unsafe("duplicate paragraph identity is ambiguous");
+      ordered = body2.filter((e, n) => {
+        if (!e.paragraph) {
+          if (n === 0 && "sectionBreak" in e) return false;
+          return unsafe("opaque native content makes duplicate paragraph identity ambiguous");
+        }
+        return !e.paragraph.elements.every((r) => r.textRun) || e.paragraph.elements.map((r) => r.textRun.content).join("") !== "\n";
+      });
+      if (ordered.length !== before.length || !ordered.every((e, n) => {
+        let b2;
+        try {
+          b2 = paragraph(before[n]);
+        } catch {
+          return false;
+        }
+        if (!matches(e, b2)) return false;
+        const bullet = e.paragraph.bullet;
+        if (!bullet) return true;
+        const level = tab.documentTab.lists?.[bullet.listId]?.listProperties.nestingLevels[bullet.nestingLevel ?? 0];
+        return !!level && !!level.glyphType === b2.numbered;
+      })) return unsafe("duplicate paragraphs do not align with the entire native tab");
+    }
+    return ordered[i];
+  }
+  const locate = (i) => {
+    const block = paragraph(before[i]);
+    const candidates = body2.filter((e2) => matches(e2, block));
+    if (!candidates.length) return unsafe("paragraph is missing");
+    const e = candidates.length === 1 ? candidates[0] : byPosition(i);
+    if (!Number.isInteger(e.startIndex) || e.endIndex - e.startIndex !== block.text.length + 1) return unsafe("unrecognized paragraph range");
+    return { block, e, start: e.startIndex, end: e.endIndex };
+  };
+  const style = (block, start, reset2) => {
+    if (reset2) requests.push({ updateTextStyle: { range: range(start, start + block.text.length), textStyle: block.heading === "NORMAL_TEXT" ? {} : { bold: false, italic: false, strikethrough: false }, fields: "bold,italic,strikethrough,link" } });
+    for (const s of block.spans) requests.push({ updateTextStyle: { range: range(start + s.from, start + s.to), textStyle: s.style, fields: Object.keys(s.style).join(",") } });
+  };
+  const setParagraph = (block, start, hasBullet, structure, priorLevel, headingChanged) => {
+    if (!structure) return;
+    const part = range(start, start + 1);
+    if (hasBullet) requests.push({ deleteParagraphBullets: { range: part } });
+    if (headingChanged || hasBullet) requests.push({ updateParagraphStyle: { range: part, paragraphStyle: headingChanged ? { namedStyleType: block.heading } : {}, fields: headingChanged ? "namedStyleType,indentStart,indentFirstLine" : "indentStart,indentFirstLine" } });
+    if (block.level !== null) {
+      const relative3 = block.level - priorLevel;
+      if (relative3 < 0) return unsafe("outdent would split the preceding native list");
+      const prefix = relative3 ? "x\n" + "	".repeat(relative3) : "";
+      if (prefix) requests.push({ insertText: { location: location(start), text: prefix } });
+      requests.push({ createParagraphBullets: { range: range(start, start + prefix.length + 1), bulletPreset: block.numbered ? "NUMBERED_DECIMAL_ALPHA_ROMAN" : "BULLET_DISC_CIRCLE_SQUARE" } });
+      if (prefix) requests.push({ deleteContentRange: { range: range(start, start + 2) } });
+    }
+  };
+  const precedingLevel = (at, b2) => {
+    const para = body2.find((e) => e.endIndex === at)?.paragraph;
+    const bullet = para?.bullet;
+    if (!bullet || b2.level === null) return 0;
+    const levels = tab.documentTab.lists?.[bullet.listId]?.listProperties.nestingLevels;
+    if (!levels?.length) return unsafe("cannot determine previous list format");
+    if (!!levels[0]?.glyphType !== b2.numbered) return 0;
+    return bullet.nestingLevel ?? 0;
+  };
+  function editable(target, destructive) {
+    const p = target.e.paragraph;
+    if (JSON.stringify(p).includes('"suggested') || p["positionedObjectIds"] || p["pageBreakBefore"] || destructive && p.paragraphStyle?.headingId) return unsafe("paragraph has a named range, suggestion, object or heading anchor");
+  }
+  for (const c of [...changes].reverse()) {
+    const old = before.slice(c.start, c.end).map((_line, i) => locate(c.start + i));
+    const added = c.replacement.map(paragraph);
+    for (const [i, b2] of added.entries()) {
+      if (b2.level === null || b2.level === 0 || old.length === added.length && old[i]?.block.level === b2.level && old[i]?.block.numbered === b2.numbered) continue;
+      const prior = after[c.next + i - 1];
+      const p = prior ? paragraph(prior) : null;
+      if (p?.level == null || p.numbered !== b2.numbered || b2.level > p.level + 1) return unsafe("nested item needs a matching parent list level");
+    }
+    if (old.length === 1 && added.length === 1) {
+      const o = old[0], b2 = added[0];
+      editable(o, false);
+      const structure = b2.heading !== o.block.heading || b2.level !== o.block.level || b2.numbered !== o.block.numbered;
+      const from = characters(o.block), to = characters(b2), keep = characterMatches(from, to);
+      let ai = 0, bi = 0;
+      const edits = [];
+      const previous2 = /* @__PURE__ */ new Map();
+      for (const [i, j2] of keep) {
+        const at2 = o.start + (from[ai]?.pos ?? o.block.text.length);
+        const removed = (from[i]?.pos ?? o.block.text.length) - (at2 - o.start);
+        const added2 = b2.text.slice(to[bi]?.pos ?? b2.text.length, to[j2]?.pos ?? b2.text.length);
+        if (removed || added2) {
+          if (removed) guardText(at2, at2 + removed);
+          if (added2) guardText(at2, at2);
+          edits.push([
+            ...added2 ? [{ insertText: { location: location(at2), text: added2 } }] : [],
+            ...removed ? [{ deleteContentRange: { range: range(at2 + added2.length, at2 + added2.length + removed) } }] : []
+          ]);
+        }
+        if (i < from.length) previous2.set(j2, from[i].style);
+        ai = i + 1;
+        bi = j2 + 1;
+      }
+      for (const edit of edits.reverse()) requests.push(...edit);
+      const headingChanged = b2.heading !== o.block.heading;
+      if (headingChanged && o.e.paragraph.paragraphStyle?.headingId) return unsafe("changing a linked heading");
+      if (headingChanged && o.e.paragraph.elements.some((el) => Object.keys(el.textRun?.textStyle ?? {}).some((k2) => !["bold", "italic", "strikethrough", "link"].includes(k2)))) return unsafe("heading change would reset extra text styling");
+      if (structure) guardText(o.start, o.end);
+      setParagraph(b2, o.start, !!o.e.paragraph.bullet, structure, structure ? precedingLevel(o.start, b2) : 0, headingChanged);
+      let pending;
+      const flush = () => {
+        if (pending) requests.push({ updateTextStyle: { range: range(o.start + pending.start, o.start + pending.end), textStyle: pending.style, fields: pending.fields } });
+        pending = void 0;
+      };
+      for (let j2 = 0; j2 < to.length; j2++) {
+        const c2 = to[j2], prior = previous2.get(j2);
+        const fields = ["bold", "italic", "strikethrough", "link"].filter((k2) => !prior || headingChanged || JSON.stringify(prior[k2]) !== JSON.stringify(c2.style[k2]));
+        if (!fields.length) {
+          flush();
+          continue;
+        }
+        const s = Object.fromEntries(fields.filter((k2) => c2.style[k2] !== void 0 || k2 !== "link" && b2.heading !== "NORMAL_TEXT").map((k2) => [k2, c2.style[k2] ?? false]));
+        const mask = fields.join(",");
+        if (pending && pending.fields === mask && JSON.stringify(pending.style) === JSON.stringify(s)) pending.end = c2.pos + c2.text.length;
+        else {
+          flush();
+          pending = { start: c2.pos, end: c2.pos + c2.text.length, fields: mask, style: s };
+        }
+      }
+      flush();
+      continue;
+    }
+    if (old.length && added.length) return unsafe("cannot replace a range of different-sized paragraph groups");
+    if (old.length) {
+      for (const o of old) editable(o, true);
+      if (old.some((o, i) => i && old[i - 1].end !== o.start)) return unsafe("native content between deleted paragraphs");
+      let a = old[0].start, z2 = old.at(-1).end;
+      if (z2 === last?.endIndex) {
+        if (a === 1) return unsafe("deleting the entire document");
+        const preceding = body2.find((e) => e.endIndex === a);
+        if (!preceding?.paragraph) return unsafe("cannot delete the last paragraph after a native object");
+        a--;
+        z2--;
+      }
+      guardText(a, z2);
+      requests.push({ deleteContentRange: { range: range(a, z2) } });
+      continue;
+    }
+    const right = c.start < before.length ? locate(c.start) : void 0;
+    const left = c.start > 0 ? locate(c.start - 1) : void 0;
+    if (left && right && left.end !== right.start) return unsafe("native content between insertion anchors");
+    const append = !right && !!left;
+    if (append && left.end !== last?.endIndex || !left && right && right.start !== 1) return unsafe("native content beyond insertion anchor");
+    if (!right && !left && !(last?.startIndex === 1 && last?.paragraph?.elements[0]?.textRun?.content === "\n")) return unsafe("no native insertion anchor");
+    const neighbor = right ?? left;
+    if (neighbor) {
+      editable(neighbor, false);
+      if (right?.e.paragraph?.paragraphStyle?.headingId) return unsafe("splitting a heading may move its anchor");
+    }
+    const at = right?.start ?? (left ? left.end - 1 : 1);
+    guardText(at, at);
+    const text3 = added.map((b2) => b2.text).join("\n");
+    requests.push({ insertText: { location: location(at), text: append ? "\n" + text3 : right ? text3 + "\n" : text3 } });
+    let pos = at + Number(append);
+    let previousAdded;
+    for (const b2 of added) {
+      const preceding = previousAdded ? previousAdded.numbered === b2.numbered ? previousAdded.level ?? 0 : 0 : precedingLevel(append ? left.end : pos, b2);
+      setParagraph(b2, pos, !!neighbor?.e.paragraph?.bullet, true, preceding, (neighbor?.block.heading ?? "NORMAL_TEXT") !== b2.heading);
+      previousAdded = b2;
+      style(b2, pos, true);
+      pos += b2.text.length + 1;
+    }
+  }
+  return requests;
+}
+async function anchoredComments(runtime2, id, headers, tab, tabs) {
+  const found = [], pages = /* @__PURE__ */ new Set();
+  const locate = (t, quote2) => {
+    const ranges = [];
+    let content = "", first = 0;
+    function scan() {
+      for (let i = content.indexOf(quote2); i !== -1; i = content.indexOf(quote2, i + 1)) ranges.push({ startIndex: first + i, endIndex: first + i + quote2.length });
+      content = "";
+    }
+    for (const row of t.documentTab.body.content) {
+      if (!row.paragraph) {
+        scan();
+        continue;
+      }
+      for (const el of row.paragraph.elements) {
+        const s = el.textRun?.content, start = Number(el["startIndex"] ?? row.startIndex);
+        if (!s) {
+          scan();
+          continue;
+        }
+        if (content && first + content.length !== start) scan();
+        if (!content) first = start;
+        content += s;
+      }
+    }
+    scan();
+    return ranges;
+  };
+  let cursor = "";
+  do {
+    const query = new URLSearchParams({ fields: "nextPageToken,comments(anchor,quotedFileContent)", pageSize: "100", ...cursor && { pageToken: cursor } });
+    const res = await googleRead(runtime2, "https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(id) + "/comments?" + query, { headers, redirect: "error" });
+    if (!res.ok) throw new Error("Google Drive comment check failed: HTTP " + res.status + ". Block uploads require permission to read document comments.");
+    const data = await res.json();
+    if (!Array.isArray(data.comments)) return unsafe("incomplete comment metadata");
+    for (const c of data.comments) {
+      if (!c.anchor && !c.quotedFileContent) continue;
+      const quote2 = c.quotedFileContent?.value;
+      const mime = c.quotedFileContent?.mimeType;
+      if (!quote2 || mime && mime !== "text/plain" && !(mime === "text/html" && !/[<&]/.test(quote2))) return unsafe("comment has no mappable quoted text");
+      const matches = locate(tab, quote2);
+      if (!matches.length && !tabs.some((t) => t !== tab && locate(t, quote2).length)) return unsafe("cannot locate an anchored comment");
+      found.push(...matches);
+    }
+    cursor = data.nextPageToken ?? "";
+    if (cursor && pages.has(cursor)) return unsafe("repeated comment page token");
+    pages.add(cursor);
+  } while (cursor);
+  return found;
+}
+async function tryUploadDocBlocks(runtime2, documentId, key2, tabId, remoteMarkdown, desiredMarkdown, confirmRemote, wroteRevision, positionRevision) {
+  const token = (await nativeDocsGrant(runtime2))?.token;
+  if (!token) return false;
+  const url = "https://docs.googleapis.com/v1/documents/" + encodeURIComponent(documentId);
+  const headers = { authorization: "Bearer " + token, ...key2 && { "X-Goog-Drive-Resource-Keys": documentId + "/" + key2 } };
+  const response = await googleRead(runtime2, url + "?includeTabsContent=true&suggestionsViewMode=SUGGESTIONS_INLINE", { headers, redirect: "error" });
+  if (!response.ok) throw new Error("Google Docs block read failed: HTTP " + response.status);
+  const data = await response.json();
+  if (data.documentId !== documentId || !data.revisionId) return unsafe("missing document identity or revision");
+  const tabs = [];
+  function visit(items2) {
+    for (const t of items2) {
+      tabs.push(t);
+      visit(t.childTabs ?? []);
+    }
+  }
+  visit(data.tabs ?? []);
+  if (!tabId && tabs.length > 1) return unsafe("this document has multiple tabs; sync the URL with an explicit tab ID");
+  const tab = tabId ? tabs.find((t) => t.tabProperties.tabId === tabId) : tabs[0];
+  if (!tab?.documentTab?.body?.content) return unsafe("missing target tab");
+  const comments = await anchoredComments(runtime2, documentId, headers, tab, tabs);
+  const requests = plan(tab, remoteMarkdown, desiredMarkdown, comments, positionRevision === data.revisionId);
+  if (await confirmRemote(data.revisionId) !== remoteMarkdown) throw new Error("Google Docs changed before writing; sync again.");
+  if (!requests.length) return true;
+  const update = await runtime2.http.request(url + ":batchUpdate", { method: "POST", headers: { ...headers, "content-type": "application/json" }, redirect: "error", body: JSON.stringify({ writeControl: { requiredRevisionId: data.revisionId }, requests }) });
+  if (!update.ok) throw new Error("Google Docs block update failed: HTTP " + update.status + ". Sync again to check the current revision.");
+  if (wroteRevision) {
+    const ack = await update.json();
+    if (typeof ack.writeControl?.requiredRevisionId === "string") wroteRevision(ack.writeControl.requiredRevisionId);
+  }
+  return true;
+}
+
 // ../provider-google-docs/src/google-docs.ts
 var import_node_zlib = require("node:zlib");
 async function cookieHeader2(runtime2) {
@@ -18268,20 +18913,45 @@ function filenameTitle(value, label) {
   const filename = encoded !== null ? decodeURIComponent(encoded[1]) : quoted !== null ? quoted[1] : bare[1].trim();
   return filename.replace(/\.(csv|html|md|pptx|txt|xlsx)$/i, "");
 }
-async function googleExport(runtime2, url, label) {
-  const response = await runtime2.http.request(url, { headers: { Cookie: await cookieHeader2(runtime2) } });
-  if (response.status === 401 || response.status === 403) throw cookieAuthenticationError();
+async function docExportRequest(runtime2, url, token) {
+  if (token === null) {
+    const init = { headers: { Cookie: await cookieHeader2(runtime2) } };
+    return url.startsWith("https://docs.google.com/document/") ? googleRead(runtime2, url, init) : runtime2.http.request(url, init);
+  }
+  const first = await googleRead(runtime2, url, { headers: { Authorization: "Bearer " + token }, redirect: "manual" });
+  if (first.status < 300 || first.status >= 400) return first;
+  const location = first.headers.get("location");
+  if (!location) throw new Error("Google Docs export did not include a download URL");
+  const target = new URL(location);
+  if (target.protocol !== "https:" || !target.hostname.endsWith(".googleusercontent.com") || target.username || target.password || target.port) throw new Error("Google Docs export returned an unexpected download URL");
+  return googleRead(runtime2, target, { redirect: "error" });
+}
+async function googleExport(runtime2, url, label, token = null) {
+  const response = await docExportRequest(runtime2, url, token);
+  if (response.status === 401 || response.status === 403) {
+    if (token !== null) throw new Error(`Google ${label} failed: OAuth access denied (HTTP ${response.status})`);
+    throw cookieAuthenticationError();
+  }
   if (!response.ok) throw new Error(`Google ${label} failed: HTTP ${response.status}`);
   const disposition = response.headers.get("content-disposition");
-  if (disposition === null) throw cookieAuthenticationError();
+  if (disposition === null) {
+    if (token !== null) throw new Error(`Google ${label} did not include a filename`);
+    throw cookieAuthenticationError();
+  }
   return Object.freeze({ title: filenameTitle(disposition, label), text: await response.text() });
 }
-async function googleExportBytes(runtime2, url, label) {
-  const response = await runtime2.http.request(url, { headers: { Cookie: await cookieHeader2(runtime2) } });
-  if (response.status === 401 || response.status === 403) throw cookieAuthenticationError();
+async function googleExportBytes(runtime2, url, label, token = null) {
+  const response = await docExportRequest(runtime2, url, token);
+  if (response.status === 401 || response.status === 403) {
+    if (token !== null) throw new Error(`Google ${label} failed: OAuth access denied (HTTP ${response.status})`);
+    throw cookieAuthenticationError();
+  }
   if (!response.ok) throw new Error(`Google ${label} failed: HTTP ${response.status}`);
   const disposition = response.headers.get("content-disposition");
-  if (disposition === null) throw cookieAuthenticationError();
+  if (disposition === null) {
+    if (token !== null) throw new Error(`Google ${label} did not include a filename`);
+    throw cookieAuthenticationError();
+  }
   return Object.freeze({ title: filenameTitle(disposition, label), bytes: new Uint8Array(await response.arrayBuffer()) });
 }
 async function googleText(runtime2, url, label) {
@@ -18432,12 +19102,6 @@ function sheetEditUrl(documentId, gid2, key2) {
   if (key2 !== null) url.searchParams.set("resourcekey", key2);
   return url.toString();
 }
-function docEditUrl(documentId, key2, tab) {
-  const url = new URL(`https://docs.google.com/document/d/${encodeURIComponent(documentId)}/edit`);
-  url.searchParams.set("tab", tab);
-  if (key2 !== null) url.searchParams.set("resourcekey", key2);
-  return url.toString();
-}
 function documentTab(source) {
   const tab = source["document_tab"];
   return typeof tab === "string" && tab !== "" ? tab : null;
@@ -18549,7 +19213,7 @@ function zipEndOfCentralDirectory(bytes) {
   for (let index = bytes.length - 22; index >= Math.max(0, bytes.length - 65557); index -= 1) {
     if (bytes[index] === 80 && bytes[index + 1] === 75 && bytes[index + 2] === 5 && bytes[index + 3] === 6) return index;
   }
-  throw new Error("PPTX ZIP missing central directory");
+  throw new Error("Google export ZIP missing central directory");
 }
 function unzipFiles(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -18559,7 +19223,7 @@ function unzipFiles(bytes) {
   const files = /* @__PURE__ */ new Map();
   const decoder = new TextDecoder();
   for (let entryIndex = 0; entryIndex < totalEntries; entryIndex += 1) {
-    if (view.getUint32(centralOffset, true) !== 33639248) throw new Error("PPTX ZIP central directory entry is invalid");
+    if (view.getUint32(centralOffset, true) !== 33639248) throw new Error("Google export ZIP central directory entry is invalid");
     const method = view.getUint16(centralOffset + 10, true);
     const compressedSize = view.getUint32(centralOffset + 20, true);
     const nameLength = view.getUint16(centralOffset + 28, true);
@@ -18567,14 +19231,14 @@ function unzipFiles(bytes) {
     const commentLength = view.getUint16(centralOffset + 32, true);
     const localOffset = view.getUint32(centralOffset + 42, true);
     const name = decoder.decode(bytes.subarray(centralOffset + 46, centralOffset + 46 + nameLength));
-    if (view.getUint32(localOffset, true) !== 67324752) throw new Error("PPTX ZIP local file entry is invalid");
+    if (view.getUint32(localOffset, true) !== 67324752) throw new Error("Google export ZIP local file entry is invalid");
     const localNameLength = view.getUint16(localOffset + 26, true);
     const localExtraLength = view.getUint16(localOffset + 28, true);
     const dataStart = localOffset + 30 + localNameLength + localExtraLength;
     const compressed = bytes.subarray(dataStart, dataStart + compressedSize);
     if (method === 0) files.set(name, compressed);
     else if (method === 8) files.set(name, (0, import_node_zlib.inflateRawSync)(compressed));
-    else throw new Error(`PPTX ZIP compression method is unsupported: ${method}`);
+    else throw new Error(`Google export ZIP compression method is unsupported: ${method}`);
     centralOffset += 46 + nameLength + extraLength + commentLength;
   }
   return files;
@@ -18648,25 +19312,25 @@ function formattedRunMarkdown(run, relationships) {
   }
   return markdown;
 }
-function paragraphMarkdown(paragraph, relationships) {
-  const pPr = xmlChildren(paragraph, "a:pPr")[0];
+function paragraphMarkdown(paragraph2, relationships) {
+  const pPr = xmlChildren(paragraph2, "a:pPr")[0];
   const list = pPr === void 0 || xmlChildren(pPr, "a:buNone").length !== 0 ? null : xmlChildren(pPr, "a:buAutoNum").length !== 0 ? "number" : xmlChildren(pPr, "a:buChar").length !== 0 ? "bullet" : null;
   const levelValue = pPr === void 0 ? void 0 : pPr.attributes.get("lvl");
   const level = levelValue === void 0 ? 0 : Number(levelValue);
   const pieces = [];
-  for (const child of paragraph.children.filter(isXmlNode)) {
+  for (const child of paragraph2.children.filter(isXmlNode)) {
     if (child.name === "a:br") pieces.push("\n");
     if (child.name === "a:r" || child.name === "a:fld") pieces.push(formattedRunMarkdown(child, relationships));
   }
   return Object.freeze({ text: pieces.join("").replace(/[ \t]+$/gm, ""), list, level });
 }
 function slideMarkdown(slide, relationships) {
-  const paragraphs = xmlDescendants(slide, "a:p").map((paragraph) => paragraphMarkdown(paragraph, relationships)).filter((paragraph) => paragraph.text.trim() !== "");
-  const lines = paragraphs.map((paragraph, index) => {
-    if (index === 0 && paragraph.list === null) return `## ${paragraph.text.trim()}`;
-    if (paragraph.list === "bullet") return `${"  ".repeat(paragraph.level)}- ${paragraph.text.trim()}`;
-    if (paragraph.list === "number") return `${"  ".repeat(paragraph.level)}1. ${paragraph.text.trim()}`;
-    return paragraph.text.trim();
+  const paragraphs = xmlDescendants(slide, "a:p").map((paragraph2) => paragraphMarkdown(paragraph2, relationships)).filter((paragraph2) => paragraph2.text.trim() !== "");
+  const lines = paragraphs.map((paragraph2, index) => {
+    if (index === 0 && paragraph2.list === null) return `## ${paragraph2.text.trim()}`;
+    if (paragraph2.list === "bullet") return `${"  ".repeat(paragraph2.level)}- ${paragraph2.text.trim()}`;
+    if (paragraph2.list === "number") return `${"  ".repeat(paragraph2.level)}1. ${paragraph2.text.trim()}`;
+    return paragraph2.text.trim();
   });
   return lines.join("\n").replace(/\n{3,}/g, "\n\n");
 }
@@ -18733,25 +19397,6 @@ async function uploadSheetRows(runtime2, documentId, gid2, key2, cells) {
   const result = saveResult(text3, "Sheets");
   if (result["revisionRanges"] === void 0) throw new Error("Google Sheets save failed: missing revision ranges");
 }
-function docSession(html) {
-  const tokenMatch = /"info_params":\{"token":"([^"]+)"/.exec(html);
-  if (tokenMatch === null) throw cookieAuthenticationError();
-  const token = tokenMatch[1];
-  const ouidMatch = /"ouid":"([^"]+)"/.exec(html);
-  const revisionMatch = /DOCS_warmStartDocumentLoader\.startLoad\(\s*([0-9.]+)/.exec(html);
-  if (ouidMatch === null || revisionMatch === null) throw new Error("Google Docs editor did not include save metadata");
-  const ouid = ouidMatch[1];
-  const revision = Number(revisionMatch[1]);
-  const chunks = [];
-  const pattern = /DOCS_modelChunk = (\{[\s\S]*?\}); DOCS_modelChunkLoadStart/g;
-  let match = pattern.exec(html);
-  while (match !== null) {
-    const chunk = JSON.parse(match[1]);
-    for (const command of chunk.chunk) if (command["ty"] === "is") chunks.push(command["s"]);
-    match = pattern.exec(html);
-  }
-  return Object.freeze({ token, ouid, revision, text: chunks.join("") });
-}
 function markdownDocTable(value) {
   const lines = value.trimEnd().split(/\r?\n/);
   const separator = lines.findIndex((line) => markdownTableRow(line).every((cell) => /^:?-{3,}:?$/.test(cell)));
@@ -18771,190 +19416,100 @@ function markdownCombinedEmphasis(value) {
 function markdownText(value) {
   return markdownEntities(markdownHtmlTags(markdownCombinedEmphasis(value.replace(/[ \t]{2,}(?=\r?\n|$)/g, "").replace(/(?:^[ \t]*\|.*\|[ \t]*(?:\r?\n|$)){2,}/gm, markdownDocTable).replace(/^```[^\n]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gm, "$1").replace(/^[ \t]*!\[[^\]\n]*\]\([^)]+\)[ \t]*(?:\r?\n)?/gm, "").replace(/^[ \t]{0,3}\[[^\]\n]+\]:[ \t]+[^\n]*(?:\r?\n)?/gm, "").replace(/^[ \t]{0,3}(?:-{3,}|\*{3,}|_{3,})[ \t]*(?:\r?\n)*/gm, "").replace(/[ \t]*!\[[^\]\n]*\]\([^)]+\)[ \t]*/g, " ").replace(/[ \t]*!\[[^\]\n]*\]\[[^\]\n]*\][ \t]*/g, " ").replace(/\\([\\`*_{}\[\]()#+\-.!|=~])/g, "$1").replace(/^[ \t]*>+[ \t]?/gm, "").replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+/gm, "").replace(/^\[(?: |x|X)\][ \t]+/gm, "").replace(/`([^`\n]+)`/g, "$1").replace(/~~([^~\n]+)~~/g, "$1").replace(/\*\*([^*\n]+)\*\*/g, "$1").replace(/\*([^*\n]+)\*/g, "$1").replace(/(^|[^\w])__([^_\n]+?)__(?=[^\w]|$)/g, "$1$2").replace(/(^|[^\w])_([^_\n]+?)_(?=[^\w]|$)/g, "$1$2").replace(/^#+ /gm, "").replace(/<((?:https?|mailto):[^>\s]+)>/g, "$1").replace(/\[([^\]\n]+)\]\[[^\]\n]*\]/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1"))));
 }
-function comparableDocMarkdown(value) {
-  return markdownEntities(markdownHtmlTags(markdownCombinedEmphasis(value.replace(/[ \t]{2,}(?=\r?\n|$)/g, "").replace(/\\([\\`*_{}\[\]()#+\-.!|=~])/g, "$1").replace(/\s+$/g, ""))));
+async function googleDocListMarkdown(markdown, wordExport) {
+  if (!/^> (?:\*|\d+\.) /m.test(markdown)) return markdown;
+  const doc = parseXml(zipText(unzipFiles(await wordExport()), "word/document.xml"));
+  const outer = /* @__PURE__ */ new Set(), other = /* @__PURE__ */ new Set();
+  const key2 = (s) => s.replace(/\s+/g, " ").trim();
+  for (const p of xmlDescendants(doc, "w:p")) {
+    const props = xmlChildren(p, "w:pPr")[0];
+    const numbering = props && xmlChildren(props, "w:numPr")[0];
+    const level = numbering && xmlChildren(numbering, "w:ilvl")[0]?.attributes.get("w:val");
+    const style = props && xmlChildren(props, "w:pStyle")[0]?.attributes.get("w:val");
+    const text3 = key2(xmlDescendants(p, "w:t").map(xmlText).join(""));
+    (level === "0" && !/quote/i.test(style ?? "") ? outer : other).add(text3);
+  }
+  let fence = "";
+  return markdown.split("\n").map((line) => {
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (marker) {
+      if (!fence) fence = marker[1];
+      else if (marker[1].startsWith(fence) && !marker[2].trim()) fence = "";
+      return line;
+    }
+    if (fence || !/^> (?:\*|\d+\.) /.test(line)) return line;
+    const text3 = key2(markdownText(line));
+    return text3 && outer.has(text3) && !other.has(text3) ? line.slice(2) : line;
+  }).join("\n");
 }
-function docMarkdownEqual(left, right) {
-  return comparableDocMarkdown(left) === comparableDocMarkdown(right);
-}
-function textEdit(base, local) {
-  let start = 0;
-  while (start < base.length && start < local.length && base[start] === local[start]) start += 1;
-  for (let window2 = 80; window2 >= 10; window2 -= 10) {
-    for (let baseEnd2 = start; baseEnd2 <= Math.min(base.length - window2, start + 2e3); baseEnd2 += 1) {
-      const anchor = base.slice(baseEnd2, baseEnd2 + window2);
-      const localEnd2 = local.indexOf(anchor, start);
-      if (localEnd2 !== -1 && localEnd2 <= start + 2e3) return Object.freeze({ base: base.slice(start, baseEnd2), local: local.slice(start, localEnd2), before: base.slice(0, start), localBefore: "", after: base.slice(baseEnd2), localAfter: local.slice(localEnd2) });
+async function fetchGoogleDocument(runtime2, source, previous) {
+  const id = source["document_id"] ?? source.identifier;
+  const key2 = resourceKey(source);
+  const gid2 = source["sheet_gid"];
+  const tab = documentTab(source);
+  const query = new URLSearchParams();
+  if (gid2 !== void 0 || source.type === "presentation") {
+    const slide = source.type === "presentation";
+    query.set("format", slide ? "pptx" : "csv");
+    if (gid2 != null) query.set("gid", gid2);
+    if (key2) query.set("resourcekey", key2);
+    const url = `https://docs.google.com/${slide ? "presentation" : "spreadsheets"}/d/${encodeURIComponent(id)}/export?${query}`;
+    if (slide) {
+      const { bytes, title: title4 } = await googleExportBytes(runtime2, url, "Slides PPTX export");
+      const markdown3 = slidesMarkdown(bytes);
+      return { title: title4, markdown: markdown3, data: { document_id: id, title: title4, output_path: null, sheet_gid: null, markdown: markdown3, rows: null, presentation: true } };
+    }
+    const { text: text3, title: title3 } = await googleExport(runtime2, url, "Sheets CSV export");
+    const rows = parseCsv(text3), markdown2 = sheetMarkdown(rows);
+    return { title: title3, markdown: markdown2, data: { document_id: id, title: title3, output_path: null, sheet_gid: gid2 ?? null, markdown: markdown2, rows } };
+  }
+  const grant = await nativeDocsGrant(runtime2, true);
+  const read = async (url) => {
+    const response = await googleRead(runtime2, url, { headers: { Authorization: "Bearer " + grant.token, ...key2 && { "X-Goog-Drive-Resource-Keys": id + "/" + key2 } }, redirect: "error" });
+    if (!response.ok) throw new Error("Google Docs export failed: HTTP " + response.status);
+    return response;
+  };
+  let readRevision, docTitle;
+  if (grant && (previous !== void 0 || grant.canWrite)) {
+    const url = "https://docs.googleapis.com/v1/documents/" + encodeURIComponent(id) + "?fields=documentId,title,revisionId";
+    const meta = await (await read(url)).json();
+    if (meta.documentId !== id || typeof meta.title !== "string") throw new Error("Google Docs export returned unexpected document metadata");
+    readRevision = meta.revisionId;
+    docTitle = meta.title;
+    const snapshot = previous === void 0 ? {} : objectValue(previous);
+    if (readRevision && snapshot["verified_revision"] === readRevision && snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && typeof snapshot["markdown"] === "string") {
+      return { title: docTitle, markdown: snapshot["markdown"], readRevision, data: { ...snapshot, title: docTitle } };
     }
   }
-  let baseEnd = base.length;
-  let localEnd = local.length;
-  while (baseEnd > start && localEnd > start && base[baseEnd - 1] === local[localEnd - 1]) {
-    baseEnd -= 1;
-    localEnd -= 1;
-  }
-  return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), localBefore: "", after: base.slice(baseEnd), localAfter: local.slice(localEnd) });
-}
-function textEdits(base, local) {
-  const edits = [];
-  let basePrefix = "";
-  let localPrefix = "";
-  let baseRest = base;
-  let localRest = local;
-  while (baseRest !== localRest) {
-    const edit = textEdit(baseRest, localRest);
-    const before = `${basePrefix}${edit.before}`;
-    const localBefore = `${localPrefix}${edit.before}`;
-    edits.push(Object.freeze({ ...edit, before, localBefore }));
-    basePrefix = base.slice(0, base.length - edit.after.length);
-    localPrefix = local.slice(0, local.length - edit.localAfter.length);
-    baseRest = edit.after;
-    localRest = edit.localAfter;
-  }
-  return edits;
-}
-function inlineMarkdownSpans(value) {
-  const spans = [];
-  for (const pattern of [/\[[^\]\n]+\]\([^)]+\)/g, /!\[[^\]\n]*\]\([^)]+\)/g, /`[^`\n]+`/g, /~~[^~\n]+~~/g, /\*\*[^*\n]+\*\*/g, /\*[^*\n]+\*/g, /(^|[^\w])__[^_\n]+__(?=[^\w]|$)/g, /(^|[^\w])_[^_\n]+_(?=[^\w]|$)/g, /<((?:https?|mailto):[^>\s]+)>/g, /<\/?(?:u|sup|sub|mark|span)(?:\s+[^>]*)?>/gi]) {
-    let match = pattern.exec(value);
-    while (match !== null) {
-      spans.push(Object.freeze({ start: match.index, end: match.index + match[0].length }));
-      match = pattern.exec(value);
+  let title2, markdown;
+  if (grant?.driveExport && tab === null) {
+    const url = "https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(id);
+    if (docTitle !== void 0) title2 = docTitle;
+    else {
+      const meta = await (await read(url + "?fields=id,name&supportsAllDrives=true")).json();
+      if (meta.id !== id || typeof meta.name !== "string") throw new Error("Google Docs export returned unexpected Drive file metadata");
+      title2 = meta.name;
     }
-  }
-  return spans;
-}
-function editTouchesMarkdownSpan(before, value, edited) {
-  const start = before.length;
-  const end = start + edited.length;
-  return inlineMarkdownSpans(value).some((span) => start === end ? start > span.start && start < span.end : start < span.end && end > span.start);
-}
-function context(value, side, length) {
-  return side === "before" ? value.slice(Math.max(0, value.length - length)) : value.slice(0, length);
-}
-function followingWhitespaceEnd(text3, index) {
-  let end = index;
-  while (end < text3.length && /\s/.test(text3[end])) end += 1;
-  return end;
-}
-function docTextRange(text3, edit) {
-  const base = markdownText(edit.base);
-  const beforeText = markdownText(edit.before);
-  const afterText = markdownText(edit.after);
-  const candidates = [];
-  if (base === "") {
-    if (beforeText !== "") {
-      const anchor = context(beforeText, "before", Math.min(80, beforeText.length));
-      const trimmed = anchor.replace(/\s+$/g, "");
-      let index = 0;
-      for (; ; ) {
-        const found = text3.indexOf(anchor, index);
-        if (found === -1) break;
-        candidates.push(found + anchor.length);
-        index = found + 1;
-      }
-      if (trimmed !== anchor) {
-        index = 0;
-        for (; ; ) {
-          const found = text3.indexOf(trimmed, index);
-          if (found === -1) break;
-          candidates.push(followingWhitespaceEnd(text3, found + trimmed.length));
-          index = found + 1;
-        }
-      }
-    }
-    if (afterText === "") {
-      candidates.push(text3.length);
-    } else {
-      const anchor = context(afterText, "after", Math.min(80, afterText.length));
-      let index = 0;
-      for (; ; ) {
-        const found = text3.indexOf(anchor, index);
-        if (found === -1) break;
-        candidates.push(found);
-        index = found + 1;
-      }
-    }
+    const format = (mime) => read(url + "/export?" + new URLSearchParams({ mimeType: mime }));
+    const text3 = await (await format("text/markdown")).text();
+    markdown = await googleDocListMarkdown(text3, async () => new Uint8Array(await (await format("application/vnd.openxmlformats-officedocument.wordprocessingml.document")).arrayBuffer()));
   } else {
-    let index = 0;
-    for (; ; ) {
-      const found = text3.indexOf(base, index);
-      if (found === -1) break;
-      candidates.push(found);
-      index = found + 1;
-    }
+    query.set("format", "md");
+    if (key2) query.set("resourcekey", key2);
+    if (tab) query.set("tab", tab);
+    const url = `https://docs.google.com/document/d/${encodeURIComponent(id)}/export?${query}`;
+    const exp = await googleExport(runtime2, url, "Docs Markdown export", grant?.token ?? null);
+    title2 = exp.title;
+    markdown = await googleDocListMarkdown(exp.text, async () => {
+      const word = new URL(url);
+      word.searchParams.set("format", "docx");
+      return (await googleExportBytes(runtime2, word.toString(), "Docs Word export", grant?.token ?? null)).bytes;
+    });
   }
-  const uniqueCandidates = [...new Set(candidates)];
-  for (const length of [80, 40, 20, 10, 0]) {
-    const before = context(beforeText, "before", length);
-    const after = context(afterText, "after", length);
-    const matched = uniqueCandidates.filter((index) => text3.slice(Math.max(0, index - before.length), index) === before && text3.slice(index + base.length, index + base.length + after.length) === after);
-    if (matched.length === 1) return Object.freeze({ start: matched[0], end: matched[0] + base.length });
-  }
-  throw new Error("Google Docs local edit cannot be mapped to the live document text");
-}
-async function uploadDocText(runtime2, documentId, key2, tab, baseMarkdown, localMarkdown) {
-  const edits = textEdits(baseMarkdown, localMarkdown);
-  if (edits.some((edit) => editTouchesMarkdownSpan(edit.before, baseMarkdown, edit.base) || editTouchesMarkdownSpan(edit.localBefore, localMarkdown, edit.local))) throw new Error("Google Docs sync cannot preserve formatting in edited text");
-  const editUrl = docEditUrl(documentId, key2, tab);
-  const session = docSession(await googleText(runtime2, editUrl, "Docs editor"));
-  const ranges = edits.map((edit) => ({ edit, range: docTextRange(session.text, edit) })).sort((left, right) => right.range.start - left.range.start);
-  const sid = runtime2.clock.now().getTime().toString(16).padStart(16, "0").slice(-16);
-  const commands2 = ranges.flatMap(({ edit, range }) => [
-    ...range.start === range.end ? [] : [{ ty: "ds", si: range.start + 1, ei: range.end }],
-    ...edit.local === "" ? [] : [{ ty: "is", ibi: range.start + 1, s: markdownText(edit.local) }]
-  ]);
-  const params = new URLSearchParams({ id: documentId, sid, vc: "1", c: "1", w: "1", flr: "0", smv: "2147483647", smb: "[2147483647, AAE=]", token: session.token, ouid: session.ouid, includes_info_params: "true", cros_files: "false", nded: "false", tab });
-  const body2 = new URLSearchParams({ rev: String(session.revision), bundles: JSON.stringify([{ commands: commands2, sid, reqId: 0 }]) });
-  const response = await runtime2.http.request(`https://docs.google.com/document/d/${encodeURIComponent(documentId)}/save?${params}`, { method: "POST", headers: { Cookie: await cookieHeader2(runtime2), "content-type": "application/x-www-form-urlencoded;charset=UTF-8", origin: "https://docs.google.com", referer: editUrl }, body: body2.toString() });
-  if (response.status === 401 || response.status === 403) throw cookieAuthenticationError();
-  if (!response.ok) throw new Error(`Google Docs save failed: HTTP ${response.status}`);
-  const text3 = await response.text();
-  const result = saveResult(text3, "Docs");
-  if (result["revisionRanges"] === void 0) throw new Error("Google Docs save failed: missing revision ranges");
-}
-async function fetchGoogleDocument(runtime2, source) {
-  const documentId = source["document_id"] ?? source.identifier;
-  let sheetGid = null;
-  let exportUrl;
-  let label;
-  if (source["sheet_gid"] !== void 0) {
-    const gid2 = source["sheet_gid"];
-    const query = new URLSearchParams({ format: "csv" });
-    if (gid2 !== null) query.set("gid", gid2);
-    const key2 = resourceKey(source);
-    if (key2 !== null) query.set("resourcekey", key2);
-    exportUrl = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(documentId)}/export?${query}`;
-    label = "Sheets CSV export";
-    sheetGid = gid2;
-  } else if (source.type === "presentation") {
-    const query = new URLSearchParams({ format: "pptx" });
-    const key2 = resourceKey(source);
-    if (key2 !== null) query.set("resourcekey", key2);
-    exportUrl = `https://docs.google.com/presentation/d/${encodeURIComponent(documentId)}/export?${query}`;
-    label = "Slides PPTX export";
-  } else {
-    const query = new URLSearchParams({ format: "md" });
-    const key2 = resourceKey(source);
-    if (key2 !== null) query.set("resourcekey", key2);
-    const tab2 = documentTab(source);
-    if (tab2 !== null) query.set("tab", tab2);
-    exportUrl = `https://docs.google.com/document/d/${encodeURIComponent(documentId)}/export?${query}`;
-    label = "Docs Markdown export";
-  }
-  if (source.type === "presentation") {
-    const exported2 = await googleExportBytes(runtime2, exportUrl, label);
-    const markdown2 = slidesMarkdown(exported2.bytes);
-    return Object.freeze({ title: exported2.title, markdown: markdown2, data: { document_id: documentId, title: exported2.title, output_path: null, sheet_gid: sheetGid, markdown: markdown2, rows: null, presentation: true } });
-  }
-  const exported = await googleExport(runtime2, exportUrl, label);
-  const rows = source["sheet_gid"] === void 0 ? null : parseCsv(exported.text);
-  const markdown = rows === null ? exported.text : sheetMarkdown(rows);
-  const tab = source["sheet_gid"] === void 0 ? documentTab(source) : null;
-  return Object.freeze({ title: exported.title, markdown, data: { document_id: documentId, title: exported.title, output_path: null, sheet_gid: sheetGid, markdown, rows, ...tab === null ? {} : { document_tab: tab } } });
+  return { title: title2, markdown, ...readRevision ? { readRevision } : {}, data: { document_id: id, title: title2, output_path: null, sheet_gid: null, markdown, rows: null, ...readRevision ? { position_revision: readRevision } : {}, ...tab === null ? {} : { document_tab: tab } } };
 }
 async function synchronizeGoogleDocument(runtime2, _url, source, base, markdown) {
-  const remote = await fetchGoogleDocument(runtime2, source);
+  const remote = await fetchGoogleDocument(runtime2, source, base);
   if (source.type === "presentation") {
     const baseMarkdown2 = objectValue(base)["markdown"];
     if (typeof baseMarkdown2 !== "string") throw new Error("Google sync base must include markdown");
@@ -18965,7 +19520,7 @@ async function synchronizeGoogleDocument(runtime2, _url, source, base, markdown)
   const baseMarkdown = objectValue(base)["markdown"];
   const label = source["sheet_gid"] === void 0 ? "Google Docs" : "Google Sheets";
   if (typeof baseMarkdown !== "string") throw new Error("Google sync base must include markdown");
-  if (source["sheet_gid"] === void 0 && (docMarkdownEqual(markdown, baseMarkdown) || docMarkdownEqual(markdown, remote.markdown))) return remote;
+  if (source["sheet_gid"] === void 0 && (markdown.trimEnd() === baseMarkdown.trimEnd() || markdown.trimEnd() === remote.markdown.trimEnd())) return remote;
   if (source["sheet_gid"] !== void 0) {
     const baseObject = objectValue(base);
     if (baseObject["rows"] === void 0) {
@@ -18983,18 +19538,40 @@ async function synchronizeGoogleDocument(runtime2, _url, source, base, markdown)
     if (formula !== void 0) throw new Error(`Google Sheets sync cannot upload formula-like cell text at row ${formula.row + 1}, column ${formula.column + 1}
 Prefix it with an apostrophe or rewrite it as plain text before syncing.`);
     await uploadSheetRows(runtime2, source["document_id"] ?? source.identifier, source["sheet_gid"], resourceKey(source), cells);
-    const uploaded = await fetchGoogleDocument(runtime2, source);
-    if (!rowsEqual(stringRows(objectValue(uploaded.data)["rows"]), localRows)) throw new Error("Google Sheets save verification failed");
-    return uploaded;
+    const uploaded2 = await fetchGoogleDocument(runtime2, source);
+    if (!rowsEqual(stringRows(objectValue(uploaded2.data)["rows"]), localRows)) throw new Error("Google Sheets save verification failed");
+    return uploaded2;
   }
-  if (source["sheet_gid"] === void 0 && docMarkdownEqual(remote.markdown, baseMarkdown)) {
-    if (markdownText(markdown) === markdownText(baseMarkdown)) throw new Error("Google Docs sync cannot upload formatting-only Markdown edits");
-    await uploadDocText(runtime2, source["document_id"] ?? source.identifier, resourceKey(source), documentTab(source) ?? "t.0", baseMarkdown, markdown);
-    const uploaded = await fetchGoogleDocument(runtime2, source);
-    if (!docMarkdownEqual(uploaded.markdown, markdown)) throw new Error("Google Docs save verification failed");
-    return uploaded;
+  if (documentTab(source) === "t.0" && objectValue(base)["document_id"] && !objectValue(base)["document_tab"] && baseMarkdown !== remote.markdown) {
+    throw new Error("Google Docs saved snapshot predates explicit tab selection. Keep the local edits and reconcile them with a fresh download of this tab.");
   }
-  throw new Error(`${label} changed remotely and locally. Resolve the conflict in ${label} or the local Markdown file before syncing again.`);
+  const merged = mergeDocBlocks(baseMarkdown, markdown, remote.markdown);
+  if (merged === remote.markdown) return remote;
+  const id = source["document_id"] ?? source.identifier;
+  const key2 = resourceKey(source), tab = documentTab(source);
+  const snapshot = objectValue(base);
+  const positionRevision = snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && baseMarkdown === remote.markdown ? snapshot["position_revision"] ?? snapshot["verified_revision"] : void 0;
+  let writtenRevision;
+  const native = await tryUploadDocBlocks(
+    runtime2,
+    id,
+    key2,
+    tab,
+    remote.markdown,
+    merged,
+    async (revision) => remote.readRevision === revision ? remote.markdown : (await fetchGoogleDocument(runtime2, source)).markdown,
+    (revision) => {
+      writtenRevision = revision;
+    },
+    typeof positionRevision === "string" ? positionRevision : void 0
+  );
+  if (!native) throw new Error("Google Docs uploads require an OAuth token with drive, drive.file, or both documents and drive.readonly scopes. Set GOOGLE_DOCS_TOKEN_FILE or GOOGLE_FORMS_TOKEN_FILE. Browser login supports downloads only.");
+  const uploaded = await fetchGoogleDocument(runtime2, source, {});
+  if (!nativeDocMarkdownEqual(uploaded.markdown, merged)) throw new Error("Google Docs save verification failed");
+  if (writtenRevision && writtenRevision === uploaded.readRevision) {
+    return { ...uploaded, data: { ...objectValue(uploaded.data), verified_revision: writtenRevision } };
+  }
+  return uploaded;
 }
 var googleDocsService = defineService({
   name: "google-docs",
@@ -19012,7 +19589,7 @@ var googleDocsService = defineService({
       return Object.freeze({ service: "google-docs", identifier: `${documentId}#gid=${gid2 ?? "default"}`, type: "spreadsheet", document_id: documentId, sheet_gid: gid2, ...resource_key });
     }
     const tab = urlParam(url, "tab");
-    if (tab !== null && tab !== "" && tab !== "t.0") return Object.freeze({ service: "google-docs", identifier: `${documentId}#tab=${tab}`, type: "document", document_id: documentId, document_tab: tab, ...resource_key });
+    if (tab !== null && tab !== "") return Object.freeze({ service: "google-docs", identifier: `${documentId}#tab=${tab}`, type: "document", document_id: documentId, document_tab: tab, ...resource_key });
     return Object.freeze({ service: "google-docs", identifier: documentId, type: "document", ...resource_key });
   },
   fetch: (runtime2, _url, source) => fetchGoogleDocument(runtime2, source),
@@ -19313,10 +19890,10 @@ function parseInline(value) {
       rest = rest.slice(rest.length === 1 ? 1 : 2);
       continue;
     }
-    const link = markdownLink(rest);
-    if (link !== null) {
-      pushMarked(link.label, ["a", link.url]);
-      rest = rest.slice(link.length);
+    const link2 = markdownLink(rest);
+    if (link2 !== null) {
+      pushMarked(link2.label, ["a", link2.url]);
+      rest = rest.slice(link2.length);
       continue;
     }
     const dateSpan = /^<span data-notion-date="([^"]+)">(.*?)<\/span>/.exec(rest);
@@ -19406,21 +19983,21 @@ function parseInline(value) {
 }
 function renderSegment(content, marks) {
   let rendered = marks.some((raw) => raw[0] === "c") ? content : escapeInlineMarkdown(content);
-  let link = null;
+  let link2 = null;
   for (const raw of renderMarks(marks)) {
     const mark = raw;
     if (mark[0] === "c") rendered = inlineCode(rendered);
     else if (mark[0] === "s") rendered = `~~${rendered}~~`;
     else if (mark[0] === "i") rendered = `*${rendered}*`;
     else if (mark[0] === "b") rendered = `**${rendered}**`;
-    else if (mark[0] === "a") link = mark[1];
+    else if (mark[0] === "a") link2 = mark[1];
     else if (mark[0] === "_") rendered = `<u>${rendered}</u>`;
     else if (mark[0] === "h") rendered = `<span data-notion-color="${escapeHtml(mark[1])}">${rendered}</span>`;
     else if (mark[0] === "e") rendered = `<span data-notion-equation="${escapeHtml(mark[1])}">${rendered}</span>`;
     else if (mark[0] === "p" || mark[0] === "u") rendered = `<span data-notion-mention="${mark[0]}" data-notion-id="${escapeHtml(mark[1])}"${mark[0] === "p" ? ` data-notion-space-id="${escapeHtml(mark[2])}"` : ""}>${rendered}</span>`;
     else if (mark[0] === "d") rendered = `<span data-notion-date="${escapeHtml(compact(mark[1]))}">${rendered}</span>`;
   }
-  return link === null ? rendered : `[${rendered}](${link})`;
+  return link2 === null ? rendered : `[${rendered}](${link2})`;
 }
 function renderRichText(value) {
   return normalizeRichText(value).map((segment2) => renderSegment(text2(segment2[0]), segment2[1] ?? [])).join("");
@@ -19679,13 +20256,13 @@ function parseLines(lines, baseIndent = 0) {
       blocks.push({ type: snapshot["type"], content: "", properties: { notion_opaque: snapshot }, rich_text: [], indent });
       continue;
     }
-    const paragraph = [stripped];
+    const paragraph2 = [stripped];
     index += 1;
     while (index < lines.length && lines[index].trim() !== "" && !markdownBlockStart(stripIndent(lines[index]))) {
-      paragraph.push(stripIndent(lines[index]));
+      paragraph2.push(stripIndent(lines[index]));
       index += 1;
     }
-    const content = paragraph.join("\n");
+    const content = paragraph2.join("\n");
     blocks.push({ type: "text", content, properties: {}, rich_text: parseInline(content), indent });
   }
   return blocks;
@@ -20006,7 +20583,7 @@ function renderNotionTreeToMarkdown(tree, mentions, emailMentions = {}, download
     ...renderNode(child, 0, "", download)
   ]);
   let markdown = [`# ${title2}`, ...body2.length === 0 ? [] : ["", ...body2]].join("\n").trim();
-  for (const [id, link] of Object.entries(emailMentions)) markdown = markdown.replace(new RegExp(`<span data-notion-mention="u" data-notion-id="${escapeRegExp(escapeHtml(id))}">.*?</span>`, "g"), () => link);
+  for (const [id, link2] of Object.entries(emailMentions)) markdown = markdown.replace(new RegExp(`<span data-notion-mention="u" data-notion-id="${escapeRegExp(escapeHtml(id))}">.*?</span>`, "g"), () => link2);
   return mentions === void 0 ? markdown : renderUserMentions(markdown, mentions);
 }
 async function notionPost(runtime2, path, cookie, body2, headers) {
@@ -20040,16 +20617,16 @@ async function resolveNotionEmailMentions(runtime2, blocks, cookie, spaceId, hea
   const users = response["users"];
   for (const segment2 of segments) {
     const marks = segment2[1];
-    const link = marks.find((mark) => mark[0] === "a" && mark[1].startsWith("mailto:"));
-    const email = decodeURIComponent(link[1].slice(7));
+    const link2 = marks.find((mark) => mark[0] === "a" && mark[1].startsWith("mailto:"));
+    const email = decodeURIComponent(link2[1].slice(7));
     if (!/^[^@\s?]+@[^@\s?]+$/.test(email)) throw new Error(`Invalid mention email: ${email}`);
     const matches = users.filter((user) => user["aliases"]?.some((alias) => alias.toLowerCase() === email.toLowerCase()));
     if (matches.length !== 1) throw new Error(`Expected one Notion user for ${email}, found ${matches.length}`);
     const id = matches[0]["userId"];
     mentions[id] = `[${escapeInlineMarkdown(segment2[0])}](mailto:${email})`;
     segment2[0] = "\u2023";
-    link[0] = "u";
-    link[1] = id;
+    link2[0] = "u";
+    link2[1] = id;
   }
 }
 async function fetchComments(runtime2, tree, spaceId, cookie, headers) {
@@ -20085,11 +20662,11 @@ function renderComments(pageId, discussions, commentsById, users) {
   const threads = discussions.map((discussion) => {
     const comments = discussion["comments"].map((id) => commentsById.get(id)).filter((comment) => comment["alive"] === true);
     if (comments.length === 0) return "";
-    const context2 = discussion["context"] === void 0 ? "" : renderRichText(discussion["context"]);
-    const link = `https://www.notion.so/${pageId.replaceAll("-", "")}#${discussion["parent_id"].replaceAll("-", "")}`;
+    const context = discussion["context"] === void 0 ? "" : renderRichText(discussion["context"]);
+    const link2 = `https://www.notion.so/${pageId.replaceAll("-", "")}#${discussion["parent_id"].replaceAll("-", "")}`;
     return [
-      `### [${discussion["parent_id"] === pageId ? "Page comment" : "Inline comment"}](${link})${discussion["resolved"] === true ? " (resolved)" : ""}`,
-      ...context2 === "" ? [] : [context2.split("\n").map((line) => `> ${line}`).join("\n")],
+      `### [${discussion["parent_id"] === pageId ? "Page comment" : "Inline comment"}](${link2})${discussion["resolved"] === true ? " (resolved)" : ""}`,
+      ...context === "" ? [] : [context.split("\n").map((line) => `> ${line}`).join("\n")],
       ...comments.map((comment) => `**${escapeInlineMarkdown(users.get(comment["created_by_id"])["name"])}** \u2014 ${new Date(comment["created_time"]).toISOString()}
 
 ${renderRichText(comment["text"])}`)
@@ -21716,10 +22293,10 @@ async function compileAndReload() {
   await execFileAsync2("npm", ["run", "compile"], { cwd: root });
   await vscode.commands.executeCommand("workbench.action.reloadWindow");
 }
-function activate(context2) {
+function activate(context) {
   wireStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   setWireStatus("ready");
-  context2.subscriptions.push(
+  context.subscriptions.push(
     wireStatus,
     vscode.commands.registerCommand("wire.initProject", wireCommand(initProject)),
     vscode.commands.registerCommand("wire.attachHere", wireCommand(attachHere)),
