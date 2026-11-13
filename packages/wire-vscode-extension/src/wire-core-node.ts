@@ -9,7 +9,7 @@ export { createCookiesCapability, detectCookieFormat, parseCookieHeader, parseJs
 export type { CookieTextFormat } from "../../../packages/wire-core/src/runtime/cookies.js";
 export { extractChromeCookies } from "../../../packages/wire-core/src/runtime/chrome.js";
 export type { ChromeCookieExtraction, ChromeCookieResult } from "../../../packages/wire-core/src/runtime/chrome.js";
-export { createGoogleTokensCapability } from "../../../packages/wire-core/src/runtime/google.js";
+export { createGoogleTokensCapability, googleTokenExpired, parseGoogleToken } from "../../../packages/wire-core/src/runtime/google.js";
 export type { NodeEnvironment } from "../../../packages/wire-core/src/runtime/node.js";
 export { FileRegistry, SqliteRegistry } from "../../../packages/wire-core/src/storage/registry.js";
 export { configuredWireRoot, defaultWireBackend, defaultWireRegistryPath, discoverWireRoot, initializeWire, loadWireConfig, openWireRegistry, registryPathForBackend, switchWireBackend, wireRelativePath } from "../../../packages/wire-core/src/storage/workspace.js";

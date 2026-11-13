@@ -29,7 +29,7 @@ Tracking lives in `~/.wire` by default. Run `wire init` inside a project to trac
 | Provider | Resources | Sync |
 | --- | --- | --- |
 | Notion | Pages | Two-way |
-| Google Docs | Documents | Two-way |
+| Google Docs | Documents | Two-way with OAuth, pull only with browser login |
 | Google Sheets | Spreadsheets | Two-way |
 | Google Slides | Presentations | One-way |
 | Google Forms | Forms and responses | One-way |
@@ -60,6 +60,12 @@ wire watch <file>        # sync a file whenever it changes
 For a Notion page with subpages, `wire download <url>` saves a directory with an `index.md` for each page. Open the root index and follow the local links. Ordinary links and mentions stay remote. Pages without subpages still download as one Markdown file.
 
 Run `wire --help` for the full CLI.
+
+### Sync a Google Doc
+
+`wire sync <file>` merges edits to different paragraphs. It applies local edits to the selected tab in one batch, conditional on the current Google Docs revision. For documents with several tabs, attach the URL of the tab you want to edit, including its `tab=` parameter. An unscoped download can contain all tabs. Nested list items keep their own paragraphs. If both sides changed the same paragraph, open the local file and the Doc to reconcile it. Wire leaves both copies in place. It also stops when it cannot safely map an edit to the native paragraphs.
+
+**Change for existing users**. Google’s browser editor can accept a stale save and combine two versions of the same paragraph. Browser login now supports downloads only. For uploads, set `GOOGLE_DOCS_TOKEN_FILE` to an authorized OAuth token with Google’s `drive` scope, a `drive.file` grant for that file, or both `documents` and `drive.readonly`. Wire needs access to Drive comments to protect anchored feedback. Wire also accepts an eligible existing `GOOGLE_FORMS_TOKEN_FILE` used for Drive. For grants that need refreshing, set `GOOGLE_CREDENTIALS_FILE` to the corresponding client credentials.
 
 ### Scrape a Google Drive folder
 

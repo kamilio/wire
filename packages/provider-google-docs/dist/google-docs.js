@@ -1,4 +1,7 @@
 import { defineService } from "wire-core";
+import { mergeDocBlocks } from "./doc-blocks.js";
+import { googleRead } from "./google-read.js";
+import { nativeDocMarkdownEqual, nativeDocsToken, tryUploadDocBlocks } from "./native-docs.js";
 import { inflateRawSync } from "node:zlib";
 async function cookieHeader(runtime) {
     const cookies = await runtime.cookies.loadSaved("google-docs");
@@ -18,26 +21,56 @@ function filenameTitle(value, label) {
     const filename = encoded !== null ? decodeURIComponent(encoded[1]) : quoted !== null ? quoted[1] : bare[1].trim();
     return filename.replace(/\.(csv|html|md|pptx|txt|xlsx)$/i, "");
 }
-async function googleExport(runtime, url, label) {
-    const response = await runtime.http.request(url, { headers: { Cookie: await cookieHeader(runtime) } });
-    if (response.status === 401 || response.status === 403)
+async function docExportRequest(runtime, url, token) {
+    if (token === null) {
+        const init = { headers: { Cookie: await cookieHeader(runtime) } };
+        return url.startsWith("https://docs.google.com/document/") ? googleRead(runtime, url, init) : runtime.http.request(url, init);
+    }
+    // The tab-specific export accepts OAuth and returns a signed download URL.
+    // Never forward the access token to the download host or to a login page.
+    const first = await googleRead(runtime, url, { headers: { Authorization: "Bearer " + token }, redirect: "manual" });
+    if (first.status < 300 || first.status >= 400)
+        return first;
+    const location = first.headers.get("location");
+    if (!location)
+        throw new Error("Google Docs export did not include a download URL");
+    const target = new URL(location);
+    if (target.protocol !== "https:" || !target.hostname.endsWith(".googleusercontent.com") || target.username || target.password || target.port)
+        throw new Error("Google Docs export returned an unexpected download URL");
+    return googleRead(runtime, target, { redirect: "error" });
+}
+async function googleExport(runtime, url, label, token = null) {
+    const response = await docExportRequest(runtime, url, token);
+    if (response.status === 401 || response.status === 403) {
+        if (token !== null)
+            throw new Error(`Google ${label} failed: OAuth access denied (HTTP ${response.status})`);
         throw cookieAuthenticationError();
+    }
     if (!response.ok)
         throw new Error(`Google ${label} failed: HTTP ${response.status}`);
     const disposition = response.headers.get("content-disposition");
-    if (disposition === null)
+    if (disposition === null) {
+        if (token !== null)
+            throw new Error(`Google ${label} did not include a filename`);
         throw cookieAuthenticationError();
+    }
     return Object.freeze({ title: filenameTitle(disposition, label), text: await response.text() });
 }
-async function googleExportBytes(runtime, url, label) {
-    const response = await runtime.http.request(url, { headers: { Cookie: await cookieHeader(runtime) } });
-    if (response.status === 401 || response.status === 403)
+async function googleExportBytes(runtime, url, label, token = null) {
+    const response = await docExportRequest(runtime, url, token);
+    if (response.status === 401 || response.status === 403) {
+        if (token !== null)
+            throw new Error(`Google ${label} failed: OAuth access denied (HTTP ${response.status})`);
         throw cookieAuthenticationError();
+    }
     if (!response.ok)
         throw new Error(`Google ${label} failed: HTTP ${response.status}`);
     const disposition = response.headers.get("content-disposition");
-    if (disposition === null)
+    if (disposition === null) {
+        if (token !== null)
+            throw new Error(`Google ${label} did not include a filename`);
         throw cookieAuthenticationError();
+    }
     return Object.freeze({ title: filenameTitle(disposition, label), bytes: new Uint8Array(await response.arrayBuffer()) });
 }
 async function googleText(runtime, url, label) {
@@ -211,13 +244,6 @@ function sheetEditUrl(documentId, gid, key) {
     const url = new URL(`https://docs.google.com/spreadsheets/d/${encodeURIComponent(documentId)}/edit`);
     if (gid !== null)
         url.searchParams.set("gid", gid);
-    if (key !== null)
-        url.searchParams.set("resourcekey", key);
-    return url.toString();
-}
-function docEditUrl(documentId, key, tab) {
-    const url = new URL(`https://docs.google.com/document/d/${encodeURIComponent(documentId)}/edit`);
-    url.searchParams.set("tab", tab);
     if (key !== null)
         url.searchParams.set("resourcekey", key);
     return url.toString();
@@ -593,29 +619,6 @@ async function uploadSheetRows(runtime, documentId, gid, key, cells) {
     if (result["revisionRanges"] === undefined)
         throw new Error("Google Sheets save failed: missing revision ranges");
 }
-function docSession(html) {
-    const tokenMatch = /"info_params":\{"token":"([^"]+)"/.exec(html);
-    if (tokenMatch === null)
-        throw cookieAuthenticationError();
-    const token = tokenMatch[1];
-    const ouidMatch = /"ouid":"([^"]+)"/.exec(html);
-    const revisionMatch = /DOCS_warmStartDocumentLoader\.startLoad\(\s*([0-9.]+)/.exec(html);
-    if (ouidMatch === null || revisionMatch === null)
-        throw new Error("Google Docs editor did not include save metadata");
-    const ouid = ouidMatch[1];
-    const revision = Number(revisionMatch[1]);
-    const chunks = [];
-    const pattern = /DOCS_modelChunk = (\{[\s\S]*?\}); DOCS_modelChunkLoadStart/g;
-    let match = pattern.exec(html);
-    while (match !== null) {
-        const chunk = JSON.parse(match[1]);
-        for (const command of chunk.chunk)
-            if (command["ty"] === "is")
-                chunks.push(command["s"]);
-        match = pattern.exec(html);
-    }
-    return Object.freeze({ token, ouid, revision, text: chunks.join("") });
-}
 function markdownDocTable(value) {
     const lines = value.trimEnd().split(/\r?\n/);
     const separator = lines.findIndex((line) => markdownTableRow(line).every((cell) => /^:?-{3,}:?$/.test(cell)));
@@ -667,169 +670,6 @@ export async function googleDocListMarkdown(markdown, wordExport) {
         return text && outer.has(text) && !other.has(text) ? line.slice(2) : line;
     }).join("\n");
 }
-function comparableDocMarkdown(value) {
-    return markdownEntities(markdownHtmlTags(markdownCombinedEmphasis(value.replace(/[ \t]{2,}(?=\r?\n|$)/g, "").replace(/\\([\\`*_{}\[\]()#+\-.!|=~])/g, "$1").replace(/\s+$/g, ""))));
-}
-function docMarkdownEqual(left, right) {
-    return comparableDocMarkdown(left) === comparableDocMarkdown(right);
-}
-function textEdit(base, local) {
-    let start = 0;
-    while (start < base.length && start < local.length && base[start] === local[start])
-        start += 1;
-    for (let window = 80; window >= 10; window -= 10) {
-        for (let baseEnd = start; baseEnd <= Math.min(base.length - window, start + 2000); baseEnd += 1) {
-            const anchor = base.slice(baseEnd, baseEnd + window);
-            const localEnd = local.indexOf(anchor, start);
-            if (localEnd !== -1 && localEnd <= start + 2000)
-                return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), localBefore: "", after: base.slice(baseEnd), localAfter: local.slice(localEnd) });
-        }
-    }
-    let baseEnd = base.length;
-    let localEnd = local.length;
-    while (baseEnd > start && localEnd > start && base[baseEnd - 1] === local[localEnd - 1]) {
-        baseEnd -= 1;
-        localEnd -= 1;
-    }
-    return Object.freeze({ base: base.slice(start, baseEnd), local: local.slice(start, localEnd), before: base.slice(0, start), localBefore: "", after: base.slice(baseEnd), localAfter: local.slice(localEnd) });
-}
-function textEdits(base, local) {
-    const edits = [];
-    let basePrefix = "";
-    let localPrefix = "";
-    let baseRest = base;
-    let localRest = local;
-    while (baseRest !== localRest) {
-        const edit = textEdit(baseRest, localRest);
-        const before = `${basePrefix}${edit.before}`;
-        const localBefore = `${localPrefix}${edit.before}`;
-        edits.push(Object.freeze({ ...edit, before, localBefore }));
-        basePrefix = base.slice(0, base.length - edit.after.length);
-        localPrefix = local.slice(0, local.length - edit.localAfter.length);
-        baseRest = edit.after;
-        localRest = edit.localAfter;
-    }
-    return edits;
-}
-function inlineMarkdownSpans(value) {
-    const spans = [];
-    for (const pattern of [/\[[^\]\n]+\]\([^)]+\)/g, /!\[[^\]\n]*\]\([^)]+\)/g, /`[^`\n]+`/g, /~~[^~\n]+~~/g, /\*\*[^*\n]+\*\*/g, /\*[^*\n]+\*/g, /(^|[^\w])__[^_\n]+__(?=[^\w]|$)/g, /(^|[^\w])_[^_\n]+_(?=[^\w]|$)/g, /<((?:https?|mailto):[^>\s]+)>/g, /<\/?(?:u|sup|sub|mark|span)(?:\s+[^>]*)?>/gi]) {
-        let match = pattern.exec(value);
-        while (match !== null) {
-            spans.push(Object.freeze({ start: match.index, end: match.index + match[0].length }));
-            match = pattern.exec(value);
-        }
-    }
-    return spans;
-}
-function editTouchesMarkdownSpan(before, value, edited) {
-    const start = before.length;
-    const end = start + edited.length;
-    return inlineMarkdownSpans(value).some((span) => start === end ? start > span.start && start < span.end : start < span.end && end > span.start);
-}
-function context(value, side, length) {
-    return side === "before" ? value.slice(Math.max(0, value.length - length)) : value.slice(0, length);
-}
-function followingWhitespaceEnd(text, index) {
-    let end = index;
-    while (end < text.length && /\s/.test(text[end]))
-        end += 1;
-    return end;
-}
-function docTextRange(text, edit) {
-    const base = markdownText(edit.base);
-    const beforeText = markdownText(edit.before);
-    const afterText = markdownText(edit.after);
-    const candidates = [];
-    if (base === "") {
-        if (beforeText !== "") {
-            const anchor = context(beforeText, "before", Math.min(80, beforeText.length));
-            const trimmed = anchor.replace(/\s+$/g, "");
-            let index = 0;
-            for (;;) {
-                const found = text.indexOf(anchor, index);
-                if (found === -1)
-                    break;
-                candidates.push(found + anchor.length);
-                index = found + 1;
-            }
-            if (trimmed !== anchor) {
-                index = 0;
-                for (;;) {
-                    const found = text.indexOf(trimmed, index);
-                    if (found === -1)
-                        break;
-                    candidates.push(followingWhitespaceEnd(text, found + trimmed.length));
-                    index = found + 1;
-                }
-            }
-        }
-        if (afterText === "") {
-            candidates.push(text.length);
-        }
-        else {
-            const anchor = context(afterText, "after", Math.min(80, afterText.length));
-            let index = 0;
-            for (;;) {
-                const found = text.indexOf(anchor, index);
-                if (found === -1)
-                    break;
-                candidates.push(found);
-                index = found + 1;
-            }
-        }
-    }
-    else {
-        let index = 0;
-        for (;;) {
-            const found = text.indexOf(base, index);
-            if (found === -1)
-                break;
-            candidates.push(found);
-            index = found + 1;
-        }
-    }
-    const uniqueCandidates = [...new Set(candidates)];
-    for (const length of [80, 40, 20, 10, 0]) {
-        const before = context(beforeText, "before", length);
-        const after = context(afterText, "after", length);
-        const matched = uniqueCandidates.filter((index) => text.slice(Math.max(0, index - before.length), index) === before && text.slice(index + base.length, index + base.length + after.length) === after);
-        if (matched.length === 1)
-            return Object.freeze({ start: matched[0], end: matched[0] + base.length });
-    }
-    throw new Error("Google Docs local edit cannot be mapped to the live document text");
-}
-async function uploadDocText(runtime, documentId, key, tab, baseMarkdown, localMarkdown) {
-    const edits = textEdits(baseMarkdown, localMarkdown);
-    // The editor endpoint writes text only. Never let a multiline replacement
-    // recreate list paragraphs without their original list and nesting metadata.
-    const prefixes = (s) => s.match(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+/gm) ?? [];
-    if (prefixes(baseMarkdown).join("\n") !== prefixes(localMarkdown).join("\n") ||
-        edits.some(edit => [edit.base, edit.local].some(s => /\n[ \t]*(?:[-*+]|\d+[.)])[ \t]+/.test(s)))) {
-        throw new Error("Google Docs sync cannot preserve formatting in edited text: change the list structure in Google Docs");
-    }
-    if (edits.some((edit) => editTouchesMarkdownSpan(edit.before, baseMarkdown, edit.base) || editTouchesMarkdownSpan(edit.localBefore, localMarkdown, edit.local)))
-        throw new Error("Google Docs sync cannot preserve formatting in edited text");
-    const editUrl = docEditUrl(documentId, key, tab);
-    const session = docSession(await googleText(runtime, editUrl, "Docs editor"));
-    const ranges = edits.map((edit) => ({ edit, range: docTextRange(session.text, edit) })).sort((left, right) => right.range.start - left.range.start);
-    const sid = runtime.clock.now().getTime().toString(16).padStart(16, "0").slice(-16);
-    const commands = ranges.flatMap(({ edit, range }) => [
-        ...(range.start === range.end ? [] : [{ ty: "ds", si: range.start + 1, ei: range.end }]),
-        ...(edit.local === "" ? [] : [{ ty: "is", ibi: range.start + 1, s: markdownText(edit.local) }]),
-    ]);
-    const params = new URLSearchParams({ id: documentId, sid, vc: "1", c: "1", w: "1", flr: "0", smv: "2147483647", smb: "[2147483647, AAE=]", token: session.token, ouid: session.ouid, includes_info_params: "true", cros_files: "false", nded: "false", tab });
-    const body = new URLSearchParams({ rev: String(session.revision), bundles: JSON.stringify([{ commands, sid, reqId: 0 }]) });
-    const response = await runtime.http.request(`https://docs.google.com/document/d/${encodeURIComponent(documentId)}/save?${params}`, { method: "POST", headers: { Cookie: await cookieHeader(runtime), "content-type": "application/x-www-form-urlencoded;charset=UTF-8", origin: "https://docs.google.com", referer: editUrl }, body: body.toString() });
-    if (response.status === 401 || response.status === 403)
-        throw cookieAuthenticationError();
-    if (!response.ok)
-        throw new Error(`Google Docs save failed: HTTP ${response.status}`);
-    const text = await response.text();
-    const result = saveResult(text, "Docs");
-    if (result["revisionRanges"] === undefined)
-        throw new Error("Google Docs save failed: missing revision ranges");
-}
 async function fetchGoogleDocument(runtime, source) {
     const documentId = source["document_id"] ?? source.identifier;
     let sheetGid = null;
@@ -871,12 +711,13 @@ async function fetchGoogleDocument(runtime, source) {
         const markdown = slidesMarkdown(exported.bytes);
         return Object.freeze({ title: exported.title, markdown, data: { document_id: documentId, title: exported.title, output_path: null, sheet_gid: sheetGid, markdown, rows: null, presentation: true } });
     }
-    const exported = await googleExport(runtime, exportUrl, label);
+    const token = source["sheet_gid"] === undefined ? await nativeDocsToken(runtime, true) : null;
+    const exported = await googleExport(runtime, exportUrl, label, token);
     const rows = source["sheet_gid"] === undefined ? null : parseCsv(exported.text);
     const markdown = rows === null ? await googleDocListMarkdown(exported.text, async () => {
         const word = new URL(exportUrl);
         word.searchParams.set("format", "docx");
-        return (await googleExportBytes(runtime, word.toString(), "Docs Word export")).bytes;
+        return (await googleExportBytes(runtime, word.toString(), "Docs Word export", token)).bytes;
     }) : sheetMarkdown(rows);
     const tab = source["sheet_gid"] === undefined ? documentTab(source) : null;
     return Object.freeze({ title: exported.title, markdown, data: { document_id: documentId, title: exported.title, output_path: null, sheet_gid: sheetGid, markdown, rows, ...(tab === null ? {} : { document_tab: tab }) } });
@@ -897,7 +738,7 @@ async function synchronizeGoogleDocument(runtime, _url, source, base, markdown) 
     const label = source["sheet_gid"] === undefined ? "Google Docs" : "Google Sheets";
     if (typeof baseMarkdown !== "string")
         throw new Error("Google sync base must include markdown");
-    if (source["sheet_gid"] === undefined && (docMarkdownEqual(markdown, baseMarkdown) || docMarkdownEqual(markdown, remote.markdown)))
+    if (source["sheet_gid"] === undefined && (markdown.trimEnd() === baseMarkdown.trimEnd() || markdown.trimEnd() === remote.markdown.trimEnd()))
         return remote;
     if (source["sheet_gid"] !== undefined) {
         const baseObject = objectValue(base);
@@ -926,16 +767,21 @@ async function synchronizeGoogleDocument(runtime, _url, source, base, markdown) 
             throw new Error("Google Sheets save verification failed");
         return uploaded;
     }
-    if (source["sheet_gid"] === undefined && docMarkdownEqual(remote.markdown, baseMarkdown)) {
-        if (markdownText(markdown) === markdownText(baseMarkdown))
-            throw new Error("Google Docs sync cannot upload formatting-only Markdown edits");
-        await uploadDocText(runtime, source["document_id"] ?? source.identifier, resourceKey(source), documentTab(source) ?? "t.0", baseMarkdown, markdown);
-        const uploaded = await fetchGoogleDocument(runtime, source);
-        if (!docMarkdownEqual(uploaded.markdown, markdown))
-            throw new Error("Google Docs save verification failed");
-        return uploaded;
+    if (documentTab(source) === "t.0" && objectValue(base)["document_id"] && !objectValue(base)["document_tab"] && baseMarkdown !== remote.markdown) {
+        throw new Error("Google Docs saved snapshot predates explicit tab selection. Keep the local edits and reconcile them with a fresh download of this tab.");
     }
-    throw new Error(`${label} changed remotely and locally. Resolve the conflict in ${label} or the local Markdown file before syncing again.`);
+    const merged = mergeDocBlocks(baseMarkdown, markdown, remote.markdown);
+    if (merged === remote.markdown)
+        return remote;
+    const id = source["document_id"] ?? source.identifier;
+    const key = resourceKey(source), tab = documentTab(source);
+    const native = await tryUploadDocBlocks(runtime, id, key, tab, remote.markdown, merged, async () => (await fetchGoogleDocument(runtime, source)).markdown);
+    if (!native)
+        throw new Error("Google Docs uploads require an OAuth token with drive, drive.file, or both documents and drive.readonly scopes. Set GOOGLE_DOCS_TOKEN_FILE or GOOGLE_FORMS_TOKEN_FILE. Browser login supports downloads only.");
+    const uploaded = await fetchGoogleDocument(runtime, source);
+    if (!nativeDocMarkdownEqual(uploaded.markdown, merged))
+        throw new Error("Google Docs save verification failed");
+    return uploaded;
 }
 export const googleDocsService = defineService({
     name: "google-docs",
@@ -954,7 +800,7 @@ export const googleDocsService = defineService({
             return Object.freeze({ service: "google-docs", identifier: `${documentId}#gid=${gid ?? "default"}`, type: "spreadsheet", document_id: documentId, sheet_gid: gid, ...resource_key });
         }
         const tab = urlParam(url, "tab");
-        if (tab !== null && tab !== "" && tab !== "t.0")
+        if (tab !== null && tab !== "")
             return Object.freeze({ service: "google-docs", identifier: `${documentId}#tab=${tab}`, type: "document", document_id: documentId, document_tab: tab, ...resource_key });
         return Object.freeze({ service: "google-docs", identifier: documentId, type: "document", ...resource_key });
     },

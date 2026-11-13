@@ -18,7 +18,7 @@ const sourceCases = [
   ["https://app.slack.com/client/T123/C123/thread/C123-1234567890.123456", { service: "slack", identifier: "C123:1234567890.123456", type: "message-thread", channel_id: "C123", timestamp: "1234567890.123456", thread_timestamp: "1234567890.123456" }],
   ["https://docs.google.com/document/d/document-id/edit", { service: "google-docs", identifier: "document-id", type: "document" }],
   ["https://docs.google.com/document/u/0/d/document-id/edit", { service: "google-docs", identifier: "document-id", type: "document" }],
-  ["https://docs.google.com/document/d/document-id/edit?tab=t.0", { service: "google-docs", identifier: "document-id", type: "document" }],
+  ["https://docs.google.com/document/d/document-id/edit?tab=t.0", { service: "google-docs", identifier: "document-id#tab=t.0", type: "document", document_id: "document-id", document_tab: "t.0" }],
   ["https://docs.google.com/document/d/document-id/edit?tab=t.abc123", { service: "google-docs", identifier: "document-id#tab=t.abc123", type: "document", document_id: "document-id", document_tab: "t.abc123" }],
   ["https://docs.google.com/document/d/document-id/edit#tab=t.abc123", { service: "google-docs", identifier: "document-id#tab=t.abc123", type: "document", document_id: "document-id", document_tab: "t.abc123" }],
   ["https://docs.google.com/document/d/document-id/edit?resourcekey=doc-key", { service: "google-docs", identifier: "document-id", type: "document", resource_key: "doc-key" }],
@@ -83,7 +83,8 @@ test("Google Docs non-default tab URLs use distinct resource identities", () => 
   const second = parseSourceUrl("https://docs.google.com/document/d/document-id/edit?tab=t.two", serviceCatalog);
   assert.notEqual(resourceId(defaultTab), resourceId(first));
   assert.notEqual(resourceId(first), resourceId(second));
-  assert.equal(resourceId(defaultTab), "google-docs:document-id");
+  assert.equal(resourceId(defaultTab), "google-docs:document-id#tab=t.0");
+  assert.notEqual(resourceId(defaultTab), resourceId(parseSourceUrl("https://docs.google.com/document/d/document-id/edit", serviceCatalog)));
   assert.equal(resourceId(first), "google-docs:document-id#tab=t.one");
   assert.equal(resourceId(second), "google-docs:document-id#tab=t.two");
 });

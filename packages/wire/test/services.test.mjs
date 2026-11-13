@@ -40,10 +40,6 @@ function sheetHtml(revision = 7, sid = "sid-1", gridId = 7) {
   return new Response(`<script>_docs_flag_initialData={"info_params":{"token":"token-1"}}</script><script>var bootstrapData = ${JSON.stringify({ gridId, changes: { revision, sid } })}; function loadWaffle() {}</script>`);
 }
 
-function docsHtml(text, revision = 7) {
-  return new Response(`<script>_docs_flag_initialData={"info_params":{"token":"token-1","ouid":"user-1","includes_info_params":true}}</script><script>DOCS_warmStartDocumentLoader.startLoad( ${revision}.0 ,'version-1', 2147483647 , 0.0 ,[2147483647,"AAE="], 1781652343780 , null ); var DOCS_modelChunkLoadStart; var DOCS_modelChunkParseStart; var DOCS_modelChunk;</script><script>DOCS_modelChunk = ${JSON.stringify({ chunk: [{ ty: "is", ibi: 1, s: text }], revision })}; DOCS_modelChunkLoadStart = new Date().getTime();</script>`);
-}
-
 function sheetBundleCells(body) {
   const bundles = JSON.parse(new URLSearchParams(body).get("bundles"));
   return bundles[0].commands.map((command) => {
@@ -860,6 +856,17 @@ test("google docs adapter preserves non-default document tabs in export URLs", a
   assert.deepEqual(requests, ["https://docs.google.com/document/d/doc/export?format=md&tab=t.second"]);
 });
 
+test("Google Docs distinguishes an explicit first tab from the combined document", async () => {
+  const requests = [], url = "https://docs.google.com/document/d/doc/edit?tab=t.0";
+  const rt = runtime(async input => { requests.push(String(input)); return exportResponse("Doc", "md", "First tab\n"); });
+  const scoped = await fetchSource(rt, url, serviceCatalog);
+  assert.equal(scoped.data.document_tab, "t.0");
+  const legacy = { markdown: "First tab\nSecond tab\n", document_id: "doc" };
+  await assert.rejects(synchronizeSource(rt, url, serviceCatalog, legacy, "Local edit\nSecond tab\n", "local.md"), /predates explicit tab/);
+  assert.equal((await synchronizeSource(rt, url, serviceCatalog, legacy, legacy.markdown, "local.md")).markdown, "First tab\n");
+  assert.ok(requests.every(request => request === "https://docs.google.com/document/d/doc/export?format=md&tab=t.0"));
+});
+
 test("google docs adapter preserves fragment document tabs in export URLs", async () => {
   const requests = [];
   const document = await fetchSource(runtime(async (input) => {
@@ -1059,683 +1066,18 @@ test("google docs synchronization downloads remote-only changes", async () => {
   assert.equal(document.markdown, "remote\n");
 });
 
-test("google docs synchronization uploads local-only text edits", async () => {
-  const requests = [];
-  let markdown = "Hello old world\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    requests.push({ url, init });
-    if (url.pathname.endsWith("/edit")) return docsHtml(markdown);
-    if (url.pathname.endsWith("/save")) {
-      const params = new URLSearchParams(init.body);
-      const bundles = JSON.parse(params.get("bundles"));
-      assert.equal(params.get("rev"), "7");
-      assert.equal(url.searchParams.get("token"), "token-1");
-      assert.equal(url.searchParams.get("ouid"), "user-1");
-      assert.deepEqual(bundles, [{ commands: [{ ty: "ds", si: 7, ei: 9 }, { ty: "is", ibi: 7, s: "new" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = "Hello new world\n";
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Hello old world\n" }, "Hello new world\n", "/workspace/doc.md");
-  assert.equal(document.markdown, "Hello new world\n");
-  assert.deepEqual(requests.map((request) => request.url.pathname), ["/document/d/doc/export", "/document/d/doc/edit", "/document/d/doc/save", "/document/d/doc/export"]);
-});
-
-test("google docs synchronization uploads multiple local edit regions in one save", async () => {
-  let markdown = "Alpha old\nMiddle\nOmega old\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml(markdown);
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [
-        { ty: "ds", si: 24, ei: 26 },
-        { ty: "is", ibi: 24, s: "new" },
-        { ty: "ds", si: 7, ei: 9 },
-        { ty: "is", ibi: 7, s: "new" },
-      ], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = "Alpha new\nMiddle\nOmega new\n";
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Alpha old\nMiddle\nOmega old\n" }, "Alpha new\nMiddle\nOmega new\n", "/workspace/doc.md");
-  assert.equal(document.markdown, "Alpha new\nMiddle\nOmega new\n");
-});
-
-test("google docs synchronization preserves non-default tabs while saving", async () => {
-  const requests = [];
-  let markdown = "Hello old world\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    requests.push({ url, init });
-    if (url.pathname.endsWith("/edit")) {
-      assert.equal(url.searchParams.get("tab"), "t.second");
-      return docsHtml(markdown);
-    }
-    if (url.pathname.endsWith("/save")) {
-      assert.equal(url.searchParams.get("tab"), "t.second");
-      assert.equal(init.headers.referer, "https://docs.google.com/document/d/doc/edit?tab=t.second");
-      markdown = "Hello new world\n";
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit?tab=t.second", serviceCatalog, { markdown: "Hello old world\n" }, "Hello new world\n", "/workspace/doc.md");
-  assert.equal(document.markdown, "Hello new world\n");
-  assert.deepEqual(requests.map((request) => request.url.toString()), [
-    "https://docs.google.com/document/d/doc/export?format=md&tab=t.second",
-    "https://docs.google.com/document/d/doc/edit?tab=t.second",
-    "https://docs.google.com/document/d/doc/save?id=doc&sid=0000019eb1675600&vc=1&c=1&w=1&flr=0&smv=2147483647&smb=%5B2147483647%2C+AAE%3D%5D&token=token-1&ouid=user-1&includes_info_params=true&cros_files=false&nded=false&tab=t.second",
-    "https://docs.google.com/document/d/doc/export?format=md&tab=t.second",
-  ]);
-});
-
-test("google docs synchronization points expired save cookies to login", async () => {
-  const requests = [];
-  await assert.rejects(
-    () => synchronizeSource(runtime(async (input) => {
-      const url = new URL(String(input));
-      requests.push(url);
-      if (url.pathname.endsWith("/edit")) return docsHtml("Hello old world\n");
-      if (url.pathname.endsWith("/save")) return new Response("expired", { status: 403 });
-      return exportResponse("Doc Title", "md", "Hello old world\n");
-    }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Hello old world\n" }, "Hello new world\n", "/workspace/doc.md"),
-    /google-docs cookie authentication is missing or expired\. Run `wire google-docs login` once; other commands reuse saved cookies\./,
-  );
-  assert.deepEqual(requests.map((url) => url.pathname), ["/document/d/doc/export", "/document/d/doc/edit", "/document/d/doc/save"]);
-});
-
-test("google docs synchronization points login HTML save to login", async () => {
-  const requests = [];
-  await assert.rejects(
-    () => synchronizeSource(runtime(async (input) => {
-      const url = new URL(String(input));
-      requests.push(url);
-      if (url.pathname.endsWith("/edit")) return docsHtml("Hello old world\n");
-      if (url.pathname.endsWith("/save")) return new Response("<html>Sign in</html>", { headers: { "content-type": "text/html" } });
-      return exportResponse("Doc Title", "md", "Hello old world\n");
-    }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Hello old world\n" }, "Hello new world\n", "/workspace/doc.md"),
-    /google-docs cookie authentication is missing or expired\. Run `wire google-docs login` once; other commands reuse saved cookies\./,
-  );
-  assert.deepEqual(requests.map((url) => url.pathname), ["/document/d/doc/export", "/document/d/doc/edit", "/document/d/doc/save"]);
-});
-
-test("google docs synchronization reports save acknowledgements without revision ranges", async () => {
-  const requests = [];
-  await assert.rejects(
-    () => synchronizeSource(runtime(async (input) => {
-      const url = new URL(String(input));
-      requests.push(url);
-      if (url.pathname.endsWith("/edit")) return docsHtml("Hello old world\n");
-      if (url.pathname.endsWith("/save")) return response({}, ")]}'\n{}");
-      return exportResponse("Doc Title", "md", "Hello old world\n");
-    }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Hello old world\n" }, "Hello new world\n", "/workspace/doc.md"),
-    /Google Docs save failed: missing revision ranges/,
-  );
-  assert.deepEqual(requests.map((url) => url.pathname), ["/document/d/doc/export", "/document/d/doc/edit", "/document/d/doc/save"]);
-});
-
-test("google docs synchronization points login HTML editor to login", async () => {
-  const requests = [];
-  await assert.rejects(
-    () => synchronizeSource(runtime(async (input) => {
-      const url = new URL(String(input));
-      requests.push(url);
-      if (url.pathname.endsWith("/edit")) return new Response("<html>Sign in</html>", { headers: { "content-type": "text/html" } });
-      return exportResponse("Doc Title", "md", "Hello old world\n");
-    }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Hello old world\n" }, "Hello new world\n", "/workspace/doc.md"),
-    /google-docs cookie authentication is missing or expired\. Run `wire google-docs login` once; other commands reuse saved cookies\./,
-  );
-  assert.deepEqual(requests.map((url) => url.pathname), ["/document/d/doc/export", "/document/d/doc/edit"]);
-});
-
-test("google docs synchronization reports editor metadata failures", async () => {
-  const requests = [];
-  await assert.rejects(
-    () => synchronizeSource(runtime(async (input) => {
-      const url = new URL(String(input));
-      requests.push(url);
-      if (url.pathname.endsWith("/edit")) return new Response('<script>_docs_flag_initialData={"info_params":{"token":"token-1"}}</script>');
-      return exportResponse("Doc Title", "md", "Hello old world\n");
-    }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Hello old world\n" }, "Hello new world\n", "/workspace/doc.md"),
-    /Google Docs editor did not include save metadata/,
-  );
-  assert.deepEqual(requests.map((url) => url.pathname), ["/document/d/doc/export", "/document/d/doc/edit"]);
-});
-
-test("google docs synchronization uploads local-only insertion at document end", async () => {
-  let markdown = "Hello\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml(markdown);
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 7, s: "again" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = "Hello\nagain";
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Hello\n" }, "Hello\nagain", "/workspace/doc.md");
-  assert.equal(document.markdown, "Hello\nagain");
-});
-
-test("google docs synchronization uploads local-only insertion after formatted heading", async () => {
-  let markdown = "# **Title**\n\nBody **bold** text\nMore words\n";
-  const local = "# **Title**\n\nWIRE_SYNC_PROBE_20260617\n\nBody **bold** text\nMore words\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Title\n\nBody bold text\nMore words\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps insertions from the preceding paragraph when the following heading text differs", async () => {
-  const before = "# **Title**\n\nBackground Kunal reference\n\nTldr; Cindy didn’t miss major cases. \n\n";
-  let markdown = `${before}# **Kunal**\n\nSummary text\n`;
-  const local = `${before}WIRE_SYNC_PROBE_20260617\n\n# **Kunal**\n\nSummary text\n`;
-  const editorText = "Title\n\nBackground Kunal reference\n\nTldr; Cindy didn’t miss major cases. \nKunalSummary text\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml(editorText);
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: editorText.indexOf("KunalSummary text") + 1, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around italic markdown anchors", async () => {
-  let markdown = "Intro\n\nFelix: *As eng DRI*\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\nFelix: *As eng DRI*\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nFelix: As eng DRI\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around underscore emphasis markdown anchors", async () => {
-  let markdown = "Intro\n\nFelix: _As eng DRI_ and __bold callout__\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\nFelix: _As eng DRI_ and __bold callout__\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nFelix: As eng DRI and bold callout\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around inline code markdown anchors", async () => {
-  let markdown = "Intro\n\nFelix: `inline code`\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\nFelix: `inline code`\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nFelix: inline code\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around strikethrough markdown anchors", async () => {
-  let markdown = "Intro\n\nFelix: ~~old wording~~\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\nFelix: ~~old wording~~\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nFelix: old wording\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around fenced code markdown anchors", async () => {
-  let markdown = "Intro\n\n```js\nconst answer = 42;\n```\n\nFelix: done\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\n```js\nconst answer = 42;\n```\n\nFelix: done\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nconst answer = 42;\n\nFelix: done\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around unordered list markdown anchors", async () => {
-  let markdown = "Intro\n\n- Alpha item\n- Beta item\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\n- Alpha item\n- Beta item\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nAlpha item\nBeta item\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around ordered list markdown anchors", async () => {
-  let markdown = "Intro\n\n1. Alpha item\n2. Beta item\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\n1. Alpha item\n2. Beta item\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nAlpha item\nBeta item\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around blockquote markdown anchors", async () => {
-  let markdown = "Intro\n\n> Escalate carefully\n> Keep context\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\n> Escalate carefully\n> Keep context\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nEscalate carefully\nKeep context\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around checklist markdown anchors", async () => {
-  let markdown = "Intro\n\n- [ ] Draft plan\n- [x] Ship fix\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\n- [ ] Draft plan\n- [x] Ship fix\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nDraft plan\nShip fix\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around nested blockquote markdown anchors", async () => {
-  let markdown = "Intro\n\n>> Escalate carefully\n>> Keep context\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\n>> Escalate carefully\n>> Keep context\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nEscalate carefully\nKeep context\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around autolink markdown anchors", async () => {
-  let markdown = "Intro\n\nReference: <https://example.com/path?q=1>\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\nReference: <https://example.com/path?q=1>\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nReference: https://example.com/path?q=1\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around reference link markdown anchors", async () => {
-  let markdown = "Intro\n\n[Reference][ref]\n\n[ref]: https://example.com/path?q=1\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\n[Reference][ref]\n\n[ref]: https://example.com/path?q=1\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nReference\n\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around image markdown anchors", async () => {
-  let markdown = "Intro\n\n![Diagram](images/image1.png)\nAfter image\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\n![Diagram](images/image1.png)\nAfter image\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nAfter image\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around inline image markdown anchors", async () => {
-  let markdown = "Intro\n\nBefore ![Diagram](images/image1.png) after\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\nBefore ![Diagram](images/image1.png) after\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nBefore after\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around inline reference image markdown anchors", async () => {
-  let markdown = "Intro\n\nBefore ![Diagram][image-ref] after\n\n[image-ref]: images/image1.png\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\nBefore ![Diagram][image-ref] after\n\n[image-ref]: images/image1.png\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nBefore after\n\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around horizontal rule markdown anchors", async () => {
-  let markdown = "Intro\n\n---\n\nAfter rule\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\n---\n\nAfter rule\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nAfter rule\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps around table markdown anchors", async () => {
-  let markdown = "Intro\n\n| Name | Status |\n| --- | --- |\n| Alpha | Done |\n\nAfter table\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\n| Name | Status |\n| --- | --- |\n| Alpha | Done |\n\nAfter table\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nName\nStatus\nAlpha\nDone\n\nAfter table\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization uses context to update repeated text", async () => {
-  let markdown = "one target two target three\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml(markdown);
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "ds", si: 16, ei: 21 }, { ty: "is", ibi: 16, s: "value" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = "one target two value three\n";
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "one target two target three\n" }, "one target two value three\n", "/workspace/doc.md");
-  assert.equal(document.markdown, "one target two value three\n");
-});
-
-test("google docs synchronization uploads multi-line local replacements", async () => {
-  let markdown = "A\nold\nC\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml(markdown);
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "ds", si: 3, ei: 5 }, { ty: "is", ibi: 3, s: "new\nline" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = "A\nnew\nline\nC\n";
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "A\nold\nC\n" }, "A\nnew\nline\nC\n", "/workspace/doc.md");
-  assert.equal(document.markdown, "A\nnew\nline\nC\n");
-});
-
-test("google docs synchronization maps Google-exported hard-break spaces", async () => {
-  let markdown = "Hello\nMarker  \n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Hello\nMarker\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "ds", si: 7, ei: 13 }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = "Hello\n";
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Hello\nMarker  \n" }, "Hello\n", "/workspace/doc.md");
-  assert.equal(document.markdown, "Hello\n");
-});
-
-test("google docs synchronization accepts Google-escaped punctuation after upload", async () => {
-  let markdown = "Hello\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml(markdown);
-    if (url.pathname.endsWith("/save")) {
-      markdown = "Hello\nWIRE\\_SYNC\\_PROBE\\_20260616  \n";
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Hello\n" }, "Hello\nWIRE_SYNC_PROBE_20260616\n", "/workspace/doc.md");
-  assert.equal(document.markdown, "Hello\nWIRE\\_SYNC\\_PROBE\\_20260616  \n");
-});
-
-test("google docs synchronization maps Google-escaped equals and tilde anchors", async () => {
-  let markdown = "Intro\n\nDoes chat limit \\= default limit?\nScope increase by \\~0.5d\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\nDoes chat limit \\= default limit?\nScope increase by \\~0.5d\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nDoes chat limit = default limit?\nScope increase by ~0.5d\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization maps Google-exported html entity anchors", async () => {
-  let markdown = "Intro\n\nA &amp; B &lt; C &gt; D &quot;quote&quot; &#39;single&#39;\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\nA &amp; B &lt; C &gt; D &quot;quote&quot; &#39;single&#39;\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nA & B < C > D \"quote\" 'single'\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization accepts Google-exported html entities after upload", async () => {
-  let markdown = "Hello\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml(markdown);
-    if (url.pathname.endsWith("/save")) {
-      markdown = "Hello\nA &amp; B &lt; C  \n";
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Hello\n" }, "Hello\nA & B < C\n", "/workspace/doc.md");
-  assert.equal(document.markdown, "Hello\nA &amp; B &lt; C  \n");
-});
-
-test("google docs synchronization maps Google-exported inline html formatting anchors", async () => {
-  let markdown = "Intro\n\nUse <u>underlined</u>, <sup>raised</sup>, and <span style=\"color:red\">colored</span> words\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\nUse <u>underlined</u>, <sup>raised</sup>, and <span style=\"color:red\">colored</span> words\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nUse underlined, raised, and colored words\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization accepts Google-exported inline html formatting after upload", async () => {
-  let markdown = "Hello\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml(markdown);
-    if (url.pathname.endsWith("/save")) {
-      markdown = "Hello\nUse <u>underlined</u> text  \n";
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Hello\n" }, "Hello\nUse underlined text\n", "/workspace/doc.md");
-  assert.equal(document.markdown, "Hello\nUse <u>underlined</u> text  \n");
-});
-
-test("google docs synchronization maps Google-exported combined emphasis anchors", async () => {
-  let markdown = "Intro\n\nUse ***bold italic***, ___strong em___, **_bold under_**, __*strong star*__, *__star strong__*, and _**under bold**_ words\n";
-  const local = "Intro\n\nWIRE_SYNC_PROBE_20260617\n\nUse ***bold italic***, ___strong em___, **_bold under_**, __*strong star*__, *__star strong__*, and _**under bold**_ words\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml("Intro\n\nUse bold italic, strong em, bold under, strong star, star strong, and under bold words\n");
-    if (url.pathname.endsWith("/save")) {
-      const bundles = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      assert.deepEqual(bundles, [{ commands: [{ ty: "is", ibi: 8, s: "WIRE_SYNC_PROBE_20260617\n\n" }], sid: "0000019eb1675600", reqId: 0 }]);
-      markdown = local;
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown }, local, "/workspace/doc.md");
-  assert.equal(document.markdown, local);
-});
-
-test("google docs synchronization accepts Google-exported combined emphasis after upload", async () => {
-  let markdown = "Hello\n";
-  const document = await synchronizeSource(runtime(async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/edit")) return docsHtml(markdown);
-    if (url.pathname.endsWith("/save")) {
-      markdown = "Hello\nUse ***bold italic*** and ___strong em___ text  \n";
-      return response({ revisionRanges: [[8, 8]] }, ")]}'\n{\"revisionRanges\":[[8,8]]}");
-    }
-    return exportResponse("Doc Title", "md", markdown);
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Hello\n" }, "Hello\nUse bold italic and strong em text\n", "/workspace/doc.md");
-  assert.equal(document.markdown, "Hello\nUse ***bold italic*** and ___strong em___ text  \n");
-});
-
-test("google docs synchronization rejects formatting-only local Markdown edits before saving", async () => {
-  const requests = [];
-  await assert.rejects(() => synchronizeSource(runtime(async (input) => {
-    const url = new URL(String(input));
-    requests.push(url.pathname);
-    if (url.pathname.endsWith("/edit") || url.pathname.endsWith("/save")) throw new Error("unexpected write");
-    return exportResponse("Doc Title", "md", "Hello\n");
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "Hello\n" }, "**Hello**\n", "/workspace/doc.md"), /Google Docs sync cannot upload formatting-only Markdown edits/);
-  assert.deepEqual(requests, ["/document/d/doc/export"]);
-});
-
-test("google docs synchronization rejects edits inside formatted markdown before saving", async () => {
-  const requests = [];
-  await assert.rejects(() => synchronizeSource(runtime(async (input) => {
-    const url = new URL(String(input));
-    requests.push(url.pathname);
-    if (url.pathname.endsWith("/edit") || url.pathname.endsWith("/save")) throw new Error("unexpected write");
-    return exportResponse("Doc Title", "md", "See [old](https://example.test)\n");
-  }), "https://docs.google.com/document/d/doc/edit", serviceCatalog, { markdown: "See [old](https://example.test)\n" }, "See [new](https://example.test)\n", "/workspace/doc.md"), /Google Docs sync cannot preserve formatting in edited text/);
-  assert.deepEqual(requests, ["/document/d/doc/export"]);
+test("Google Docs refuses local uploads without a write grant and makes no mutation", async () => {
+  const url = "https://docs.google.com/document/d/doc/edit", base = "Title\n\n* Parent\n  * Child\n";
+  for (const [local, remote] of [
+    [base.replace("Child", "Local child"), base],
+    [base.replace("Parent", "**Parent**"), base],
+    [base.replace("Child", "Local child"), base.replace("Title", "Remote title")],
+  ]) {
+    const paths = [];
+    const rt = runtime(async (input, init = {}) => { assert.equal(init.method ?? "GET", "GET"); paths.push(new URL(input).pathname); return exportResponse("Doc", "md", remote); });
+    await assert.rejects(synchronizeSource(rt, url, serviceCatalog, { markdown: base }, local, "/workspace/doc.md"), /uploads require an OAuth token.*Browser login supports downloads only/);
+    assert.deepEqual(paths, ["/document/d/doc/export"]);
+  }
 });
 
 test("google docs synchronization rejects local and remote conflicts", async () => {
@@ -2495,31 +1837,41 @@ test("zoom scrape paces requests, retries 429, and honors a saved Retry-After ac
   assert.equal(times.length, 3);
 });
 
-test("Google Docs keeps nested bullets across repeated edits and leaves quoted and fenced examples alone", async () => {
-  let child = "initial";
-  const md = () => `> * Parent  \n  * ${child}  \n    * Grandchild\n> 1. Second\n\n> * Quoted\n\n\`\`\`\n> * Parent\n\`\`\`\n`;
-  const expected = () => md().replace(/^> \* Parent/, "* Parent").replace("> 1. Second", "1. Second");
+test("Google Docs downloads true nested bullets without changing quoted or fenced examples", async () => {
+  const md = "> * Parent  \n  * Child  \n    * Grandchild\n> 1. Second\n\n> * Quoted\n\n```\n> * Parent\n```\n";
   const para = (level, text) => `<w:p><w:pPr>${level === undefined ? '<w:pStyle w:val="Quote"/>' : `<w:numPr><w:ilvl w:val="${level}"/></w:numPr>`}</w:pPr><w:r><w:t>${text}</w:t></w:r></w:p>`;
-  const url = "https://docs.google.com/document/d/doc/edit", path = "/workspace/doc.md";
-  let saves = 0, next = "";
-  const rt = runtime(async (input, init = {}) => {
-    const u = new URL(input);
-    if (u.searchParams.get("format") === "docx") return exportResponse("Doc", "docx", zip({ "word/document.xml": `<w:document><w:body>${[para(0,"Parent"),para(1,child),para(2,"Grandchild"),para(0,"Second"),para(undefined,"Quoted")].join("")}</w:body></w:document>` }));
-    if (u.pathname.endsWith("/edit")) return docsHtml(`Parent\n${child}\nGrandchild\nSecond\nQuoted\n`);
-    if (u.pathname.endsWith("/save")) {
-      const [{ commands }] = JSON.parse(new URLSearchParams(init.body).get("bundles"));
-      for (const c of commands) assert.ok(c.ty === "is" ? !c.s.includes("\n") : c.ty === "ds" && c.si >= 8 && c.ei < 8 + child.length);
-      child = next; saves++;
-      return response({}, ")]}'\n{\"revisionRanges\":[[8,8]]}");
+  const rt = runtime(async input => new URL(input).searchParams.get("format") === "docx" ? exportResponse("Doc", "docx", zip({ "word/document.xml": `<w:document><w:body>${[para(0,"Parent"),para(1,"Child"),para(2,"Grandchild"),para(0,"Second"),para(undefined,"Quoted")].join("")}</w:body></w:document>` })) : exportResponse("Doc", "md", md));
+  const doc = await fetchSource(rt, "https://docs.google.com/document/d/doc/edit", serviceCatalog);
+  assert.equal(doc.markdown, md.replace(/^> \* Parent/, "* Parent").replace("> 1. Second", "1. Second"));
+});
+
+test("Google Docs OAuth export keeps the tab and key and never forwards the grant to the download host", async () => {
+  const doc = "https://docs.google.com/document/d/doc/edit?tab=t.second&resourcekey=r";
+  const endpoints = [];
+  const base = runtime(async (input, init = {}) => {
+    const u = new URL(input); endpoints.push(u);
+    if (u.hostname === "docs.google.com") {
+      assert.equal(u.searchParams.get("tab"), "t.second");
+      assert.equal(u.searchParams.get("resourcekey"), "r");
+      assert.equal(init.headers.Authorization, "Bearer test-grant"); assert.equal(init.redirect, "manual");
+      return new Response(null, { status: 307, headers: { location: "https://test-docstext.googleusercontent.com/signed-download" } });
     }
-    return exportResponse("Doc", "md", md());
+    assert.equal(u.hostname, "test-docstext.googleusercontent.com"); assert.equal(init.headers, undefined);
+    return exportResponse("Private tab", "md", "Private tab text\n");
   });
-  let base = await fetchSource(rt, url, serviceCatalog);
-  assert.equal(base.markdown, expected());
-  for (next of ["updated", "revised"]) {
-    base = await synchronizeSource(rt, url, serviceCatalog, base.data, base.markdown.replace(child, next), path);
-    assert.equal(base.markdown, expected());
-  }
-  await assert.rejects(synchronizeSource(rt, url, serviceCatalog, base.data, base.markdown.replace("  * revised", "    * different"), path), /change the list structure in Google Docs/);
-  assert.equal(saves, 2);
+  const rt = { ...base, configuration: { getOptional: key => key === "GOOGLE_FORMS_TOKEN_FILE" ? "/grant" : undefined }, filesystem: {
+    ...base.filesystem, readText: async () => JSON.stringify({token: "test-grant", expiry: "2030-01-01T00:00:00Z", refresh_token: "refresh", token_uri: "https://oauth2.googleapis.com/token", scopes: ["https://www.googleapis.com/auth/drive"]})
+  }};
+  const d = await fetchSource(rt, doc, serviceCatalog);
+  assert.equal(d.markdown, "Private tab text\n"); assert.equal(endpoints.length, 2);
+});
+
+test("Google Docs retries a throttled export but stops when Retry-After exceeds its budget", async () => {
+  const url = "https://docs.google.com/document/d/doc/edit";
+  let calls = 0;
+  const got = await fetchSource(runtime(async () => ++calls === 1 ? new Response("", { status: 429, headers: { "retry-after": "0" } }) : exportResponse("Doc", "md", "ok")), url, serviceCatalog);
+  assert.equal(got.markdown, "ok"); assert.equal(calls, 2);
+  calls = 0;
+  await assert.rejects(fetchSource(runtime(async () => { calls++; return new Response("", { status: 429, headers: { "retry-after": "120" } }); }), url, serviceCatalog), /retry after 120 seconds/);
+  assert.equal(calls, 1);
 });

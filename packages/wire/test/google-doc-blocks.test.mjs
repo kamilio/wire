@@ -1,0 +1,48 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { docBlocks, docChanges, mergeDocBlocks } from "../../provider-google-docs/dist/doc-blocks.js";
+
+test("block merging keeps independent changes to adjacent paragraphs and nested bullets", () => {
+  const base = "# Title\n\n* Parent\n  * First child\n    * Grandchild\n  * Other child\n";
+  const remote = base.replace("First child", "Remote child").replace("Title", "New title");
+  const local = base.replace("Grandchild", "Revised grandchild").replace("Other child", "Local child");
+  const expected = remote.replace("Grandchild", "Revised grandchild").replace("Other child", "Local child");
+  assert.equal(mergeDocBlocks(base, local, remote), expected);
+  assert.equal(mergeDocBlocks(base, remote, local), expected);
+});
+
+test("block merging retains remotely inserted and deleted paragraphs beside a local edit", () => {
+  const base = "Intro\nA\nB\nC\n";
+  assert.equal(mergeDocBlocks(base, "Intro\nA\nNew B\nC\n", "New intro\nAdded\nA\nB\n"), "New intro\nAdded\nA\nNew B\n");
+  assert.equal(mergeDocBlocks(base, base.replace("A\n", "Inserted\nA\n"), base.replace("A\n", "New A\n")), "Intro\nInserted\nNew A\nB\nC\n");
+});
+
+test("overlapping changes, including competing inserts and ambiguous repeated deletions, cannot merge", () => {
+  const base = "A\nB\nC\n";
+  for (const [local, remote] of [
+    ["A\nNew B\nC\n", "A\nOther B\nC\n"],
+    ["A\nC\n", "A\nOther B\nC\n"],
+    ["A\nX\nB\nC\n", "A\nY\nB\nC\n"],
+  ]) assert.throws(() => mergeDocBlocks(base, local, remote), /changed remotely and locally/);
+  assert.throws(() => mergeDocBlocks("A\nsame\nsame\nZ\n", "A\nchanged\nsame\nZ\n", "A\nsame\nZ\n"), /changed remotely and locally/);
+  assert.throws(() => mergeDocBlocks(base, "A\nNew B\nC\n", "A\nB\nB\nC\n"), /changed remotely and locally/);
+  assert.equal(mergeDocBlocks(base, "A\nX\nB\nNew C\n", "A\nX\nB\nC\n"), "A\nX\nB\nNew C\n");
+});
+
+test("fenced code and tables are each one indivisible block", () => {
+  const code = "````ts\na\n```\nb\n````\n", table = "| A |\n| --- |\n| B |\n";
+  const base = code + "\n" + table + "Tail";
+  assert.deepEqual(docBlocks(base), [code, "\n", table, "Tail"]);
+  assert.throws(() => mergeDocBlocks(base, base.replace("\na\n", "\nx\n"), base.replace("\nb\n", "\ny\n")), /conflict/);
+  assert.throws(() => mergeDocBlocks(base, base.replace("| A |", "| X |"), base.replace("| B |", "| Y |")), /conflict/);
+  assert.equal(mergeDocBlocks(base, base.replace("Tail", "New tail"), base.replace("| A |", "| X |")), base.replace("Tail", "New tail").replace("| A |", "| X |"));
+});
+
+test("a sparse change in a long document maps to just the updated paragraph", () => {
+  const base = Array.from({ length: 10_000 }, (_, i) => `paragraph ${i}\n`);
+  const local = [...base]; local[124] = "local\n"; local[9900] = "another\n";
+  assert.deepEqual(docChanges(base, local), [
+    { start: 124, end: 125, replacement: ["local\n"] },
+    { start: 9900, end: 9901, replacement: ["another\n"] },
+  ]);
+});
