@@ -20,5 +20,6 @@ export function validateRefs(refs: HistoryRefs) {
       if (!/^[a-f0-9]{48}$/.test(key) || !record || typeof record.crlf !== "boolean" || !known.has(record.shown) || !known.has(record.base)) return corrupt();
     }
   }
-  if (refs.conflict && ![refs.conflict.base,refs.conflict.local,refs.conflict.remote].every(ref => known.has(ref))) return corrupt();
+  const c = refs.conflict;
+  if (c && !("editor" in c ? [c.editor,c.shell,c.editorBase,c.shellBase] : [c.base,c.local,c.remote]).every(ref => known.has(ref))) return corrupt();
 }

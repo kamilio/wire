@@ -83,6 +83,8 @@ wire attach 'https://docs.google.com/document/d/DOCUMENT_ID/edit' --editor-recei
 
 Wire adds a local HTML comment to the Markdown. Keep it with the buffer: when an old window saves, Wire uses its receipt to find the revision that window saw. Wire removes the comment before sending content to Google Docs and hides it from `wire diff` and `wire shell`. Editors and hooks that read the file directly see the comment. An absent, invalid, or foreign receipt stops sync and leaves the file intact. Receipts identify an editing base; they do not record keystrokes or prove when an edit happened.
 
+If an old editor buffer replaces an unpublished shell draft, `wire conflicts Notes.md` shows two local revisions. Compare them with `wire diff Notes.md --from editor --to shell`. To combine them, edit the working file and run `wire resolve Notes.md working`; to select one unchanged side, use `editor` or `shell`. Then run `wire sync Notes.md` to merge with the latest remote document.
+
 A shell edit is published only if the provider can check that the remote revision still matches. Google Docs supports this with write access. For a Notion page, Sheet, or another provider without this check, Wire keeps the local draft and refuses the upload. You can copy the intended changes into the provider yourself.
 
 If sync reports a conflict, compare both saved versions, then choose which content to keep:

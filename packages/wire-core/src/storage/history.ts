@@ -9,7 +9,7 @@ import { transactionId, validateRefs } from "./history-integrity.js";
 import { stableJsonCompact } from "../core/json.js";
 
 export type HistoryEntry = { id: string; parents: string[]; kind: "attach" | "local" | "remote" | "merge" | "resolve" | "recovered"; at: string };
-export type HistoryConflict = { base: string; local: string; remote: string };
+export type HistoryConflict = { base: string; local: string; remote: string } | { editor: string; shell: string; editorBase: string; shellBase: string };
 export type HistoryStatus = { path: string; base: string | null; modified: boolean; conflict: HistoryConflict | null };
 export type HistoryDiff = { from: string; to: string; before: string; after: string; token: string };
 type Revision = HistoryEntry & { blob: string };
@@ -161,6 +161,15 @@ export class DocumentHistory {
       this.refs.base = this.refs.remote = await this.revision("attach", markdown, []);
       await this.save();
     }
+  }
+  async checkPendingDraft(view: ReturnType<typeof editorView>) {
+    const shell = this.refs.editorDraft;
+    if (!shell || !view.shown || !view.base || shell === view.shown || this.refs.conflict) return;
+    const basis = Object.values(this.refs.editorReceipts ?? {}).find(r => r.shown === shell)?.base;
+    if (!basis) throw new Error("Missing receipt for the saved shell draft. Both files were kept.");
+    const editor = await this.revision("local", view.markdown, [view.shown]);
+    this.refs.conflict = { editor, shell, editorBase: view.base, shellBase: basis };
+    await this.save();
   }
   async captureLocal(markdown: string, parent = this.refs.draft ?? this.refs.base) {
     this.refs.draft = await this.revision("local", markdown, [parent]);

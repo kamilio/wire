@@ -136,6 +136,7 @@ function wireUserErrorMessage(message) {
         || /^Ambiguous resource path /.test(message)
         || /^(Unresolved Wire conflict|Working file changed since the conflict|Stale shell edit|No saved conflict|Unknown document revision|No saved (?:base|local|remote) revision|Linked Markdown is missing|Another Wire operation owns this document|Local file changed during (?:sync|detach)|This registry does not provide durable document history|This provider cannot conditionally publish|Resolve and sync the Wire draft before detaching|Notion cannot condition a save|Google Sheets cannot condition a save)/.test(message)
         || /^((?:Invalid|Missing|Orphaned) Wire editor receipt|Editor receipts require|An older editor buffer|Document already has a different sync owner)/.test(message)
+        || /^Wire history and tracked Markdown must be on the same filesystem/.test(message)
         || /^Login not saved$/.test(message)
         || /authentication (is missing|is missing or expired|failed|expired).*Run `wire (ashby|asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.test(message)
         || /^Asana API /.test(message)
@@ -649,8 +650,8 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
             defineCommand({
                 name: "diff", scope: ["cli"], description: "Compare two versions. Defaults to the last sync and working copy.",
                 positional: ["resource"], params: S.Object({ resource,
-                    from: S.Optional(S.String({ description: "Revision ID or base, working, local, remote." })),
-                    to: S.Optional(S.String({ description: "Revision ID or base, working, local, remote." })),
+                    from: S.Optional(S.String({ description: "Revision ID, base, working, local, remote, editor, or shell." })),
+                    to: S.Optional(S.String({ description: "Revision ID, base, working, local, remote, editor, or shell." })),
                 }),
                 handler: ({ params }) => userFacing(async () => {
                     const d = await wire.historyDiff(params.resource, currentDirectory, params.from, params.to);
@@ -660,16 +661,17 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
                 render: render(result => result.diff || "No changes."),
             }),
             defineCommand({
-                name: "conflicts", scope: ["cli"], description: "Show the base, local and remote revisions of an unresolved conflict.",
+                name: "conflicts", scope: ["cli"], description: "Show both saved sides of an unresolved conflict.",
                 positional: ["resource"], params: S.Object({ resource }),
                 handler: ({ params }) => userFacing(async () => (await wire.historyStatus(params.resource, currentDirectory)).conflict),
-                render: render(c => c ?
+                render: render(c => c && "editor" in c ?
+                    `editor: ${c.editor}\nshell: ${c.shell}\nCompare with wire diff <resource> --from editor --to shell. Edit the working file and resolve working, or choose editor or shell.` : c ?
                     `base: ${c.base}\nlocal: ${c.local}\nremote: ${c.remote}\nCompare with wire diff <resource> --from local --to remote, then wire resolve <resource> <choice>.` : "No conflicts."),
             }),
             defineCommand({
                 name: "resolve", scope: ["cli"], description: "Resolve a conflict locally. Sync to publish.",
                 positional: ["resource", "choice"], params: S.Object({ resource,
-                    choice: S.Enum(["local", "remote", "working"], { description: "Use saved local or remote content, or the edited working file." }),
+                    choice: S.Enum(["local", "remote", "working", "editor", "shell"], { description: "Choose a saved side of the conflict, or working to keep your edited file." }),
                 }),
                 handler: ({ params }) => userFacing(() => wire.resolveConflict(params.resource, currentDirectory, params.choice)),
                 render: render(historyStatusText),
