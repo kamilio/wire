@@ -141,9 +141,17 @@ export function composeWire(dependencies) {
     const locked = async (root, registry, key, fn) => durable(registry) ? withHistoryLock(root, key, fn) : fn();
     const owner = async (registry, source, url) => assertWireOwner(await registry.listResources(), source, dependencies.catalog.find(s => s.matches(new URL(url))));
     const historyFor = async (root, registry, source) => durable(registry) ? DocumentHistory.load(root, resourceId(source), dependencies.now) : null;
+    const removeDetached = (registry) => async (before) => {
+        const current = (await registry.listResources()).find(r => r.id === before.id);
+        if (!current)
+            return;
+        if (stableJsonCompact(current) !== stableJsonCompact(before))
+            throw new Error("Registration changed during detach. The newer registration was kept.");
+        await registry.delete(before.id);
+    };
     const restore = async (root, registry, source, path) => {
         const history = await historyFor(root, registry, source);
-        await history?.recover(path, r => registry.put(r));
+        await history?.recover(path, r => registry.put(r), removeDetached(registry));
         return history;
     };
     const checkReceiptLink = (resource, h) => {
@@ -533,11 +541,16 @@ export function composeWire(dependencies) {
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
         const resource = await resolveResource(registry, value, root, path);
         const outputPath = join(dirname(root), primaryLink(resource).path);
-        const initialRaw = await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
         const source = parseSourceUrl(resource.urls[0], dependencies.catalog);
         await owner(registry, source, resource.urls[0]);
-        const h = await restore(root, registry, source, outputPath);
+        const h = await historyFor(root, registry, source);
+        const recovered = await h?.recover(outputPath, r => registry.put(r), removeDetached(registry));
+        if (recovered) {
+            const markdown = await h.text(h.refs.base);
+            return { resource: recovered, path: outputPath, markdown, summary: { action: "detached", added: 0, modified: 0, removed: 0, remote: recovered.urls[0], local: outputPath } };
+        }
         checkReceiptLink(resource, h);
+        const initialRaw = h ? await working(outputPath) : await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
         const previousView = initialRaw === null ? null : (h ? h.view(initialRaw) : editorView(initialRaw));
         const previous = previousView?.markdown ?? "";
         if (h?.refs.conflict || h?.refs.strict)
@@ -553,11 +566,12 @@ export function composeWire(dependencies) {
             const { editorReceipts, ...plainRefs } = h.refs;
             if (editorReceipts)
                 plainRefs.retiredEditorReceipts = { ...plainRefs.retiredEditorReceipts, ...editorReceipts };
-            await h.publish(outputPath, onDisk, fetched.markdown, { ...plainRefs, base: next, remote: next, draft: null }, null, r => registry.put(r));
+            await h.detach(outputPath, onDisk, fetched.markdown, { ...plainRefs, base: next, remote: next, draft: null }, resource, removeDetached(registry));
         }
-        else
+        else {
             await dependencies.filesystem.writeText(outputPath, fetched.markdown);
-        await registry.delete(resource.id);
+            await registry.delete(resource.id);
+        }
         return { resource, path: outputPath, markdown: fetched.markdown, summary: { action: "detached", ...changeSummary(previous, fetched.markdown), remote: resource.urls[0], local: outputPath } };
     };
     const detach = (v, p) => underResourceLock(v, p, () => detachInner(v, p));

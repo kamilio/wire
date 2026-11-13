@@ -125,10 +125,12 @@ export async function withHistoryLock(root, key, run) {
     }
 }
 export class DocumentHistory {
+    id;
     now;
     dir;
     refs = empty();
     constructor(root, id, now) {
+        this.id = id;
         this.now = now;
         this.dir = join(root, "history", hash(id));
     }
@@ -244,7 +246,12 @@ export class DocumentHistory {
         await json(join(this.dir, "pending.json"), pending);
         await this.finish(pending, put);
     }
-    async recover(path, put) {
+    async detach(path, expected, next, refs, detached, remove) {
+        const intent = { path, expected, next, refs, detached, resource: null, token: randomUUID(), acknowledged: false };
+        await json(join(this.dir, "pending.json"), intent);
+        await this.finish(intent, undefined, remove);
+    }
+    async recover(path, put, remove) {
         const file = join(this.dir, "pending.json");
         const raw = await working(file);
         if (raw === null)
@@ -255,9 +262,12 @@ export class DocumentHistory {
         validateRefs(pending.refs);
         if (path !== undefined && resolve(path) !== pending.path)
             throw new Error("Wire publication pending at another path: " + pending.path);
-        await this.finish(pending, put);
+        if (pending.detached && (pending.detached.id !== this.id || pending.resource || pending.acknowledged || !remove))
+            throw new Error("Corrupt Wire detach journal.");
+        await this.finish(pending, put, remove);
+        return pending.detached;
     }
-    async finish(p, put) {
+    async finish(p, put, remove) {
         const pending = join(this.dir, "pending.json"), stage = join(this.dir, p.token + ".new"), old = join(this.dir, p.token + ".old"), delivered = join(this.dir, p.token + ".ok");
         const cleanup = async () => { await unlink(pending); await syncDir(this.dir); await rm(stage, { force: true }); await rm(delivered, { force: true }); };
         const retry = async () => {
@@ -366,6 +376,11 @@ export class DocumentHistory {
             await put(p.resource);
         this.refs = p.refs;
         await this.save();
+        // An unregistered path can be uploaded as a new document. Make refs and
+        // plain file durable before removing its registration; retain intent until
+        // deletion succeeds so an interrupted detach can finish under the lock.
+        if (p.detached)
+            await remove(p.detached);
         await cleanup();
     }
 }

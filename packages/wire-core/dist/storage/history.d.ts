@@ -43,6 +43,7 @@ export type HistoryRefs = {
 export declare function working(path: string): Promise<string | null>;
 export declare function withHistoryLock<T>(root: string, key: string, run: () => Promise<T>): Promise<T>;
 export declare class DocumentHistory {
+    private readonly id;
     private readonly now;
     readonly dir: string;
     refs: HistoryRefs;
@@ -67,7 +68,16 @@ export declare class DocumentHistory {
     observe(remote: FetchedDocument): Promise<string>;
     status(path: string): Promise<HistoryStatus>;
     publish(path: string, expected: string | null, next: string, refs: HistoryRefs, resource: Resource | null, put: (r: Resource) => Promise<Resource>, acknowledged?: boolean): Promise<void>;
-    recover(path: string | undefined, put: (r: Resource) => Promise<Resource>): Promise<void>;
+    detach(path: string, expected: string | null, next: string, refs: HistoryRefs, detached: Resource, remove: (r: Resource) => Promise<void>): Promise<void>;
+    recover(path: string | undefined, put: (r: Resource) => Promise<Resource>, remove?: (r: Resource) => Promise<void>): Promise<Readonly<{
+        id: string;
+        type: import("../core/model.js").ResourceType;
+        identifiers: readonly import("../core/model.js").Identifier[];
+        urls: readonly string[];
+        filesystem_links: readonly import("../core/model.js").FilesystemLink[];
+        data: readonly import("../core/model.js").ResourceData[];
+        relationships: readonly import("../core/model.js").Relationship[];
+    }> | undefined>;
     private finish;
 }
 export {};

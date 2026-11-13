@@ -18,7 +18,7 @@ export type HistoryRefs = {
   editorReceipts?: EditorReceipts; retiredEditorReceipts?: EditorReceipts; editorDraft?: string;
   strict: boolean; revisions: Revision[]; resolution: FetchedDocument | null; resolutionParent: string | null;
 };
-type Publication = { acknowledged: boolean; path: string; expected: string | null; next: string; token: string; refs: HistoryRefs; resource: Resource | null };
+type Publication = { detached?: Resource; acknowledged: boolean; path: string; expected: string | null; next: string; token: string; refs: HistoryRefs; resource: Resource | null };
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const code = (error: unknown) => (error as NodeJS.ErrnoException).code;
 const missing = (error: unknown) => code(error) === "ENOENT";
@@ -85,7 +85,7 @@ export async function withHistoryLock<T>(root: string, key: string, run: () => P
 export class DocumentHistory {
   readonly dir: string;
   refs: HistoryRefs = empty();
-  private constructor(root: string, id: string, private readonly now: () => Date) { this.dir = join(root, "history", hash(id)); }
+  private constructor(root: string, private readonly id: string, private readonly now: () => Date) { this.dir = join(root, "history", hash(id)); }
   static async load(root: string, id: string, now: () => Date) {
     const history = new DocumentHistory(root, id, now);
     await privateDirectory(join(root, "history")); await privateDirectory(history.dir);
@@ -181,7 +181,12 @@ export class DocumentHistory {
     await json(join(this.dir, "pending.json"), pending);
     await this.finish(pending, put);
   }
-  async recover(path: string | undefined, put: (r: Resource) => Promise<Resource>) {
+  async detach(path: string, expected: string | null, next: string, refs: HistoryRefs, detached: Resource, remove: (r: Resource) => Promise<void>) {
+    const intent: Publication = {path, expected, next, refs, detached, resource: null, token: randomUUID(), acknowledged: false};
+    await json(join(this.dir, "pending.json"), intent);
+    await this.finish(intent, undefined, remove);
+  }
+  async recover(path: string | undefined, put: (r: Resource) => Promise<Resource>, remove?: (r: Resource) => Promise<void>) {
     const file = join(this.dir, "pending.json");
     const raw = await working(file);
     if (raw === null) return;
@@ -189,9 +194,11 @@ export class DocumentHistory {
     if (!transactionId.test(pending.token) || typeof pending.next !== "string" || (pending.expected !== null && typeof pending.expected !== "string") || typeof pending.acknowledged !== "boolean") throw new Error("Corrupt Wire publication journal.");
     validateRefs(pending.refs);
     if (path !== undefined && resolve(path) !== pending.path) throw new Error("Wire publication pending at another path: " + pending.path);
-    await this.finish(pending, put);
+    if (pending.detached && (pending.detached.id !== this.id || pending.resource || pending.acknowledged || !remove)) throw new Error("Corrupt Wire detach journal.");
+    await this.finish(pending, put, remove);
+    return pending.detached;
   }
-  private async finish(p: Publication, put: (r: Resource) => Promise<Resource>) {
+  private async finish(p: Publication, put?: (r: Resource) => Promise<Resource>, remove?: (r: Resource) => Promise<void>) {
     const pending = join(this.dir, "pending.json"), stage = join(this.dir, p.token + ".new"), old = join(this.dir, p.token + ".old"), delivered = join(this.dir, p.token + ".ok");
     const cleanup = async () => { await unlink(pending); await syncDir(this.dir); await rm(stage, { force: true }); await rm(delivered, { force: true }); };
     const retry = async (): Promise<never> => {
@@ -252,7 +259,12 @@ export class DocumentHistory {
       await syncDir(dirname(p.path));
       await write(delivered, ""); await syncDir(this.dir);
     }
-    if (p.resource) await put(p.resource);
-    this.refs = p.refs; await this.save(); await cleanup();
+    if (p.resource) await put!(p.resource);
+    this.refs = p.refs; await this.save();
+    // An unregistered path can be uploaded as a new document. Make refs and
+    // plain file durable before removing its registration; retain intent until
+    // deletion succeeds so an interrupted detach can finish under the lock.
+    if (p.detached) await remove!(p.detached);
+    await cleanup();
   }
 }

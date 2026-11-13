@@ -116,3 +116,46 @@ test("lost, copied and malformed receipts never reach upload, sync, shell or ano
   await f.save(valid);
   await assert.rejects(wire.sync(file,path), /receipt/);
 });
+
+for (const backend of ["files", "sqlite"]) {
+  test(backend + ": SIGKILL at registration removal cannot strand a plain file on a receipt link", async t => {
+    const afterRemoval = backend === "sqlite";
+    const f = await fixture(t,backend);
+    const {spawnSync} = await import("node:child_process");
+    // A separate Node process owns the history lock and invokes real detach.
+    // Kill before FileRegistry.delete, and after SQLite's committed delete.
+    const core = new URL("../../wire-core/dist/index.js", import.meta.url).href;
+    const program = `
+      import { composeWire, configuredWireRoot, initializeWire, openWireRegistry, wireRelativePath } from ${JSON.stringify(core)};
+      import {stat,readFile} from "node:fs/promises";
+      const [path,file,markdown,backend] = process.argv.slice(1);
+      const registry = await openWireRegistry(file,path);
+      const del = registry.delete.bind(registry);
+      registry.delete = async id => {
+        if (backend === "sqlite") await del(id);
+        process.kill(process.pid, "SIGKILL");
+      };
+      const wire = composeWire({home:path,fetchInput:{},initialization:{backend,registryPath:"records"},
+        catalog:[{name:"google-docs",matches:()=>true,parse:u=>({service:"google-docs",type:"document",identifier:u.pathname}),
+          fetch: async()=>({title:"Note",markdown,data:{markdown,verified_revision:"for:"+markdown}})}],
+        workspace:{configuredRoot:configuredWireRoot,initialize:initializeWire,openRegistry:async()=>registry,relativePath:wireRelativePath},
+        filesystem:{exists:p=>stat(p).then(()=>true,()=>false),isFile:p=>stat(p).then(s=>s.isFile(),()=>false),readText:p=>readFile(p,"utf8")},
+        now:()=>new Date(0),open:async()=>{}});
+      await wire.detach(file,path);
+    `;
+    const child = spawnSync(process.execPath,["--input-type=module","-e",program,f.path,f.file,f.A,backend],{encoding:"utf8",timeout:30000});
+    assert.equal(child.signal,"SIGKILL",child.stderr);
+    assert.equal(await f.read(), f.A);
+    assert.equal((await f.wire.listResources(f.path)).length, Number(!afterRemoval));
+    if (!afterRemoval) {
+      const retried = await f.make().detach(f.file,f.path);
+      assert.equal(retried.summary.action,"detached");
+      assert.equal((await f.wire.listResources(f.path)).length,0);
+    }
+    // Reattachment replays any outstanding cleanup without reviving the
+    // previous enrollment or deleting the new registration.
+    await f.make().adopt(f.url,f.file,true);
+    assert.equal((await f.wire.listResources(f.path)).length,1);
+    assert.equal((await f.wire.historyStatus(f.file,f.path)).modified,false);
+  });
+}
