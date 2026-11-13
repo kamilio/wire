@@ -71,13 +71,15 @@ export type DownloadedDocument = FetchedDocument & Readonly<{
 export type Service<FetchInput = never> = Readonly<{
   name: string;
   owner?: string;
+  /** An owned Google Docs adapter can verify the exact local file before saving. */
+  supportsEditorReceipts?: boolean;
   matches(url: URL): boolean;
   parse(url: URL): Source;
   fetch(input: FetchInput, url: string, source: Source): Promise<FetchedDocument>;
   download?(input: FetchInput, url: string, source: Source, write: DownloadWriter, addMarkdown?: AddMarkdown): Promise<DownloadedDocument | null>;
   /** Pure combination of local drafts. A thrown error leaves both saved sides for resolution. */
   mergeDrafts?(base: string, editor: string, shell: string): string;
-  synchronize?(input: FetchInput, url: string, source: Source, base: JsonValue, markdown: string, markdownPath: string, observeRemote?: (remote: FetchedDocument) => void | Promise<void>, requireConditionalWrite?: boolean): Promise<SynchronizedDocument>;
+  synchronize?(input: FetchInput, url: string, source: Source, base: JsonValue, markdown: string, markdownPath: string, observeRemote?: (remote: FetchedDocument) => void | Promise<void>, requireConditionalWrite?: boolean, expectedFile?: string): Promise<SynchronizedDocument>;
   upload?(input: FetchInput, markdown: string, markdownPath: string): Promise<UploadedDocument>;
 }>;
 

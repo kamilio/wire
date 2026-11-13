@@ -10,6 +10,7 @@ export declare function googleDocListMarkdown(markdown: string, wordExport: () =
 export declare const googleDocsService: Readonly<{
     name: string;
     owner?: string;
+    supportsEditorReceipts?: boolean;
     matches(url: URL): boolean;
     parse(url: URL): Source;
     fetch(input: RuntimeCapabilities, url: string, source: Readonly<{
@@ -38,7 +39,7 @@ export declare const googleDocsService: Readonly<{
         title: string;
         markdown: string;
         data: JsonValue;
-    }>) => void | Promise<void>, requireConditionalWrite?: boolean): Promise<SynchronizedDocument>;
+    }>) => void | Promise<void>, requireConditionalWrite?: boolean, expectedFile?: string): Promise<SynchronizedDocument>;
     upload?(input: RuntimeCapabilities, markdown: string, markdownPath: string): Promise<import("wire-core").UploadedDocument>;
 }>;
 //# sourceMappingURL=google-docs.d.ts.map

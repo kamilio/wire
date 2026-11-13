@@ -15,6 +15,7 @@ export declare function editSlackMessage(runtime: RuntimeCapabilities, url: stri
 export declare const slackService: Readonly<{
     name: string;
     owner?: string;
+    supportsEditorReceipts?: boolean;
     matches(url: URL): boolean;
     parse(url: URL): import("wire-core").Source;
     fetch(input: RuntimeCapabilities, url: string, source: Readonly<{
@@ -43,7 +44,7 @@ export declare const slackService: Readonly<{
         title: string;
         markdown: string;
         data: import("wire-core").JsonValue;
-    }>) => void | Promise<void>, requireConditionalWrite?: boolean): Promise<import("wire-core").SynchronizedDocument>;
+    }>) => void | Promise<void>, requireConditionalWrite?: boolean, expectedFile?: string): Promise<import("wire-core").SynchronizedDocument>;
     upload?(input: RuntimeCapabilities, markdown: string, markdownPath: string): Promise<import("wire-core").UploadedDocument>;
 }>;
 //# sourceMappingURL=slack.d.ts.map

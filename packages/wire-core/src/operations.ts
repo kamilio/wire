@@ -244,6 +244,8 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
   };
   const store = async (url: string, path: string, fetched: FetchedDocument, previousMarkdown: string | null | undefined, action: WireAction, fixedOutputPath: string | undefined, summaryMarkdown: string | undefined, summaryAfterMarkdown: string, history?: DocumentHistory | null, enableReceipts = false, expectedRaw?: string | null): Promise<WireResult> => {
     const source = parseSourceUrl(url, dependencies.catalog);
+    const service = dependencies.catalog.find(s => s.matches(new URL(url)))!;
+    if (service.owner !== undefined && (!jsonObject(fetched.data) || fetched.data["wire_owner"] !== service.owner)) throw new Error("Provider returned a snapshot without its registered owner. The existing registration was kept.");
     const root = await wireRoot(dependencies, path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
     const current = findResource(await registry.listResources(), source, dependencies.catalog);
@@ -358,7 +360,10 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
       const h = await restore(root, registry, source);
       const current = findResource(await registry.listResources(), source, dependencies.catalog);
       checkReceiptLink(current, h);
-      if (editorReceipts && (!h || source.service !== "google-docs" || source.type !== "document" || dependencies.catalog.find(s => s.matches(new URL(url)))?.owner !== undefined)) throw new Error("Editor receipts require a generic Google Docs Markdown link with durable history.");
+      const service = dependencies.catalog.find(s => s.matches(new URL(url)))!;
+      if (editorReceipts && (!h || source.service !== "google-docs" || source.type !== "document" || (service.owner !== undefined && (!service.supportsEditorReceipts || fixed === undefined)))) {
+        throw new Error("Editor receipts require a Google Docs Markdown link with durable history. An owned provider must explicitly support receipts and adopt the existing file.");
+      }
       if (current && fixed !== undefined && join(dirname(root), primaryLink(current).path) !== fixed) throw new Error("This URL is already attached at another path.");
       if (fixed !== undefined && (await registry.findByPath(dependencies.workspace.relativePath(fixed, root))).some(r => r.id !== resourceId(source))) throw new Error("This file already has another registration.");
       if (h && current) await h.seed(markdownSnapshot(current.data.find(i => i.namespace === source.service && i.key === "snapshot")?.value ?? null));
@@ -547,7 +552,7 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
         observed.remote = remote;
         observations = observations.then(async () => { if (history) { await history.observe(remote); await history.save(); } });
         return observations;
-      }, strict);
+      }, strict, raw);
       await observations;
     } catch (error) {
       await observations;

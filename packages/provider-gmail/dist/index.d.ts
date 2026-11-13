@@ -3,6 +3,7 @@ export declare const gmailProvider: Readonly<{
     services: readonly [Readonly<{
         name: string;
         owner?: string;
+        supportsEditorReceipts?: boolean;
         matches(url: URL): boolean;
         parse(url: URL): import("wire-core").Source;
         fetch(input: import("wire-core").RuntimeCapabilities, url: string, source: Readonly<{
@@ -31,7 +32,7 @@ export declare const gmailProvider: Readonly<{
             title: string;
             markdown: string;
             data: import("wire-core").JsonValue;
-        }>) => void | Promise<void>, requireConditionalWrite?: boolean): Promise<import("wire-core").SynchronizedDocument>;
+        }>) => void | Promise<void>, requireConditionalWrite?: boolean, expectedFile?: string): Promise<import("wire-core").SynchronizedDocument>;
         upload?(input: import("wire-core").RuntimeCapabilities, markdown: string, markdownPath: string): Promise<import("wire-core").UploadedDocument>;
     }>];
 }>;

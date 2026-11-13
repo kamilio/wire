@@ -31,12 +31,15 @@ export function fetchSource(input, value, catalog) {
     const service = serviceForUrl(url, catalog);
     return service.fetch(input, value, service.parse(url));
 }
-export function synchronizeSource(input, value, catalog, base, markdown, markdownPath, observeRemote, requireConditionalWrite) {
+export function synchronizeSource(input, value, catalog, base, markdown, markdownPath, observeRemote, requireConditionalWrite, expectedFile) {
     plainMarkdown(markdown);
     const url = new URL(value);
     const service = serviceForUrl(url, catalog);
     const source = service.parse(url);
-    return service.synchronize === undefined ? service.fetch(input, value, source) : service.synchronize(input, value, source, base, markdown, markdownPath, observeRemote, requireConditionalWrite);
+    // Only an explicitly opted-in owner uses raw file bytes for its final local
+    // comparison. Normal providers only receive the clean Markdown payload.
+    const ownedFile = service.owner && service.supportsEditorReceipts === true && source.service === "google-docs" && source.type === "document" ? expectedFile : undefined;
+    return service.synchronize === undefined ? service.fetch(input, value, source) : service.synchronize(input, value, source, base, markdown, markdownPath, observeRemote, requireConditionalWrite, ownedFile);
 }
 export function uploadSource(input, catalog, markdown, markdownPath) {
     plainMarkdown(markdown);
