@@ -39,8 +39,22 @@ jobs:
       - run: npm pack --workspace @kamilio/wire --json --pack-destination "$RUNNER_TEMP"
       - working-directory: packages/wire
         run: |
-          REMOTE=$(npm view @kamilio/wire version 2>/dev/null || echo "0.0.0")
-          npm version --no-git-tag-version --allow-same-version "$REMOTE"
-          npm version --no-git-tag-version patch
-      - working-directory: packages/wire
-        run: npm publish --access public
+          remote=$(npm view @kamilio/wire version)
+          npm version --no-git-tag-version --allow-same-version "$remote"
+          for attempt in 1 2; do
+            npm version --no-git-tag-version patch
+            version=$(node -p "require('./package.json').version")
+            if npm publish --access public > "$RUNNER_TEMP/wire-publish.log" 2>&1; then
+              cat "$RUNNER_TEMP/wire-publish.log"
+              exit 0
+            else
+              status=$?
+            fi
+            cat "$RUNNER_TEMP/wire-publish.log" >&2
+            # npm view omits staged versions, but the registry reserves their numbers.
+            if [[ $attempt == 2 ]] ||
+               ! grep -Fxq 'npm error code E409' "$RUNNER_TEMP/wire-publish.log" ||
+               ! grep -Fxq "npm error 409 Conflict - PUT https://registry.npmjs.org/@kamilio%2fwire - Cannot publish over previously staged version \"$version\"." "$RUNNER_TEMP/wire-publish.log"; then
+              exit "$status"
+            fi
+          done
