@@ -123,3 +123,46 @@ test("an interrupted stage write cannot become a partially delivered document", 
   assert.equal((await make().historyStatus(file,path)).modified,false);
   assert.equal(await readFile(file,"utf8"),doc.markdown);
 });
+
+test("history discovers a late save on a displaced inode without advancing any head", async t => {
+  const {path,file,wire,doc,make}=await fixture(t,"files");
+  const {open}=await import("node:fs/promises");
+  const fd=await open(file,"r+");
+  try {
+    doc.markdown="new remote\n";
+    await wire.sync(file,path);
+    await fd.truncate(0);
+    await fd.write("late save by the old editor\n",0,"utf8");
+  } finally { await fd.close(); }
+  const fresh=make();
+  const before=await fresh.historyStatus(file,path);
+  const entries=await fresh.historyLog(file,path);
+  const saved=entries.find(r=>r.kind==="recovered");
+  assert.ok(saved);
+  assert.deepEqual(saved.parents,[]);
+  assert.equal((await fresh.historyDiff(file,path,saved.id,"working")).before,"late save by the old editor\n");
+  assert.equal((await fresh.historyLog(file,path)).length,entries.length);
+  assert.deepEqual(await fresh.historyStatus(file,path),before);
+  await fresh.sync(file,path);
+  assert.equal(await readFile(file,"utf8"),"new remote\n");
+  assert.equal(doc.writes,0);
+});
+
+test("corrupt ancestry and PID reuse fail closed before provider writes", async t => {
+  const {path,file,wire,doc}=await fixture(t,"files");
+  const {readdir,symlink,unlink}=await import("node:fs/promises");
+  const {hostname}=await import("node:os");
+  const {createHash}=await import("node:crypto");
+  const root=join(path,".wire","history"), key=createHash("sha256").update("google-docs:synthetic").digest("hex");
+  const lock=join(root,"lock-"+key);
+  // A reused, live PID (even with an unrelated nonce) is not proof of death.
+  await symlink(hostname()+":"+process.pid+":unrelated-previous-owner",lock);
+  await assert.rejects(wire.sync(file,path),/Another Wire operation/);
+  await unlink(lock);
+  const dir=join(root,(await readdir(root)).find(n=>/^[a-f0-9]{64}$/.test(n)));
+  const refs=join(dir,"refs.json"),saved=JSON.parse(await readFile(refs,"utf8"));
+  saved.revisions[0].blob="../outside";
+  await writeFile(refs,JSON.stringify(saved));
+  await assert.rejects(wire.sync(file,path),/Corrupt Wire history/);
+  assert.equal(doc.writes,0);
+});

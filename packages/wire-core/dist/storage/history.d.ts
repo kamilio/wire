@@ -1,8 +1,9 @@
 import type { FetchedDocument, Resource } from "../core/model.js";
+import { type EditorReceipts } from "./editor-receipts.js";
 export type HistoryEntry = {
     id: string;
     parents: string[];
-    kind: "attach" | "local" | "remote" | "merge" | "resolve";
+    kind: "attach" | "local" | "remote" | "merge" | "resolve" | "recovered";
     at: string;
 };
 export type HistoryConflict = {
@@ -31,6 +32,8 @@ export type HistoryRefs = {
     draft: string | null;
     remote: string | null;
     conflict: HistoryConflict | null;
+    editorReceipts?: EditorReceipts;
+    editorDraft?: string;
     strict: boolean;
     revisions: Revision[];
     resolution: FetchedDocument | null;
@@ -46,10 +49,20 @@ export declare class DocumentHistory {
     static load(root: string, id: string, now: () => Date): Promise<DocumentHistory>;
     save(): Promise<void>;
     revision(kind: HistoryEntry["kind"], markdown: string, parents: (string | null)[]): Promise<string>;
-    token(): string;
+    token(raw?: string | null): string;
+    view(raw: string): {
+        markdown: string;
+        shown: null;
+        base: null;
+    } | {
+        markdown: string;
+        shown: string;
+        base: string;
+    };
     text(ref: string): Promise<string>;
+    log(): Promise<HistoryEntry[]>;
     seed(markdown: string | null): Promise<void>;
-    captureLocal(markdown: string): Promise<string>;
+    captureLocal(markdown: string, parent?: string | null): Promise<string>;
     observe(remote: FetchedDocument): Promise<string>;
     status(path: string): Promise<HistoryStatus>;
     publish(path: string, expected: string | null, next: string, refs: HistoryRefs, resource: Resource | null, put: (r: Resource) => Promise<Resource>, acknowledged?: boolean): Promise<void>;

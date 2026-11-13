@@ -2,19 +2,20 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, linkSync, readFileSync, renameSync, lstatSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { link, lstat, mkdir, open, readFile, readlink, rename, rm, stat, symlink, unlink } from "node:fs/promises";
+import { link, lstat, mkdir, open, readdir, readlink, rename, rm, stat, symlink, unlink } from "node:fs/promises";
 import type { FetchedDocument, Resource } from "../core/model.js";
-import { editorView, plainMarkdown, type EditorReceipts } from "./editor-receipts.js";
+import { editorView, hasEditorReceipt, plainMarkdown, type EditorReceipts } from "./editor-receipts.js";
+import { transactionId, validateRefs } from "./history-integrity.js";
 import { stableJsonCompact } from "../core/json.js";
 
-export type HistoryEntry = { id: string; parents: string[]; kind: "attach" | "local" | "remote" | "merge" | "resolve"; at: string };
+export type HistoryEntry = { id: string; parents: string[]; kind: "attach" | "local" | "remote" | "merge" | "resolve" | "recovered"; at: string };
 export type HistoryConflict = { base: string; local: string; remote: string };
 export type HistoryStatus = { path: string; base: string | null; modified: boolean; conflict: HistoryConflict | null };
 export type HistoryDiff = { from: string; to: string; before: string; after: string; token: string };
 type Revision = HistoryEntry & { blob: string };
 export type HistoryRefs = {
   base: string | null; draft: string | null; remote: string | null; conflict: HistoryConflict | null;
-  editorReceipts?: EditorReceipts;
+  editorReceipts?: EditorReceipts; editorDraft?: string;
   strict: boolean; revisions: Revision[]; resolution: FetchedDocument | null; resolutionParent: string | null;
 };
 type Publication = { acknowledged: boolean; path: string; expected: string | null; next: string; token: string; refs: HistoryRefs; resource: Resource | null };
@@ -88,8 +89,11 @@ export class DocumentHistory {
   static async load(root: string, id: string, now: () => Date) {
     const history = new DocumentHistory(root, id, now);
     await privateDirectory(join(root, "history")); await privateDirectory(history.dir);
-    try { history.refs = JSON.parse(await readFile(join(history.dir, "refs.json"), "utf8")) as HistoryRefs; }
-    catch (e) { if (!missing(e)) throw e; }
+    const raw = await working(join(history.dir, "refs.json"));
+    if (raw !== null) {
+      history.refs = JSON.parse(raw) as HistoryRefs;
+      validateRefs(history.refs);
+    }
     return history;
   }
   async save() { await json(join(this.dir, "refs.json"), this.refs); }
@@ -117,9 +121,36 @@ export class DocumentHistory {
   async text(ref: string) {
     const r = this.refs.revisions.find(r => r.id === ref);
     if (!r) throw new Error("Unknown document revision: " + ref);
-    const value = await readFile(join(this.dir, r.blob + ".md"), "utf8");
-    if (hash(value) !== r.blob) throw new Error("Corrupt Wire history snapshot: " + ref);
+    const value = await working(join(this.dir, r.blob + ".md"));
+    if (value === null || hash(value) !== r.blob) throw new Error("Corrupt Wire history snapshot: " + ref);
     return value;
+  }
+  async log(): Promise<HistoryEntry[]> {
+    // An old editor can still write through an open file descriptor after
+    // publication. Only an explicit history request scans these retained inodes.
+    const known = new Set(this.refs.revisions.map(r => r.blob));
+    const count = this.refs.revisions.length;
+    for (const name of await readdir(this.dir)) {
+      if (!name.endsWith(".old") || !transactionId.test(name.slice(0, -4))) continue;
+      const path = join(this.dir, name);
+      let view: ReturnType<typeof editorView>;
+      try {
+        const raw = await working(path);
+        if (raw === null) continue;
+        // A pre-enrollment displaced file has no receipt. Its parent is unknown.
+        view = editorView(raw, hasEditorReceipt(raw) ? this.refs.editorReceipts : undefined);
+        if (view.shown && !this.refs.revisions.some(r => r.id === view.shown)) throw new Error("Orphaned receipt");
+      } catch (cause) {
+        throw new Error("A retained editor save is unreadable. Inspect the private copy: " + path, { cause });
+      }
+      const blob = hash(view.markdown);
+      if (!known.has(blob)) {
+        await this.revision("recovered", view.markdown, [view.shown]);
+        known.add(blob);
+      }
+    }
+    if (count !== this.refs.revisions.length) await this.save();
+    return this.refs.revisions.map(({ blob: _, ...entry }) => entry).reverse();
   }
   async seed(markdown: string | null) {
     if (this.refs.base === null && markdown !== null) {
@@ -152,8 +183,11 @@ export class DocumentHistory {
   }
   async recover(path: string | undefined, put: (r: Resource) => Promise<Resource>) {
     const file = join(this.dir, "pending.json");
-    let pending: Publication;
-    try { pending = JSON.parse(await readFile(file, "utf8")) as Publication; } catch (e) { if (missing(e)) return; throw e; }
+    const raw = await working(file);
+    if (raw === null) return;
+    const pending = JSON.parse(raw) as Publication;
+    if (!transactionId.test(pending.token) || typeof pending.next !== "string" || (pending.expected !== null && typeof pending.expected !== "string") || typeof pending.acknowledged !== "boolean") throw new Error("Corrupt Wire publication journal.");
+    validateRefs(pending.refs);
     if (path !== undefined && resolve(path) !== pending.path) throw new Error("Wire publication pending at another path: " + pending.path);
     await this.finish(pending, put);
   }
@@ -196,6 +230,8 @@ export class DocumentHistory {
             await rename(tmp, stage);
             await syncDir(this.dir);
           } finally { await rm(tmp, { force: true }); }
+        } else if (await working(stage) !== p.next) {
+          throw new Error("Corrupt prepared Markdown. No file was published.");
         }
         if (p.expected !== null && !await exists(old)) {
           if (current !== p.expected) return retry();

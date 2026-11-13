@@ -52,8 +52,8 @@ export type WireWatchSyncCommand = "sync" | "download";
 export type WireWatchSyncHook = (command: WireWatchSyncCommand, result: WireResult) => Promise<WireResult>;
 export declare const wireWatchHooks: unique symbol;
 export type Wire = Readonly<{
-    attach(url: string, path: string): Promise<WireResult>;
-    adopt(url: string, existingFilePath: string): Promise<WireResult>;
+    attach(url: string, path: string, editorReceipts?: boolean): Promise<WireResult>;
+    adopt(url: string, existingFilePath: string, editorReceipts?: boolean): Promise<WireResult>;
     historyStatus(value: string, path: string): Promise<HistoryStatus>;
     historyLog(value: string, path: string): Promise<readonly HistoryEntry[]>;
     historyDiff(value: string, path: string, from?: string, to?: string): Promise<HistoryDiff>;
