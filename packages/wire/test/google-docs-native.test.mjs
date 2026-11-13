@@ -282,13 +282,32 @@ const boundary = ["",...labelRows,""], sub = ["* Move **parent**","  * Child"];
 function labelFixture(forward, opts={}) {
   const list=(text,id,level=0)=>({text,bullet:{listId:id,nestingLevel:level}});
   const nodes=[list("Move parent","custom-top"),list("Child","imported-child",1)];
-  const rows=[list("Left","before"),...(forward?[...labelRows,...nodes]:[...nodes,...labelRows]),list("Right","after")];
+  const rows=[list(opts.left??"Left","before"),...(forward?[...labelRows,...nodes]:[...nodes,...labelRows]),list("Right","after")];
   if (opts.duplicate) rows.push("Other notes");
   const f=fixture(rows,opts);
-  const md=segments=>["* Left",...segments,"* Right",...(opts.duplicate?["Other notes"]:[])].join("\n");
+  const md=segments=>["* "+(opts.left??"Left"),...segments,"* Right",...(opts.duplicate?["Other notes"]:[])].join("\n");
   const from=md(forward?[...boundary,...sub]:[...sub,...boundary]), to=md(forward?[...sub,...boundary]:[...boundary,...sub]);
   return {...f,from,to,rows};
 }
+test("suggestion guards check metadata keys, not words in a paragraph",async()=>{
+  for (const moveLabel of [false,true]) {
+    const setup=()=>{
+      const text="suggested next steps";
+      if (!moveLabel) return {...fixture([text]),from:text,to:text+" tomorrow"};
+      return labelFixture(true,{left:text});
+    };
+    const f=setup(); await f.write(f.from,f.to); assert.equal(f.posts.length,1);
+    for(const mark of [
+      p=>{p.suggestedParagraphStyleChanges={pending:{}};},
+      p=>{p.elements[0].textRun.suggestedInsertionIds=["pending"];},
+    ]) {
+      const f=setup(); mark(f.content[0].paragraph);
+      await assert.rejects(f.write(f.from,f.to),/cannot safely apply/);
+      assert.equal(f.posts.length,0);
+    }
+  }
+});
+
 test("a plain NBSP-separated label crosses one nested group without writing to a list item",async()=>{
   for (const forward of [false,true]) {
     const f=labelFixture(forward);await f.write(f.from,f.to);

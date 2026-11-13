@@ -269,6 +269,11 @@ export function alreadyAppliedPlainLabelMove(base: string, local: string, remote
   return expected.every((v,j)=>rows[first+j]===v);
 }
 
+function hasSuggestion(value: unknown): boolean {
+  return typeof value === "object" && value !== null &&
+    Object.entries(value).some(([key, child]) => key.startsWith("suggested") || hasSuggestion(child));
+}
+
 function movePlainLabel(tab: Tab, oldMd: string, newMd: string, guard: (a: number,b: number)=>void): DocsRequest[] | undefined {
   const move=plainLabelRotation(oldMd,newMd);
   if (!move) return;
@@ -285,7 +290,7 @@ function movePlainLabel(tab: Tab, oldMd: string, newMd: string, guard: (a: numbe
     return e && p && p.elements.every(r=>r.textRun) && contents(e)===block.text+"\n"
       && (p.paragraphStyle?.namedStyleType??"NORMAL_TEXT")===block.heading
       && (p.bullet?p.bullet.nestingLevel??0:null)===block.level
-      && !JSON.stringify(p).includes('"suggested') && !p.positionedObjectIds;
+      && !hasSuggestion(p) && !p.positionedObjectIds;
   })) return unsafe("section boundary does not match adjacent native paragraphs");
   const ps=cells[1]!.paragraph!.paragraphStyle??{};
   if (ps.direction && ps.direction!=="LEFT_TO_RIGHT" ||
@@ -425,7 +430,7 @@ function plan(tab: Tab, previous: string, desired: string, comments: IndexedRang
   };
   function editable(target: ReturnType<typeof locate>, destructive: boolean) {
     const p = target.e.paragraph!;
-    if (JSON.stringify(p).includes('"suggested') || p["positionedObjectIds"] || p["pageBreakBefore"] || (destructive && p.paragraphStyle?.headingId)) return unsafe("paragraph has a named range, suggestion, object or heading anchor");
+    if (hasSuggestion(p) || p["positionedObjectIds"] || p["pageBreakBefore"] || (destructive && p.paragraphStyle?.headingId)) return unsafe("paragraph has a named range, suggestion, object or heading anchor");
   }
   if (move) {
     // Moving a paragraph requires recreating it. Reject any native detail
