@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync, watch } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 import { promisify } from "node:util";
 import { createCookiesCapability } from "./cookies.js";
 import { createGoogleTokensCapability } from "./google.js";
@@ -57,7 +57,11 @@ export function createNodeOpenFiles(processCapability: ProcessCapability): OpenF
 export function createNodeWatch(): WatchCapability {
   return Object.freeze({
     watchFile: (path: string, onChange: () => void | Promise<void>) => {
-      const watcher = watch(path, () => { void onChange(); });
+      // Editors often replace the inode on save. Watch its name in the directory.
+      const name = basename(path);
+      const watcher = watch(dirname(path), (_event, filename) => {
+        if (filename === null || filename === name) void onChange();
+      });
       return Object.freeze({ close: () => watcher.close() });
     },
     every: (milliseconds: number, onTick: () => void | Promise<void>) => {

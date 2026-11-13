@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import {
@@ -13,6 +13,7 @@ import {
   createNodeOpenFiles,
   createNodeProcess,
   createNodeSecrets,
+  createNodeWatch,
   detectCookieFormat,
   googleTokenExpired,
   mergeGoogleRefresh,
@@ -42,6 +43,41 @@ function fakeFilesystem(files) {
     },
   };
 }
+
+test("the Node watcher follows repeated atomic editor saves and ignores sibling writes", async () => {
+  await mkdir(testRoot, { recursive: true });
+  const directory = await mkdtemp(join(testRoot, "watch-"));
+  const path = join(directory, "note.md");
+  const sibling = join(directory, "note.md.new");
+  await writeFile(path, "initial");
+  let events = 0;
+  const observed = new Set();
+  const watch = createNodeWatch().watchFile(path, async () => {
+    events++;
+    observed.add(await readFile(path, "utf8"));
+  });
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  try {
+    for (const [i, atomic] of [true, false, true, false].entries()) {
+      const text = `save ${i}`;
+      await writeFile(atomic ? sibling : path, text);
+      if (atomic) await rename(sibling, path);
+      const deadline = Date.now() + 2000;
+      while (!observed.has(text) && Date.now() < deadline) await delay(20);
+      assert.ok(observed.has(text), `missed ${atomic ? "atomic" : "in-place"} ${text}`);
+      await delay(50);
+    }
+    // Let the OS finish delivering events from the final save before changing the sibling.
+    await delay(250);
+    const beforeSibling = events;
+    await writeFile(sibling, "unrelated");
+    await delay(250);
+    assert.equal(events, beforeSibling);
+  } finally {
+    watch.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("parseNetscapeCookies parses comments, HttpOnly, flags, expiry, and tabbed values", () => {
   const cookies = parseNetscapeCookies([
