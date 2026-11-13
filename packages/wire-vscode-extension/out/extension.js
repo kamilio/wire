@@ -18418,12 +18418,18 @@ function docChanges(base, side) {
 function conflict() {
   throw new Error("Google Docs changed remotely and locally. Resolve the conflict in Google Docs or the local Markdown file before syncing again.");
 }
-function mergeDocBlocks(base, local, remote) {
+function mergeDocBlocks(base, local, remote, sameRendering = (a, b2) => a === b2) {
   if (base === remote || local === remote) return local;
   if (base === local) return remote;
   const blocks = docBlocks(base);
   const localBlocks = docBlocks(local), remoteBlocks = docBlocks(remote);
-  const localChanges = docChanges(blocks, localBlocks), remoteChanges = docChanges(blocks, remoteBlocks);
+  const remoteChanges = docChanges(blocks, remoteBlocks);
+  const remoteAt = new Map(remoteChanges.map((change) => [change.start, change]));
+  const localChanges = docChanges(blocks, localBlocks).filter((change) => {
+    const other = remoteAt.get(change.start);
+    return !other || other.end !== change.end || !sameRendering(change.replacement.join(""), other.replacement.join(""));
+  });
+  if (!localChanges.length) return remote;
   const positions = occurrences(blocks, 0, blocks.length);
   for (const [side, changes] of [[localBlocks, localChanges], [remoteBlocks, remoteChanges]]) {
     const sidePositions = occurrences(side, 0, side.length);
@@ -18436,7 +18442,6 @@ function mergeDocBlocks(base, local, remote) {
   let pos = 0, previous;
   const result = [];
   for (const change of all) {
-    if (previous && previous.start === change.start && previous.end === change.end && previous.replacement.join("") === change.replacement.join("")) continue;
     if (change.start < pos || previous && previous.start === previous.end && change.start === change.end && previous.start === change.start) conflict();
     result.push(blocks.slice(pos, change.start).join(""), change.replacement.join(""));
     pos = change.end;
@@ -19545,7 +19550,7 @@ Prefix it with an apostrophe or rewrite it as plain text before syncing.`);
   if (documentTab(source) === "t.0" && objectValue(base)["document_id"] && !objectValue(base)["document_tab"] && baseMarkdown !== remote.markdown) {
     throw new Error("Google Docs saved snapshot predates explicit tab selection. Keep the local edits and reconcile them with a fresh download of this tab.");
   }
-  const merged = mergeDocBlocks(baseMarkdown, markdown, remote.markdown);
+  const merged = mergeDocBlocks(baseMarkdown, markdown, remote.markdown, nativeDocMarkdownEqual);
   if (merged === remote.markdown) return remote;
   const id = source["document_id"] ?? source.identifier;
   const key2 = resourceKey(source), tab = documentTab(source);

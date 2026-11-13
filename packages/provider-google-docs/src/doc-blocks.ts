@@ -64,12 +64,21 @@ function conflict(): never {
   throw new Error("Google Docs changed remotely and locally. Resolve the conflict in Google Docs or the local Markdown file before syncing again.");
 }
 
-export function mergeDocBlocks(base: string, local: string, remote: string): string {
+export function mergeDocBlocks(base: string, local: string, remote: string, sameRendering: (local: string, remote: string) => boolean = (a, b) => a === b): string {
   if (base === remote || local === remote) return local;
   if (base === local) return remote;
   const blocks = docBlocks(base);
   const localBlocks = docBlocks(local), remoteBlocks = docBlocks(remote);
-  const localChanges = docChanges(blocks, localBlocks), remoteChanges = docChanges(blocks, remoteBlocks);
+  const remoteChanges = docChanges(blocks, remoteBlocks);
+  const remoteAt = new Map(remoteChanges.map(change => [change.start, change]));
+  // A previous write may have landed before its acknowledgment was lost.
+  // Compare only replacements of the identical base interval. Keep Google's
+  // spelling of an already-applied change, including its paragraph separators.
+  const localChanges = docChanges(blocks, localBlocks).filter(change => {
+    const other = remoteAt.get(change.start);
+    return !other || other.end !== change.end || !sameRendering(change.replacement.join(""), other.replacement.join(""));
+  });
+  if (!localChanges.length) return remote;
   const positions = occurrences(blocks, 0, blocks.length);
   // Inserting or deleting repeated paragraphs leaves multiple plausible
   // identities. Do not compose another edit with a guessed correspondence.
@@ -85,7 +94,6 @@ export function mergeDocBlocks(base: string, local: string, remote: string): str
   let pos = 0, previous: Change | undefined;
   const result: string[] = [];
   for (const change of all) {
-    if (previous && previous.start === change.start && previous.end === change.end && previous.replacement.join("") === change.replacement.join("")) continue;
     if (change.start < pos || (previous && previous.start === previous.end && change.start === change.end && previous.start === change.start)) conflict();
     result.push(blocks.slice(pos, change.start).join(""), change.replacement.join(""));
     pos = change.end; previous = change;

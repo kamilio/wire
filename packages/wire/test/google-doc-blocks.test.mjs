@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { nativeDocMarkdownEqual } from "../../provider-google-docs/dist/native-docs.js";
 import { docBlocks, docChanges, mergeDocBlocks } from "../../provider-google-docs/dist/doc-blocks.js";
 
 test("block merging keeps independent changes to adjacent paragraphs and nested bullets", () => {
@@ -45,4 +46,12 @@ test("a sparse change in a long document maps to just the updated paragraph", ()
     { start: 124, end: 125, replacement: ["local\n"] },
     { start: 9900, end: 9901, replacement: ["another\n"] },
   ]);
+});
+
+
+test("after a lost acknowledgment only later unpublished paragraph edits remain pending", () => {
+  const base = "Remote old\n\n* Parent\n\nLocal old\n";
+  const local = base.replace("* Parent\n", "* Parent  \n  - Child  \n").replace("Local old", "Local new");
+  const remote = base.replace("* Parent\n", "* Parent  \n  * Child\n").replace("Remote old", "Remote new");
+  assert.equal(mergeDocBlocks(base, local, remote, nativeDocMarkdownEqual), remote.replace("Local old", "Local new"));
 });

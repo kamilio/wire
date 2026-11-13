@@ -1932,3 +1932,22 @@ test("only a verified Docs batch revision can skip later exports; native revisio
   const changed = await synchronizeSource(rt, url, serviceCatalog, same.data, "New", "local.md");
   assert.equal(changed.markdown, text); assert.equal(exports, 4); assert.equal(changed.data.verified_revision, undefined);
 });
+
+test("a lost Docs acknowledgment plus a disjoint web edit recovers the exported nested bullet without another write", async () => {
+  const base = "Web status old  \n\n* Parent  \n  * Child\n\nOther paragraph";
+  const append = (text, item) => text.replace("  * Child\n", "  * Child  \n" + item + "\n");
+  const intended = append(base, "    * **Saved** item  ");
+  const remote = append(base.replace("status old", "status new"), "    * **Saved** item");
+  const url = "https://docs.google.com/document/d/doc/edit", paths = [];
+  const rt = runtime(async (input, init = {}) => {
+    assert.equal(init.method ?? "GET", "GET");
+    paths.push(new URL(input).pathname);
+    return exportResponse("Private", "md", remote);
+  });
+  const result = await synchronizeSource(rt, url, serviceCatalog, { markdown: base }, intended, "private.md");
+  assert.equal(result.markdown, remote);
+  assert.deepEqual(paths, ["/document/d/doc/export"]);
+  for (const other of ["    * **Different** item  ", "  * **Saved** item  ", "    * *Saved* item  "]) {
+    await assert.rejects(synchronizeSource(rt, url, serviceCatalog, { markdown: base }, append(base, other), "private.md"), /changed remotely and locally/);
+  }
+});

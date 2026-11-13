@@ -732,7 +732,7 @@ async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, _url: str
   if (documentTab(source) === "t.0" && objectValue(base)["document_id"] && !objectValue(base)["document_tab"] && baseMarkdown !== remote.markdown) {
     throw new Error("Google Docs saved snapshot predates explicit tab selection. Keep the local edits and reconcile them with a fresh download of this tab.");
   }
-  const merged = mergeDocBlocks(baseMarkdown, markdown, remote.markdown);
+  const merged = mergeDocBlocks(baseMarkdown, markdown, remote.markdown, nativeDocMarkdownEqual);
   if (merged === remote.markdown) return remote;
   const id = (source["document_id"] as string | undefined) ?? source.identifier;
   const key = resourceKey(source), tab = documentTab(source);
