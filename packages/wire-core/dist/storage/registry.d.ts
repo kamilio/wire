@@ -1,7 +1,7 @@
 import type { Identifier, Registry, Resource } from "../core/model.js";
 export declare class SqliteRegistry implements Registry {
     readonly path: string;
-    constructor(path: string);
+    constructor(path: string, create?: boolean);
     put(resource: Resource): Promise<Resource>;
     rekey(previous: Resource, identifier: Identifier): Promise<Resource>;
     get(resourceId: string): Promise<Resource>;
@@ -15,7 +15,7 @@ export declare class SqliteRegistry implements Registry {
 }
 export declare class FileRegistry implements Registry {
     readonly path: string;
-    constructor(path: string);
+    constructor(path: string, create?: boolean);
     put(resource: Resource): Promise<Resource>;
     rekey(previous: Resource, identifier: Identifier): Promise<Resource>;
     get(resourceId: string): Promise<Resource>;

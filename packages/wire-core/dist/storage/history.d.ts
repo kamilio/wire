@@ -1,5 +1,5 @@
 import type { FetchedDocument, Resource } from "../core/model.js";
-import { type EditorReceipts } from "./editor-receipts.js";
+import { editorView, type EditorReceipts } from "./editor-receipts.js";
 export type HistoryEntry = {
     id: string;
     parents: string[];
@@ -10,6 +10,11 @@ export type HistoryConflict = {
     base: string;
     local: string;
     remote: string;
+} | {
+    editor: string;
+    shell: string;
+    editorBase: string;
+    shellBase: string;
 };
 export type HistoryStatus = {
     path: string;
@@ -40,8 +45,10 @@ export type HistoryRefs = {
     resolution: FetchedDocument | null;
     resolutionParent: string | null;
 };
+export declare function requireHistoryVolume(historyDirectory: string, markdownDirectory: string): Promise<void>;
 export declare function working(path: string): Promise<string | null>;
 export declare function withHistoryLock<T>(root: string, key: string, run: () => Promise<T>): Promise<T>;
+export declare function withBackendSwitch<T>(root: string, run: () => Promise<T>): Promise<T>;
 export declare class DocumentHistory {
     private readonly id;
     private readonly now;
@@ -64,6 +71,7 @@ export declare class DocumentHistory {
     text(ref: string): Promise<string>;
     log(): Promise<HistoryEntry[]>;
     seed(markdown: string | null): Promise<void>;
+    checkPendingDraft(view: ReturnType<typeof editorView>): Promise<void>;
     captureLocal(markdown: string, parent?: string | null): Promise<string>;
     observe(remote: FetchedDocument): Promise<string>;
     status(path: string): Promise<HistoryStatus>;

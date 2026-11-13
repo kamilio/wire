@@ -209,3 +209,5 @@ Workspace config lives in `.wire/config.json` and applies to Wire plus hooks:
 ```json
 { "backend": "sqlite", "path": "registry.sqlite3", "env": { "WIRE_CUSTOM_VALUE": "example" } }
 ```
+
+`wire switch-db` changes the workspace registry between files and SQLite. If a document operation or another switch is active, retry when it finishes. The destination must be unused; a pre-existing database, directory, or SQLite sidecar is preserved. If a switch is interrupted, `.wire/config.json` identifies the active backend. Inspect the other copy before moving it aside and retrying.

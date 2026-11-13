@@ -53,8 +53,10 @@ function missingUrl(url) {
 }
 export class SqliteRegistry {
     path;
-    constructor(path) {
-        this.path = realpathSyncParent(path);
+    constructor(path, create = true) {
+        this.path = create ? realpathSyncParent(path) : realpathSync(path);
+        if (!create)
+            return;
         const database = this.connect();
         database.exec(`
       PRAGMA journal_mode=DELETE;
@@ -166,7 +168,7 @@ export class SqliteRegistry {
         }
     }
     async get(resourceId) {
-        const database = this.connect();
+        const database = this.connect(true);
         const row = database.prepare("SELECT id FROM resources WHERE id = ?").get(resourceId);
         if (row === undefined) {
             database.close();
@@ -179,7 +181,7 @@ export class SqliteRegistry {
         return resource;
     }
     async findByIdentifier(service, identifier) {
-        const database = this.connect();
+        const database = this.connect(true);
         database.exec("BEGIN");
         const row = database.prepare("SELECT resource_id FROM resource_identifiers WHERE service = ? AND identifier = ?").get(service, identifier);
         if (row === undefined) {
@@ -192,7 +194,7 @@ export class SqliteRegistry {
         return resource;
     }
     async findByUrl(url) {
-        const database = this.connect();
+        const database = this.connect(true);
         database.exec("BEGIN");
         const row = database.prepare("SELECT resource_id FROM resource_urls WHERE url = ?").get(url);
         if (row === undefined) {
@@ -205,7 +207,7 @@ export class SqliteRegistry {
         return resource;
     }
     async findByPath(path) {
-        const database = this.connect();
+        const database = this.connect(true);
         database.exec("BEGIN");
         const rows = database.prepare("SELECT DISTINCT resource_id FROM filesystem_links WHERE path = ? ORDER BY resource_id").all(path.replaceAll(sep, "/"));
         const resources = rows.map((row) => this.getResource(database, row.resource_id));
@@ -214,7 +216,7 @@ export class SqliteRegistry {
         return resources;
     }
     async listResources() {
-        const database = this.connect();
+        const database = this.connect(true);
         database.exec("BEGIN");
         const rows = database.prepare("SELECT id FROM resources ORDER BY id").all();
         const resources = rows.map((row) => this.getResource(database, row.id));
@@ -246,16 +248,16 @@ export class SqliteRegistry {
             relationships: relationships.map((relationship) => ({ target_id: relationship.target_id, type: relationship.type, data: JSON.parse(relationship.data_json) })),
         };
     }
-    connect() {
-        const database = new (require("node:sqlite").DatabaseSync)(this.path);
+    connect(readOnly = false) {
+        const database = new (require("node:sqlite").DatabaseSync)(this.path, { readOnly });
         database.exec("PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON");
         return database;
     }
 }
 export class FileRegistry {
     path;
-    constructor(path) {
-        this.path = realpathSyncDirectory(path);
+    constructor(path, create = true) {
+        this.path = create ? realpathSyncDirectory(path) : realpathSync(path);
     }
     async put(resource) {
         const normalized = storageResource(resource);

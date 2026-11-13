@@ -350,9 +350,10 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     return attachAt(url, path, undefined, editorReceipts);
   };
   const attachAt = async (url: string, path: string, fixed?: string, editorReceipts = false): Promise<WireResult> => {
-    const root = await wireRoot(dependencies, path), registry = await dependencies.workspace.openRegistry(root, dependencies.home);
+    const root = await wireRoot(dependencies, path), initial = await dependencies.workspace.openRegistry(root, dependencies.home);
     const source = parseSourceUrl(url, dependencies.catalog);
-    return locked(root, registry, sourceLock(source), async () => {
+    return locked(root, initial, sourceLock(source), async () => {
+      const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
       await owner(registry, source, url);
       const h = await restore(root, registry, source);
       const current = findResource(await registry.listResources(), source, dependencies.catalog);

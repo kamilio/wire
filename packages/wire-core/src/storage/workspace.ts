@@ -1,7 +1,9 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, rename, rmdir, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
+import { randomUUID } from "node:crypto";
+import { withBackendSwitch } from "./history.js";
 import { stableJsonPretty } from "../core/json.js";
 import type { Registry } from "../core/model.js";
 import type { InitializedWire, SwitchedWireBackend, WireBackend, WireConfig } from "../ports.js";
@@ -61,8 +63,8 @@ export async function openWireRegistry(path: string, home: string): Promise<Regi
   const config = await loadWireConfig(wireRoot);
   const registryPath = join(wireRoot, config.path);
   protectHistory(wireRoot, registryPath);
-  if (config.backend === "sqlite") return new SqliteRegistry(registryPath);
-  if (config.backend === "files") return new FileRegistry(registryPath);
+  if (config.backend === "sqlite") return new SqliteRegistry(registryPath, false);
+  if (config.backend === "files") return new FileRegistry(registryPath, false);
   throw new Error(config.backend);
 }
 
@@ -87,24 +89,51 @@ export async function initializeWire(path: string, backend: WireBackend, registr
 
 export async function switchWireBackend(path: string, home: string): Promise<SwitchedWireBackend> {
   const wireRoot = await discoverWireRoot(path, home);
-  const config = await loadWireConfig(wireRoot);
-  const fromPath = join(wireRoot, config.path);
-  protectHistory(wireRoot, fromPath);
-  const source = config.backend === "sqlite" ? new SqliteRegistry(fromPath) : new FileRegistry(fromPath);
-  const resources = await source.listResources();
-  const to = config.backend === "sqlite" ? "files" : "sqlite";
-  const targetRelativePath = registryPathForBackend(to);
-  const toPath = join(wireRoot, targetRelativePath);
-  const canonicalSource = canonicalPath(fromPath);
-  const canonicalTarget = canonicalPath(toPath);
-  protectHistory(wireRoot, toPath);
-  if (canonicalSource === canonicalTarget || canonicalSource.startsWith(`${canonicalTarget}${sep}`) || canonicalTarget.startsWith(`${canonicalSource}${sep}`)) {
-    throw new Error(`Cannot switch storage backends because registry paths overlap: ${fromPath} and ${toPath}. Move the source registry and update config.json before switching.`);
-  }
-  await rm(toPath, { recursive: true, force: true });
-  const target = to === "sqlite" ? new SqliteRegistry(toPath) : new FileRegistry(toPath);
-  for (const resource of resources) await target.put(resource);
-  await writeFile(join(wireRoot, "config.json"), `${stableJsonPretty({ ...config, backend: to, path: targetRelativePath })}\n`, "utf8");
-  await rm(fromPath, { recursive: true, force: true });
-  return { root: wireRoot, from: config.backend, to, fromPath, toPath, resources: resources.length };
+  return withBackendSwitch(wireRoot, async () => {
+    const config = await loadWireConfig(wireRoot);
+    const fromPath = join(wireRoot, config.path);
+    protectHistory(wireRoot, fromPath);
+    const source = config.backend === "sqlite" ? new SqliteRegistry(fromPath, false) : new FileRegistry(fromPath, false);
+    const resources = await source.listResources();
+    const to = config.backend === "sqlite" ? "files" : "sqlite";
+    const targetRelativePath = registryPathForBackend(to);
+    const toPath = join(wireRoot, targetRelativePath);
+    const canonicalSource = canonicalPath(fromPath);
+    const canonicalTarget = canonicalPath(toPath);
+    protectHistory(wireRoot, toPath);
+    if (canonicalSource === canonicalTarget || canonicalSource.startsWith(`${canonicalTarget}${sep}`) || canonicalTarget.startsWith(`${canonicalSource}${sep}`)) {
+      throw new Error(`Cannot switch storage backends because registry paths overlap: ${fromPath} and ${toPath}. Move the source registry and update config.json before switching.`);
+    }
+    try {
+      if (to === "sqlite") {
+        // SQLite can recover or remove its sidecar files on open. Refuse all
+        // occupied destination names, including dangling symlinks.
+        for (const suffix of ["-journal", "-wal", "-shm"]) {
+          const occupied = await lstat(toPath + suffix).catch((e: NodeJS.ErrnoException) => { if (e.code !== "ENOENT") throw e; });
+          if (occupied) throw new Error("Wire switch destination already exists: " + toPath + suffix);
+        }
+        await (await open(toPath, "wx", 0o600)).close();
+      } else await mkdir(toPath, {mode: 0o700});
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new Error("Wire switch destination already exists: " + toPath);
+      throw e;
+    }
+    const target = to === "sqlite" ? new SqliteRegistry(toPath) : new FileRegistry(toPath);
+    for (const resource of resources) await target.put(resource);
+    const nextConfig = join(wireRoot, randomUUID());
+    try {
+      const handle = await open(nextConfig, "wx", 0o600);
+      try { await handle.writeFile(stableJsonPretty({ ...config, backend: to, path: targetRelativePath }) + "\n"); await handle.sync(); }
+      finally { await handle.close(); }
+      await rename(nextConfig, join(wireRoot, "config.json"));
+      const directory = await open(wireRoot, "r");
+      try { await directory.sync(); } finally { await directory.close(); }
+    } finally { await unlink(nextConfig).catch((e: NodeJS.ErrnoException) => { if (e.code !== "ENOENT") throw e; }); }
+    // Remove only records we actually copied. Leave unrelated files alone.
+    if (source instanceof FileRegistry) {
+      for (const r of resources) await source.delete(r.id);
+      await rmdir(fromPath).catch((e: NodeJS.ErrnoException) => { if (e.code !== "ENOTEMPTY") throw e; });
+    } else await unlink(fromPath);
+    return { root: wireRoot, from: config.backend, to, fromPath, toPath, resources: resources.length };
+  });
 }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { FileRegistry, SqliteRegistry } from "./storage/registry.js";
-import { DocumentHistory, withHistoryLock, working } from "./storage/history.js";
+import { DocumentHistory, requireHistoryVolume, withHistoryLock, working } from "./storage/history.js";
 import { editorFile, editorView, plainMarkdown } from "./storage/editor-receipts.js";
 import { assertWireOwner } from "./core/owner.js";
 import { stableJsonCompact } from "./core/json.js";
@@ -203,7 +203,7 @@ export function composeWire(dependencies) {
         }
         const id = resourceId(source);
         const primary = current?.filesystem_links.find((link) => link.path === relativePath && link.role === "primary");
-        const link = { path: relativePath, role: "primary", data: { format: "markdown", ...primary?.data, ...(enableReceipts ? { editor_receipts: true } : {}) } };
+        const link = { path: relativePath, role: "primary", data: { ...(primary?.data ?? { format: "markdown" }), ...(enableReceipts ? { editor_receipts: true } : {}) } };
         const resource = {
             id,
             type: source.type,
@@ -283,9 +283,10 @@ export function composeWire(dependencies) {
         return attachAt(url, path, undefined, editorReceipts);
     };
     const attachAt = async (url, path, fixed, editorReceipts = false) => {
-        const root = await wireRoot(dependencies, path), registry = await dependencies.workspace.openRegistry(root, dependencies.home);
+        const root = await wireRoot(dependencies, path), initial = await dependencies.workspace.openRegistry(root, dependencies.home);
         const source = parseSourceUrl(url, dependencies.catalog);
-        return locked(root, registry, sourceLock(source), async () => {
+        return locked(root, initial, sourceLock(source), async () => {
+            const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
             await owner(registry, source, url);
             const h = await restore(root, registry, source);
             const current = findResource(await registry.listResources(), source, dependencies.catalog);
@@ -303,6 +304,8 @@ export function composeWire(dependencies) {
             if (h?.refs.strict)
                 throw new Error("Sync the pending Wire draft before attaching again.");
             const trackedPath = current ? join(dirname(root), primaryLink(current).path) : fixed;
+            if (h)
+                await requireHistoryVolume(h.dir, trackedPath ? dirname(trackedPath) : path);
             const raw = trackedPath && h ? await working(trackedPath) : undefined;
             const existing = raw == null ? raw : h.view(raw).markdown;
             const fetched = await fetchSource(dependencies.fetchInput, url, dependencies.catalog);
@@ -406,6 +409,8 @@ export function composeWire(dependencies) {
         const relativePath = dependencies.workspace.relativePath(candidatePath, root);
         const pathResources = await registry.findByPath(relativePath);
         if (pathResources.length === 0 && await dependencies.filesystem.exists(candidatePath)) {
+            if (durable(registry))
+                await requireHistoryVolume(join(root, "history"), dirname(candidatePath));
             const markdown = durable(registry) ? await working(candidatePath) : await dependencies.filesystem.readText(candidatePath);
             if (markdown === null)
                 throw new Error("Cannot upload a missing Markdown file.");
@@ -420,6 +425,8 @@ export function composeWire(dependencies) {
         await owner(registry, source, resource.urls[0]);
         const history = await restore(root, registry, source, outputPath);
         resource = await registry.get(resource.id);
+        if (history)
+            await requireHistoryVolume(history.dir, outputDirectory);
         if (history?.refs.conflict)
             throw new Error("Unresolved Wire conflict. Inspect wire conflicts and use wire resolve.");
         const snapshot = resource.data.find((item) => item.namespace === source.service && item.key === "snapshot")?.value;
@@ -433,8 +440,9 @@ export function composeWire(dependencies) {
             throw new Error("Linked file missing: " + outputPath);
         const view = history ? history.view(raw) : editorView(raw);
         const markdown = view.markdown;
-        if (view.shown && history?.refs.editorDraft && view.shown !== history.refs.editorDraft)
-            throw new Error("An older editor buffer replaced a pending Wire draft. Both versions were kept; reconcile them before syncing.");
+        await history?.checkPendingDraft(view);
+        if (history?.refs.conflict)
+            throw new Error("Unresolved Wire conflict. The editor save and shell draft are both local. Compare them with wire diff <resource> --from editor --to shell, then use wire resolve <resource> <choice>.");
         // A stale receipt proves Markdown ancestry, not native paragraph positions.
         // Never attach a newer snapshot's verified revision or IDs to older bytes.
         const base = view.base && history && view.base !== history.refs.base && view.base !== history.refs.resolutionParent
@@ -713,7 +721,12 @@ export function composeWire(dependencies) {
         await h.seed(markdownSnapshot(r.data.find(i => i.namespace === source.service && i.key === "snapshot")?.value ?? null));
         return run(h, path, registry, r);
     });
-    const historyStatus = (v, p) => withDocument(v, p, (h, path) => h.status(path));
+    const historyStatus = (v, p) => withDocument(v, p, async (h, path) => {
+        const raw = await working(path);
+        if (raw !== null)
+            await h.checkPendingDraft(h.view(raw));
+        return h.status(path);
+    });
     const historyLog = (v, p) => withDocument(v, p, h => h.log());
     const historyDiff = (v, p, from = "base", to = "working") => withDocument(v, p, async (h, path) => {
         const raw = await working(path);
@@ -724,7 +737,10 @@ export function composeWire(dependencies) {
                     throw new Error("Linked Markdown is missing.");
                 return current;
             }
-            const id = ref === "base" ? (h.refs.conflict?.base ?? h.refs.base) : ref === "remote" ? h.refs.remote : ref === "local" ? h.refs.conflict?.local ?? h.refs.draft ?? h.refs.base : ref;
+            const c = h.refs.conflict;
+            const id = c && "editor" in c && (ref === "editor" || ref === "shell") ? c[ref]
+                : ref === "base" ? (c && "base" in c ? c.base : h.refs.base)
+                    : ref === "remote" ? h.refs.remote : ref === "local" ? (c && "local" in c ? c.local : h.refs.draft ?? h.refs.base) : ref;
             if (!id)
                 throw new Error("No saved " + ref + " revision.");
             return h.text(id);
@@ -737,8 +753,9 @@ export function composeWire(dependencies) {
         if (!view || view.markdown !== expected || token !== h.token(raw))
             throw new Error("Stale shell edit. The document changed; rerun the command.");
         if (expected !== markdown) {
-            if (view.shown && h.refs.editorDraft && view.shown !== h.refs.editorDraft)
-                throw new Error("An older editor buffer replaced a pending Wire draft. Both versions were kept; reconcile them before editing.");
+            await h.checkPendingDraft(view);
+            if (h.refs.conflict && "editor" in h.refs.conflict)
+                throw new Error("Unresolved Wire conflict. Edit the working file and run wire resolve <resource> working, or choose editor or shell before using wire shell.");
             plainMarkdown(markdown);
             const prior = await h.captureLocal(expected, view.shown ?? undefined);
             const draft = await h.revision("local", markdown, [prior]);
@@ -751,24 +768,45 @@ export function composeWire(dependencies) {
         return h.status(path);
     });
     const resolveConflict = (v, p, choice) => withDocument(v, p, async (h, path, reg) => {
-        const conflict = h.refs.conflict;
-        if (!conflict || !h.refs.resolution)
-            throw new Error("No saved conflict for this document.");
         const raw = await working(path);
-        const current = raw === null ? null : h.view(raw).markdown;
-        if (current === null)
+        if (raw === null)
             throw new Error("Linked Markdown is missing.");
-        const local = await h.text(conflict.local), remote = await h.text(conflict.remote);
-        if (choice !== "working" && current !== local)
-            throw new Error("Working file changed since the conflict. Choose working to retain those edits.");
-        if (!["working", "local", "remote"].includes(choice))
-            throw new Error("Choose local, remote or working.");
-        const next = choice === "working" ? current : choice === "local" ? local : remote;
-        const draft = await h.revision("resolve", next, [conflict.local, conflict.remote]);
+        const view = h.view(raw), current = view.markdown;
+        await h.checkPendingDraft(view);
+        const conflict = h.refs.conflict;
+        if (!conflict)
+            throw new Error("No saved conflict for this document.");
+        let next, basis, parents;
+        if ("editor" in conflict) {
+            if (!["working", "editor", "shell"].includes(choice))
+                throw new Error("Both drafts are local. Choose editor, shell or working.");
+            if (choice !== "working" && current !== await h.text(conflict.editor))
+                throw new Error("Working file changed since the conflict. Choose working to retain those edits.");
+            // The file being reconciled is the editor branch. Keep its remote basis
+            // for an edited working resolution; never silently adopt a later base.
+            basis = choice === "shell" ? conflict.shellBase : conflict.editorBase;
+            if (choice === "working" && view.base !== conflict.editorBase)
+                throw new Error("The working file has a different receipt. Restore the conflicted editor receipt before resolving.");
+            next = choice === "working" ? current : await h.text(choice === "shell" ? conflict.shell : conflict.editor);
+            parents = [conflict.editor, conflict.shell];
+        }
+        else {
+            if (!h.refs.resolution)
+                throw new Error("Missing saved provider conflict snapshot.");
+            if (!["working", "local", "remote"].includes(choice))
+                throw new Error("Choose local, remote or working.");
+            const local = await h.text(conflict.local);
+            if (choice !== "working" && current !== local)
+                throw new Error("Working file changed since the conflict. Choose working to retain those edits.");
+            next = choice === "working" ? current : choice === "local" ? local : await h.text(conflict.remote);
+            basis = conflict.remote;
+            parents = [conflict.local, conflict.remote];
+        }
+        const draft = await h.revision("resolve", next, parents);
         const refs = { ...h.refs, draft, strict: true, conflict: null, ...(h.refs.editorReceipts ? { editorDraft: draft } : {}) };
         if (refs.editorReceipts)
             refs.editorReceipts = { ...refs.editorReceipts };
-        const materialized = refs.editorReceipts ? editorFile(next, refs.editorReceipts, draft, conflict.remote) : next;
+        const materialized = refs.editorReceipts ? editorFile(next, refs.editorReceipts, draft, basis) : next;
         await h.publish(path, raw, materialized, refs, null, r => reg.put(r));
         return h.status(path);
     });

@@ -25,7 +25,8 @@ export function validateRefs(refs) {
                     return corrupt();
             }
         }
-    if (refs.conflict && ![refs.conflict.base, refs.conflict.local, refs.conflict.remote].every(ref => known.has(ref)))
+    const c = refs.conflict;
+    if (c && !("editor" in c ? [c.editor, c.shell, c.editorBase, c.shellBase] : [c.base, c.local, c.remote]).every(ref => known.has(ref)))
         return corrupt();
 }
 //# sourceMappingURL=history-integrity.js.map

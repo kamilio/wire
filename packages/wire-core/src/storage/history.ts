@@ -59,31 +59,59 @@ const empty = (): HistoryRefs => ({ base: null, draft: null, remote: null, confl
 // Process-owned exclusive claims. A crash leaves its immutable symlink in place.
 // A contender skips only a confirmed dead, still-identical claim on this host.
 // Never unlink another owner's claim: two independent recoverers cannot steal a lock.
-export async function withHistoryLock<T>(root: string, key: string, run: () => Promise<T>): Promise<T> {
-  const dir = join(root, "history");
+async function claimState(path: string): Promise<"active" | "missing" | "dead"> {
+  let owner: string;
+  try { owner = await readlink(path); } catch (e) { if (missing(e)) return "missing"; throw e; }
+  const [host, pid] = owner.split(":");
+  if (host === hostname() && /^\d+$/.test(pid ?? "")) {
+    try { process.kill(Number(pid), 0); } catch (e) {
+      if (code(e) === "ESRCH" && await readlink(path).catch(() => "") === owner) return "dead";
+    }
+  }
+  return "active";
+}
+
+async function claim<T>(dir: string, name: string, run: () => Promise<T>): Promise<T> {
   await privateDirectory(dir);
-  const own = hostname() + ":" + process.pid + ":" + randomUUID();
-  const lock = join(dir, "lock-" + hash(key));
+  const owner = hostname() + ":" + process.pid + ":" + randomUUID();
   for (let n = 0; ; n++) {
-    const path = lock + (n ? "." + n : "");
-    try { await symlink(own, path); }
+    const path = join(dir, name + (n ? "." + n : ""));
+    try { await symlink(owner, path); }
     catch (e) {
       if (code(e) !== "EEXIST") throw e;
-      let owner: string;
-      try { owner = await readlink(path); } catch (r) { if (missing(r)) { n--; continue; } throw r; }
-      const [host, pid] = owner.split(":");
-      if (host === hostname() && /^\d+$/.test(pid ?? "")) {
-        try { process.kill(Number(pid), 0); } catch (k) {
-          if (code(k) === "ESRCH") {
-            if (await readlink(path).catch(() => "") === owner) continue;
-            n--; continue;
-          }
-        }
+      const state = await claimState(path);
+      if (state !== "active") {
+        if (state === "missing") n--;
+        continue;
       }
       throw new Error("Another Wire operation owns this document. Retry when it finishes.");
     }
     try { return await run(); } finally { await unlink(path); }
   }
+}
+
+async function excludeClaims(dir: string, names: RegExp) {
+  for (const name of await readdir(dir)) {
+    if (names.test(name) && await claimState(join(dir, name)) === "active") throw new Error("Wire storage is busy. Retry the backend switch or document operation when it finishes.");
+  }
+}
+
+// Each side posts its claim before inspecting the other side. An operation
+// that has passed its check remains visible until its last durable write.
+export async function withHistoryLock<T>(root: string, key: string, run: () => Promise<T>): Promise<T> {
+  const dir = join(root, "history");
+  return claim(dir, "lock-" + hash(key), async () => {
+    await excludeClaims(dir, /^switch(?:\.\d+)?$/);
+    return run();
+  });
+}
+
+export async function withBackendSwitch<T>(root: string, run: () => Promise<T>): Promise<T> {
+  const dir = join(root, "history");
+  return claim(dir, "switch", async () => {
+    await excludeClaims(dir, /^lock-[a-f0-9]{64}(?:\.\d+)?$/);
+    return run();
+  });
 }
 
 export class DocumentHistory {
@@ -189,12 +217,14 @@ export class DocumentHistory {
   // Moving the actual old inode out first lets us verify what we displaced. link()
   // publishes only into a vacant name; it cannot overwrite a concurrent editor save.
   async publish(path: string, expected: string | null, next: string, refs: HistoryRefs, resource: Resource | null, put: (r: Resource) => Promise<Resource>, acknowledged = false) {
+    await requireHistoryVolume(this.dir, dirname(path));
     const token = randomUUID();
     const pending: Publication = { path, expected, next, refs, resource, token, acknowledged };
     await json(join(this.dir, "pending.json"), pending);
     await this.finish(pending, put);
   }
   async detach(path: string, expected: string | null, next: string, refs: HistoryRefs, detached: Resource, remove: (r: Resource) => Promise<void>) {
+    await requireHistoryVolume(this.dir, dirname(path));
     const intent: Publication = {path, expected, next, refs, detached, resource: null, token: randomUUID(), acknowledged: false};
     await json(join(this.dir, "pending.json"), intent);
     await this.finish(intent, undefined, remove);
@@ -226,14 +256,12 @@ export class DocumentHistory {
             try { view = this.view(saved); } catch { /* retain raw .old */ }
             if (view) await this.captureLocal(view.markdown, view.shown ?? undefined);
           }
-    await requireHistoryVolume(this.dir, dirname(path));
         }
       }
       await cleanup();
       throw new Error("Local file changed during sync: " + basename(p.path) + ". Local changes were preserved. Run wire sync again.");
     };
     // A private hard link to the displaced inode is retained, even if another
-    await requireHistoryVolume(this.dir, dirname(path));
     // application still has a writable file descriptor open on it.
     if (!p.acknowledged && !await exists(delivered)) {
       let current = await working(p.path);

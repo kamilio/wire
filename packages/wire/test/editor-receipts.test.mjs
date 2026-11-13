@@ -40,6 +40,7 @@ async function fixture(t, backend) {
     fetch, upload: () => { doc.uploads++; throw Error("unexpected upload"); },
     synchronize: async (_input, _url, _src, base, local, _path, observe, strict) => {
       doc.reads++;
+      await doc.before?.();
       const remote = await fetch(); await observe(remote);
       assert.ok(!local.includes("wire-editor-basis:"));
       if (base.verified_revision) assert.equal(base.verified_revision, "for:" + base.markdown);
@@ -167,5 +168,45 @@ for (const backend of ["files", "sqlite"]) {
     await f.make().adopt(f.url,f.file,true);
     assert.equal((await f.wire.listResources(f.path)).length,1);
     assert.equal((await f.wire.historyStatus(f.file,f.path)).modified,false);
+  });
+}
+
+for (const backend of ["files","sqlite"]) {
+  test(backend + ": an in-flight sync and registry migration exclude each other without losing the edit", async t => {
+    const f = await fixture(t,backend), { switchWireBackend, FileRegistry, SqliteRegistry } = await import("../../wire-core/dist/index.js");
+    const priorBackend = await openWireRegistry(f.path,f.path);
+    await f.save((await f.read()).replace("Top","Editorial"));
+    let enter, advance;
+    const paused = new Promise(r => enter=r), proceed = new Promise(r => advance=r);
+    f.doc.before = async () => { enter(); await proceed; };
+    const syncing = f.wire.sync(f.file,f.path);
+    await paused;
+    try { await assert.rejects(switchWireBackend(f.path,f.path), /storage is busy/); }
+    finally { advance(); }
+    const result = await syncing;
+    assert.ok(result.markdown.startsWith("Editorial"));
+    let pulled, release;
+    const copied = new Promise(r => pulled=r), resume = new Promise(r => release=r);
+    const source = backend === "files" ? FileRegistry : SqliteRegistry;
+    const list = source.prototype.listResources;
+    source.prototype.listResources = async function () {
+      const records = await list.call(this);
+      source.prototype.listResources = list;
+      pulled(); await resume; return records;
+    };
+    const switching = switchWireBackend(f.path,f.path);
+    try {
+      await copied;
+      await assert.rejects(f.wire.sync(f.file,f.path),/storage is busy/);
+      await assert.rejects(switchWireBackend(f.path,f.path),/Another Wire operation/);
+      await assert.rejects(f.wire.checkpoint(f.file,f.path,result.markdown,"should not land","stale"),/storage is busy/);
+    } finally { source.prototype.listResources = list; release(); }
+    await switching;
+    await assert.rejects(priorBackend.findByPath("Note.md"));
+    await assert.rejects(stat(priorBackend.path), {code:"ENOENT"});
+    assert.equal((await f.wire.historyStatus(f.file,f.path)).modified,false);
+    const resources = await f.wire.listResources(f.path);
+    assert.equal(resources.length,1);
+    assert.equal(resources[0].data.find(i=>i.key==="snapshot").value.markdown,result.markdown);
   });
 }

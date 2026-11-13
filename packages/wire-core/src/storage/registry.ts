@@ -17,7 +17,7 @@ type DataRow = Readonly<{ namespace: string; key: string; value_json: string }>;
 type RelationshipRow = Readonly<{ target_id: string; type: string; data_json: string }>;
 type ResourceIdRow = Readonly<{ resource_id: string }>;
 type IdRow = Readonly<{ id: string }>;
-type SqliteModule = Readonly<{ DatabaseSync: new (path: string) => DatabaseSync }>;
+type SqliteModule = Readonly<{ DatabaseSync: new (path: string, options?: { readOnly: boolean }) => DatabaseSync }>;
 
 const require = createRequire("/wire-core/storage/registry.js");
 
@@ -75,8 +75,9 @@ function missingUrl(url: string): Error {
 export class SqliteRegistry implements Registry {
   readonly path: string;
 
-  constructor(path: string) {
-    this.path = realpathSyncParent(path);
+  constructor(path: string, create = true) {
+    this.path = create ? realpathSyncParent(path) : realpathSync(path);
+    if (!create) return;
     const database = this.connect();
     database.exec(`
       PRAGMA journal_mode=DELETE;
@@ -183,7 +184,7 @@ export class SqliteRegistry implements Registry {
   }
 
   async get(resourceId: string): Promise<Resource> {
-    const database = this.connect();
+    const database = this.connect(true);
     const row = database.prepare("SELECT id FROM resources WHERE id = ?").get(resourceId) as IdRow | undefined;
     if (row === undefined) {
       database.close();
@@ -197,7 +198,7 @@ export class SqliteRegistry implements Registry {
   }
 
   async findByIdentifier(service: string, identifier: string): Promise<Resource> {
-    const database = this.connect();
+    const database = this.connect(true);
     database.exec("BEGIN");
     const row = database.prepare("SELECT resource_id FROM resource_identifiers WHERE service = ? AND identifier = ?").get(service, identifier) as ResourceIdRow | undefined;
     if (row === undefined) {
@@ -211,7 +212,7 @@ export class SqliteRegistry implements Registry {
   }
 
   async findByUrl(url: string): Promise<Resource> {
-    const database = this.connect();
+    const database = this.connect(true);
     database.exec("BEGIN");
     const row = database.prepare("SELECT resource_id FROM resource_urls WHERE url = ?").get(url) as ResourceIdRow | undefined;
     if (row === undefined) {
@@ -225,7 +226,7 @@ export class SqliteRegistry implements Registry {
   }
 
   async findByPath(path: string): Promise<readonly Resource[]> {
-    const database = this.connect();
+    const database = this.connect(true);
     database.exec("BEGIN");
     const rows = database.prepare("SELECT DISTINCT resource_id FROM filesystem_links WHERE path = ? ORDER BY resource_id").all(path.replaceAll(sep, "/")) as ResourceIdRow[];
     const resources = rows.map((row) => this.getResource(database, row.resource_id));
@@ -235,7 +236,7 @@ export class SqliteRegistry implements Registry {
   }
 
   async listResources(): Promise<readonly Resource[]> {
-    const database = this.connect();
+    const database = this.connect(true);
     database.exec("BEGIN");
     const rows = database.prepare("SELECT id FROM resources ORDER BY id").all() as IdRow[];
     const resources = rows.map((row) => this.getResource(database, row.id));
@@ -269,8 +270,8 @@ export class SqliteRegistry implements Registry {
     };
   }
 
-  private connect(): DatabaseSync {
-    const database = new (require("node:sqlite") as SqliteModule).DatabaseSync(this.path);
+  private connect(readOnly = false): DatabaseSync {
+    const database = new (require("node:sqlite") as SqliteModule).DatabaseSync(this.path, {readOnly});
     database.exec("PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON");
     return database;
   }
@@ -279,8 +280,8 @@ export class SqliteRegistry implements Registry {
 export class FileRegistry implements Registry {
   readonly path: string;
 
-  constructor(path: string) {
-    this.path = realpathSyncDirectory(path);
+  constructor(path: string, create = true) {
+    this.path = create ? realpathSyncDirectory(path) : realpathSync(path);
   }
 
   async put(resource: Resource): Promise<Resource> {

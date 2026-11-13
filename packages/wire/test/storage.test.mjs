@@ -363,7 +363,12 @@ test("switchWireBackend converts sqlite and files registries while preserving co
   await writeFile(join(sqliteProject, ".wire", "config.json"), `${stableJsonPretty({ backend: "sqlite", path: "registry.sqlite3", watch: { mode: "download", debounceMs: 250, pollMs: 30000 } })}\n`);
   const sqliteRegistry = await openWireRegistry(sqliteProject, testRoot);
   await sqliteRegistry.put(resourceA);
-  await new FileRegistry(join(sqliteProject, ".wire", "records")).put(resourceB);
+  const occupied = new FileRegistry(join(sqliteProject, ".wire", "records"));
+  await occupied.put(resourceB);
+  await assert.rejects(switchWireBackend(sqliteProject, testRoot), /destination already exists/);
+  assert.deepEqual(await occupied.get(resourceB.id), normalizeResource(resourceB));
+  // The fixture explicitly vacates its own unrelated destination.
+  await rm(occupied.path, {recursive:true});
   const sqliteSwitch = await switchWireBackend(sqliteProject, testRoot);
   assert.deepEqual(sqliteSwitch, {
     root: join(sqliteProject, ".wire"),
@@ -445,3 +450,23 @@ for (const backend of ["sqlite", "files"]) {
     }
   });
 }
+
+test("switch refuses an occupied SQLite destination or its journal and preserves unrelated source files", async () => {
+  const project = join(testRoot,"occupied-sqlite"), root = join(project,".wire");
+  await initializeWire(project,"files","records");
+  const source = await openWireRegistry(project,testRoot);
+  await source.put(resourceA);
+  await writeFile(join(source.path,"unrelated.txt"), "owner's file");
+  const target = join(root,"registry.sqlite3");
+  for (const occupied of [target, target+"-journal"]) {
+    await writeFile(occupied,"keep me");
+    await assert.rejects(switchWireBackend(project,testRoot),/destination already exists/);
+    assert.equal(await readFile(occupied,"utf8"),"keep me");
+    assert.equal((await loadWireConfig(root)).backend,"files");
+    await rm(occupied);
+  }
+  await switchWireBackend(project,testRoot);
+  assert.equal(await readFile(join(source.path,"unrelated.txt"),"utf8"),"owner's file");
+  await assert.rejects(switchWireBackend(project,testRoot),/destination already exists/);
+  assert.equal((await (await openWireRegistry(project,testRoot)).get(resourceA.id)).id,resourceA.id);
+});
