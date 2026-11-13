@@ -276,3 +276,55 @@ test("moving one intact bullet subtree across a section keeps the existing headi
     assert.equal(f.posts.length,0);
   }
 });
+
+const labelRows = ["\u00a0","Other notes","\u00a0"];
+const boundary = ["",...labelRows,""], sub = ["* Move **parent**","  * Child"];
+function labelFixture(forward, opts={}) {
+  const list=(text,id,level=0)=>({text,bullet:{listId:id,nestingLevel:level}});
+  const nodes=[list("Move parent","custom-top"),list("Child","imported-child",1)];
+  const rows=[list("Left","before"),...(forward?[...labelRows,...nodes]:[...nodes,...labelRows]),list("Right","after")];
+  if (opts.duplicate) rows.push("Other notes");
+  const f=fixture(rows,opts);
+  const md=segments=>["* Left",...segments,"* Right",...(opts.duplicate?["Other notes"]:[])].join("\n");
+  const from=md(forward?[...boundary,...sub]:[...sub,...boundary]), to=md(forward?[...sub,...boundary]:[...boundary,...sub]);
+  return {...f,from,to,rows};
+}
+test("a plain NBSP-separated label crosses one nested group without writing to a list item",async()=>{
+  for (const forward of [false,true]) {
+    const f=labelFixture(forward);await f.write(f.from,f.to);
+    const batch=f.posts[0];assert.equal(batch.writeControl.requiredRevisionId,"server-rev");
+    let text=f.rows.map(x=>typeof x==="string"?x:x.text).join("\n")+"\n";
+    for (const req of batch.requests) {
+      const op=Object.values(req)[0];
+      assert.equal((op.range??op.location).tabId,"tab-main");
+      if (req.insertText) {
+        assert.equal(op.text,labelRows.join("\n")+"\n");
+        const i=op.location.index-1;text=text.slice(0,i)+op.text+text.slice(i);
+      } else {
+        const a=op.range.startIndex-1,b=op.range.endIndex-1;
+        assert.ok([labelRows.join("\n")+"\n",labelRows.join("\n")].includes(text.slice(a,b)));
+        if (req.deleteContentRange) text=text.slice(0,a)+text.slice(b);
+        else assert.ok(req.deleteParagraphBullets||req.updateParagraphStyle||req.updateTextStyle);
+      }
+    }
+    assert.equal(text,["Left",...(forward?["Move parent","Child",...labelRows]:[...labelRows,"Move parent","Child"]),"Right",""].join("\n"));
+  }
+});
+
+test("label relocation refuses overlapping anchors, ambiguous labels, special formatting, and stale writes",async()=>{
+  for (const reason of ["comment","named","destination","duplicate","styled","heading","different","wrong-label","stale"]) {
+    const opts=reason==="comment"?{comments:[[{anchor:"private",quotedFileContent:{value:"Other notes"}}]]}:reason==="duplicate"?{duplicate:true}:reason==="stale"?{writeCode:400}:{};
+    let f=labelFixture(false,opts);
+    const label=f.content.find(r=>r.paragraph.elements[0].textRun.content==="Other notes\n");
+    const to=f.content.find(r=>r.paragraph.elements[0].textRun.content==="Move parent\n");
+    if (reason==="named" || reason==="destination") {
+      const i=(reason==="named"?label:to).startIndex;
+      f=labelFixture(false,{namedRanges:{hold:{namedRanges:[{ranges:[{startIndex:i,endIndex:i+1}]}]}}});
+    }
+    if (reason==="styled") label.paragraph.elements[0].textRun.textStyle={bold:true};
+    if (reason==="heading") label.paragraph.paragraphStyle.headingId="keep";
+    if (reason==="different") to.paragraph.elements[0].textRun.content="A different native paragraph\n";
+    await assert.rejects(f.write(f.from,reason==="wrong-label"?f.to.replace("Other notes","Other tasks"):f.to), reason==="stale"?/HTTP 400/:/named range|not unique|extra native formatting|does not match|blank paragraph spacing/);
+    assert.equal(f.posts.length,reason==="stale"?1:0);
+  }
+});

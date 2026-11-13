@@ -2064,3 +2064,22 @@ test("Docs keeps each original with its own dimensions and ignores image example
   swapped=true;
   await assert.rejects(fetchSource(rt,url,serviceCatalog),/Image descriptions differ/);
 });
+
+test("a previously applied plain-label move recovers a later web edit without writing",async()=>{
+  const label=["","\u00a0  ","Section  ","\u00a0",""],group=["* **Parent**  ","  * Child"];
+  const md=(middle,web="Original")=>[web,"\u00a0","* Left",...middle,"* Right","\u00a0","Tail"].join("\n");
+  for (const forward of [true,false]) {
+    const older=forward?[...label,...group]:[...group,...label], newer=forward?[...group,...label]:[...label,...group];
+    const base=md(older), desired=md(newer);let web=md(newer,"Updated elsewhere");
+    const rt=runtime(async (_url,init)=>{assert.equal(init.method??"GET","GET");return exportResponse("Doc","md",web);});
+    const sync=()=>synchronizeSource(rt,"https://docs.google.com/document/d/doc/edit",serviceCatalog,{markdown:base},desired,"doc.md");
+    assert.equal((await sync()).markdown,web);
+    web=web.replace("Section","Unknown");
+    await assert.rejects(sync(),/changed remotely and locally/);
+    web=md(newer,"Updated elsewhere").replace("Child","Other");
+    await assert.rejects(sync(),/changed remotely and locally/);
+    web=md(newer,"Updated elsewhere");
+    await assert.rejects(synchronizeSource(rt,"https://docs.google.com/document/d/doc/edit",serviceCatalog,
+      {markdown:base},desired.replace("Tail","More local work"),"doc.md"),/changed remotely and locally/);
+  }
+});

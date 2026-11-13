@@ -18574,8 +18574,9 @@ function paragraph(line) {
   return { text: text3, spans, heading: heading ? "HEADING_" + heading[1].length : "NORMAL_TEXT", level, numbered: !!list && /^\d/.test(list[2]) };
 }
 var blank = "\n";
+var markdownLines2 = (md) => docBlocks(md).map((l) => l.replace(/\r?\n$/, "").replace(/ {2}$/, ""));
 function spacedBlocks(md) {
-  const rows = docBlocks(md).map((l) => l.replace(/\r?\n$/, "").replace(/ {2}$/, ""));
+  const rows = markdownLines2(md);
   const separated = (s) => !!s && /^\s*(?:#{1,6}|[-*+]|\d+[.)]) +/.test(s);
   const result = [];
   for (let i = 0; i < rows.length; ) {
@@ -18692,9 +18693,89 @@ function sectionMove(before, after, changes) {
   const remove = { start: source, end: source + moved.length, replacement: [] }, insert = { start: dest, end: dest, replacement: moved };
   return { source, dest, moved, changes: first ? [remove, insert] : [insert, remove] };
 }
+function plainLabelRotation(oldMd, newMd) {
+  if (!oldMd.includes("\xA0") || !newMd.includes("\xA0")) return;
+  const a = markdownLines2(oldMd), b2 = markdownLines2(newMd);
+  if (a.length !== b2.length) return;
+  let lo = 0, hi = a.length;
+  while (lo < hi && a[lo] === b2[lo]) lo++;
+  while (lo < hi && a[hi - 1] === b2[hi - 1]) hi--;
+  if (hi - lo < 7 || lo === 0 || hi === a.length) return;
+  const old = a.slice(lo, hi), after = b2.slice(lo, hi), forward = old[0] === "";
+  const label = (forward ? old : after).slice(0, 5), group = (forward ? after : old).slice(0, -5);
+  const text3 = label[2];
+  if (label[0] !== "" || label[1] !== "\xA0" || !text3.trim() || label[3] !== "\xA0" || label[4] !== "" || !/^[-*+] /.test(group[0]) || !group.slice(1).every((v2) => /^[ \t]+[-*+] /.test(v2)) || !/^[ \t]*[-*+] /.test(a[lo - 1]) || !/^[-*+] /.test(a[hi])) return;
+  if (!group.concat(label).every((v2, i) => v2 === (forward ? after : old)[i]) || !label.concat(group).every((v2, i) => v2 === (forward ? old : after)[i])) return;
+  let labelBlock;
+  try {
+    labelBlock = paragraph(text3);
+  } catch {
+    return;
+  }
+  if (labelBlock.text !== text3 || labelBlock.heading !== "NORMAL_TEXT" || labelBlock.level !== null || labelBlock.spans.length) return;
+  if (a.indexOf(text3) !== a.lastIndexOf(text3)) return;
+  return { left: a[lo - 1], right: a[hi], label, group, text: text3, forward };
+}
+function alreadyAppliedPlainLabelMove(base, local, remote) {
+  const move = plainLabelRotation(base, local);
+  if (!move) return false;
+  const rows = markdownLines2(remote), i = rows.indexOf(move.text);
+  if (i < 0 || rows.lastIndexOf(move.text) !== i) return false;
+  const expected = [move.left, ...move.forward ? move.group.concat(move.label) : move.label.concat(move.group), move.right];
+  const first = i - 3 - (move.forward ? move.group.length : 0);
+  return expected.every((v2, j2) => rows[first + j2] === v2);
+}
+function movePlainLabel(tab, oldMd, newMd, guard) {
+  const move = plainLabelRotation(oldMd, newMd);
+  if (!move) return;
+  const { left, right, label, group, text: text3, forward } = move;
+  const body2 = tab.documentTab.body.content;
+  const contents = (e) => e.paragraph?.elements.map((run) => run.textRun?.content).join("");
+  const labels = body2.map((e, i) => contents(e) === text3 + "\n" ? i : -1).filter((i) => i !== -1);
+  if (labels.length !== 1) return unsafe("section label is not unique");
+  const middle = labels[0], first = middle - 1, cells = body2.slice(first, first + 3);
+  const region = [left, ...(forward ? label.concat(group) : group.concat(label)).filter((v2) => v2 !== ""), right];
+  const start = first - 1 - (forward ? 0 : group.length);
+  if (start < 0 || !region.every((line, j2) => {
+    const e = body2[start + j2], p = e?.paragraph, block = paragraph(line);
+    return e && p && p.elements.every((r) => r.textRun) && contents(e) === block.text + "\n" && (p.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT") === block.heading && (p.bullet ? p.bullet.nestingLevel ?? 0 : null) === block.level && !JSON.stringify(p).includes('"suggested') && !p.positionedObjectIds;
+  })) return unsafe("section boundary does not match adjacent native paragraphs");
+  const ps = cells[1].paragraph.paragraphStyle ?? {};
+  if (ps.direction && ps.direction !== "LEFT_TO_RIGHT" || Object.entries(ps).some(([k2, v2]) => {
+    if (k2 === "namedStyleType" || k2 === "direction") return false;
+    if (k2 === "shading") return JSON.stringify(v2) !== JSON.stringify({ backgroundColor: {} });
+    if (!["borderBetween", "borderTop", "borderBottom", "borderLeft", "borderRight"].includes(k2)) return true;
+    const border = v2;
+    return !border || border.dashStyle !== "SOLID" || Object.keys(border.color ?? {}).length !== 0 || [border.width, border.padding].some((d) => !d || d.unit !== "PT" || (d.magnitude ?? 0) !== 0);
+  }) || cells.some((e) => {
+    const p = e.paragraph;
+    return Object.keys(p).some((k2) => k2 !== "paragraphStyle" && k2 !== "elements") || JSON.stringify(p.paragraphStyle ?? {}) !== JSON.stringify(ps) || p.elements.some((r) => Object.keys(r).some((k2) => !["startIndex", "endIndex", "textRun"].includes(k2)) || Object.keys(r.textRun).some((k2) => k2 !== "content" && k2 !== "textStyle") || Object.keys(r.textRun.textStyle ?? {}).length);
+  })) return unsafe("section label or spacers have extra native formatting");
+  const from = cells[0].startIndex, end = cells[2].endIndex, dest = body2[start + (forward ? region.length - 1 : 1)].startIndex;
+  const value = "\xA0\n" + text3 + "\n\xA0\n";
+  if (!Number.isInteger(from) || !Number.isInteger(dest) || end - from !== value.length) return unsafe("unrecognized section boundary range");
+  guard(from, end);
+  guard(dest, dest);
+  const tabId = tab.tabProperties.tabId, range = (startIndex, endIndex) => ({ startIndex, endIndex, tabId });
+  const cut = { deleteContentRange: { range: range(from, end) } };
+  const insert = [
+    { insertText: { location: { index: dest, tabId }, text: value } },
+    { deleteParagraphBullets: { range: range(dest, dest + value.length) } },
+    { updateParagraphStyle: { range: range(dest, dest + value.length - 1), paragraphStyle: ps, fields: "*" } },
+    { updateTextStyle: { range: range(dest, dest + value.length), textStyle: {}, fields: "*" } }
+  ];
+  return dest < from ? [cut, ...insert] : [...insert, cut];
+}
 function plan(tab, previous, desired, comments, allowDuplicatePosition) {
+  const named = Object.values(tab.documentTab.namedRanges ?? {}).flatMap((n) => n.namedRanges?.flatMap((n2) => n2.ranges) ?? []);
+  const protectedRanges = [...named, ...comments];
+  const guardText = (start, end) => {
+    if (protectedRanges.some((r) => start === end ? start >= r.startIndex && start <= r.endIndex : start < r.endIndex && end > r.startIndex)) return unsafe("edit overlaps a named range or anchored comment");
+  };
   const oldLayout = spacedBlocks(previous), newLayout = spacedBlocks(desired);
   if (JSON.stringify(numberStarts(oldLayout)) !== JSON.stringify(numberStarts(newLayout))) return unsafe("cannot reproduce a change in native list numbering");
+  const labelMove = movePlainLabel(tab, previous, desired, guardText);
+  if (labelMove) return labelMove;
   for (const c of docChanges(oldLayout, newLayout)) {
     const was = oldLayout.slice(c.start, c.end);
     if ((was.includes(blank) || c.replacement.includes(blank)) && (was.length !== c.replacement.length || was.some((v2, i) => v2 === blank !== (c.replacement[i] === blank)))) return unsafe("editing blank paragraph spacing");
@@ -18712,11 +18793,6 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
   const range = (startIndex, endIndex) => ({ startIndex, endIndex, tabId });
   const location = (index) => ({ index, tabId });
   const requests = [];
-  const named = Object.values(tab.documentTab.namedRanges ?? {}).flatMap((n) => n.namedRanges?.flatMap((n2) => n2.ranges) ?? []);
-  const protectedRanges = [...named, ...comments];
-  const guardText = (start, end) => {
-    if (protectedRanges.some((r) => start === end ? start >= r.startIndex && start <= r.endIndex : start < r.endIndex && end > r.startIndex)) return unsafe("edit overlaps a named range or anchored comment");
-  };
   function matches(e, block) {
     const p = e.paragraph;
     return p && p.elements.every((run) => run.textRun) && p.elements.map((run) => run.textRun.content).join("") === block.text + "\n" && (p.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT") === block.heading && (p.bullet ? p.bullet.nestingLevel ?? 0 : null) === block.level;
@@ -19766,6 +19842,7 @@ Prefix it with an apostrophe or rewrite it as plain text before syncing.`);
   if (documentTab(source) === "t.0" && objectValue(base)["document_id"] && !objectValue(base)["document_tab"] && baseMarkdown !== remote.markdown) {
     throw new Error("Google Docs saved snapshot predates explicit tab selection. Keep the local edits and reconcile them with a fresh download of this tab.");
   }
+  if (baseMarkdown !== remote.markdown && alreadyAppliedPlainLabelMove(baseMarkdown, markdown, remote.markdown)) return remote;
   const merged = mergeDocBlocks(baseMarkdown, markdown, remote.markdown, nativeDocMarkdownEqual);
   if (merged === remote.markdown) return remote;
   const id = source["document_id"] ?? source.identifier;

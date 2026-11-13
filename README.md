@@ -63,7 +63,7 @@ Run `wire --help` for the full CLI.
 
 ### Sync a Google Doc
 
-`wire sync <file>` merges edits to different paragraphs. It applies local edits to the selected tab in one batch, conditional on the current Google Docs revision. For documents with several tabs, attach the URL of the tab you want to edit, including its `tab=` parameter. An unscoped download can contain all tabs. Nested list items keep their own paragraphs. If both sides changed the same paragraph, open the local file and the Doc to reconcile it. Wire leaves both copies in place. It also stops when it cannot safely map an edit to the native paragraphs.
+`wire sync <file>` merges edits to different paragraphs. It applies local edits to the selected tab in one batch, conditional on the current Google Docs revision. For documents with several tabs, attach the URL of the tab you want to edit, including its `tab=` parameter. An unscoped download can contain all tabs. Nested list items keep their own paragraphs. In imported lists, a plain section label between two spacers can cross one nested bullet group without recreating its bullets. If both sides changed the same paragraph, open the local file and the Doc to reconcile it. Wire leaves both copies in place. It also stops when it cannot safely map an edit to the native paragraphs.
 
 Attached Markdown embeds original image pixels at the size used in Google Docs. Syncing an older attachment upgrades its thumbnails locally. Edit the image itself in Google Docs.
 

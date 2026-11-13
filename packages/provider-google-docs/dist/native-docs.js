@@ -108,8 +108,9 @@ function paragraph(line) {
 // One blank separator around a heading or a list is supplied by the Google
 // exporter. Other blank paragraphs are content and must not disappear.
 const blank = "\n";
+const markdownLines = (md) => docBlocks(md).map(l => l.replace(/\r?\n$/, "").replace(/ {2}$/, ""));
 function spacedBlocks(md) {
-    const rows = docBlocks(md).map(l => l.replace(/\r?\n$/, "").replace(/ {2}$/, ""));
+    const rows = markdownLines(md);
     const separated = (s) => !!s && /^\s*(?:#{1,6}|[-*+]|\d+[.)]) +/.test(s);
     const result = [];
     for (let i = 0; i < rows.length;) {
@@ -267,10 +268,128 @@ function sectionMove(before, after, changes) {
     const remove = { start: source, end: source + moved.length, replacement: [] }, insert = { start: dest, end: dest, replacement: moved };
     return { source, dest, moved, changes: first ? [remove, insert] : [insert, remove] };
 }
+// HTML-imported lists can have a distinct, non-recreatable list ID at each
+// level. When just the section boundary changes, move the three plain
+// paragraphs instead. The two empty Markdown lines are export delimiters.
+function plainLabelRotation(oldMd, newMd) {
+    if (!oldMd.includes("\u00a0") || !newMd.includes("\u00a0"))
+        return;
+    const a = markdownLines(oldMd), b = markdownLines(newMd);
+    if (a.length !== b.length)
+        return;
+    let lo = 0, hi = a.length;
+    while (lo < hi && a[lo] === b[lo])
+        lo++;
+    while (lo < hi && a[hi - 1] === b[hi - 1])
+        hi--;
+    if (hi - lo < 7 || lo === 0 || hi === a.length)
+        return;
+    const old = a.slice(lo, hi), after = b.slice(lo, hi), forward = old[0] === "";
+    const label = (forward ? old : after).slice(0, 5), group = (forward ? after : old).slice(0, -5);
+    const text = label[2];
+    if (label[0] !== "" || label[1] !== "\u00a0" || !text.trim() || label[3] !== "\u00a0" || label[4] !== ""
+        || !/^[-*+] /.test(group[0]) || !group.slice(1).every(v => /^[ \t]+[-*+] /.test(v))
+        || !/^[ \t]*[-*+] /.test(a[lo - 1]) || !/^[-*+] /.test(a[hi]))
+        return;
+    if (!group.concat(label).every((v, i) => v === (forward ? after : old)[i]) || !label.concat(group).every((v, i) => v === (forward ? old : after)[i]))
+        return;
+    let labelBlock;
+    try {
+        labelBlock = paragraph(text);
+    }
+    catch {
+        return;
+    }
+    if (labelBlock.text !== text || labelBlock.heading !== "NORMAL_TEXT" || labelBlock.level !== null || labelBlock.spans.length)
+        return;
+    if (a.indexOf(text) !== a.lastIndexOf(text))
+        return;
+    return { left: a[lo - 1], right: a[hi], label, group, text, forward };
+}
+export function alreadyAppliedPlainLabelMove(base, local, remote) {
+    const move = plainLabelRotation(base, local);
+    if (!move)
+        return false;
+    const rows = markdownLines(remote), i = rows.indexOf(move.text);
+    if (i < 0 || rows.lastIndexOf(move.text) !== i)
+        return false;
+    // The entire local change must already be present between both neighbors.
+    // An independent web edit outside this interval is safe to download.
+    const expected = [move.left, ...(move.forward ? move.group.concat(move.label) : move.label.concat(move.group)), move.right];
+    const first = i - 3 - (move.forward ? move.group.length : 0);
+    return expected.every((v, j) => rows[first + j] === v);
+}
+function movePlainLabel(tab, oldMd, newMd, guard) {
+    const move = plainLabelRotation(oldMd, newMd);
+    if (!move)
+        return;
+    const { left, right, label, group, text, forward } = move;
+    const body = tab.documentTab.body.content;
+    const contents = (e) => e.paragraph?.elements.map(run => run.textRun?.content).join("");
+    const labels = body.map((e, i) => contents(e) === text + "\n" ? i : -1).filter(i => i !== -1);
+    if (labels.length !== 1)
+        return unsafe("section label is not unique");
+    const middle = labels[0], first = middle - 1, cells = body.slice(first, first + 3);
+    const region = [left, ...(forward ? label.concat(group) : group.concat(label)).filter(v => v !== ""), right];
+    const start = first - 1 - (forward ? 0 : group.length);
+    if (start < 0 || !region.every((line, j) => {
+        const e = body[start + j], p = e?.paragraph, block = paragraph(line);
+        return e && p && p.elements.every(r => r.textRun) && contents(e) === block.text + "\n"
+            && (p.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT") === block.heading
+            && (p.bullet ? p.bullet.nestingLevel ?? 0 : null) === block.level
+            && !JSON.stringify(p).includes('"suggested') && !p.positionedObjectIds;
+    }))
+        return unsafe("section boundary does not match adjacent native paragraphs");
+    const ps = cells[1].paragraph.paragraphStyle ?? {};
+    if (ps.direction && ps.direction !== "LEFT_TO_RIGHT" ||
+        Object.entries(ps).some(([k, v]) => {
+            if (k === "namedStyleType" || k === "direction")
+                return false;
+            if (k === "shading")
+                return JSON.stringify(v) !== JSON.stringify({ backgroundColor: {} });
+            // Google imports these empty borders on otherwise unstyled paragraphs.
+            if (!["borderBetween", "borderTop", "borderBottom", "borderLeft", "borderRight"].includes(k))
+                return true;
+            const border = v;
+            return !border || border.dashStyle !== "SOLID" || Object.keys(border.color ?? {}).length !== 0
+                || [border.width, border.padding].some(d => !d || d.unit !== "PT" || (d.magnitude ?? 0) !== 0);
+        })
+        || cells.some(e => {
+            const p = e.paragraph;
+            return Object.keys(p).some(k => k !== "paragraphStyle" && k !== "elements") || JSON.stringify(p.paragraphStyle ?? {}) !== JSON.stringify(ps)
+                || p.elements.some(r => Object.keys(r).some(k => !["startIndex", "endIndex", "textRun"].includes(k)) ||
+                    Object.keys(r.textRun).some(k => k !== "content" && k !== "textStyle") || Object.keys(r.textRun.textStyle ?? {}).length);
+        }))
+        return unsafe("section label or spacers have extra native formatting");
+    const from = cells[0].startIndex, end = cells[2].endIndex, dest = body[start + (forward ? region.length - 1 : 1)].startIndex;
+    const value = "\u00a0\n" + text + "\n\u00a0\n";
+    if (!Number.isInteger(from) || !Number.isInteger(dest) || end - from !== value.length)
+        return unsafe("unrecognized section boundary range");
+    guard(from, end);
+    guard(dest, dest);
+    const tabId = tab.tabProperties.tabId, range = (startIndex, endIndex) => ({ startIndex, endIndex, tabId });
+    const cut = { deleteContentRange: { range: range(from, end) } };
+    const insert = [
+        { insertText: { location: { index: dest, tabId }, text: value } },
+        { deleteParagraphBullets: { range: range(dest, dest + value.length) } },
+        { updateParagraphStyle: { range: range(dest, dest + value.length - 1), paragraphStyle: ps, fields: "*" } },
+        { updateTextStyle: { range: range(dest, dest + value.length), textStyle: {}, fields: "*" } },
+    ];
+    return dest < from ? [cut, ...insert] : [...insert, cut];
+}
 function plan(tab, previous, desired, comments, allowDuplicatePosition) {
+    const named = Object.values(tab.documentTab.namedRanges ?? {}).flatMap(n => n.namedRanges?.flatMap(n => n.ranges) ?? []);
+    const protectedRanges = [...named, ...comments];
+    const guardText = (start, end) => {
+        if (protectedRanges.some(r => start === end ? start >= r.startIndex && start <= r.endIndex : start < r.endIndex && end > r.startIndex))
+            return unsafe("edit overlaps a named range or anchored comment");
+    };
     const oldLayout = spacedBlocks(previous), newLayout = spacedBlocks(desired);
     if (JSON.stringify(numberStarts(oldLayout)) !== JSON.stringify(numberStarts(newLayout)))
         return unsafe("cannot reproduce a change in native list numbering");
+    const labelMove = movePlainLabel(tab, previous, desired, guardText);
+    if (labelMove)
+        return labelMove;
     for (const c of docChanges(oldLayout, newLayout)) {
         const was = oldLayout.slice(c.start, c.end);
         if ((was.includes(blank) || c.replacement.includes(blank)) &&
@@ -292,12 +411,6 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
     const range = (startIndex, endIndex) => ({ startIndex, endIndex, tabId });
     const location = (index) => ({ index, tabId });
     const requests = [];
-    const named = Object.values(tab.documentTab.namedRanges ?? {}).flatMap(n => n.namedRanges?.flatMap(n => n.ranges) ?? []);
-    const protectedRanges = [...named, ...comments];
-    const guardText = (start, end) => {
-        if (protectedRanges.some(r => start === end ? start >= r.startIndex && start <= r.endIndex : start < r.endIndex && end > r.startIndex))
-            return unsafe("edit overlaps a named range or anchored comment");
-    };
     function matches(e, block) {
         const p = e.paragraph;
         return p && p.elements.every(run => run.textRun) && p.elements.map(run => run.textRun.content).join("") === block.text + "\n"
