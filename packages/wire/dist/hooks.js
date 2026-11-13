@@ -177,7 +177,7 @@ export function withWireHooks(wire, options) {
     const watchSyncHook = (command, result) => runSingleResultHooks(options, command, result);
     return Object.freeze({
         ...wire,
-        attach: async (url, path) => runSingleResultHooks(options, "attach", await wire.attach(url, path)),
+        attach: async (url, path, editorReceipts) => runSingleResultHooks(options, "attach", await wire.attach(url, path, editorReceipts)),
         create: async (url, path) => runSingleResultHooks(options, "attach", await wire.create(url, path)),
         sync: async (value, path) => runSingleResultHooks(options, "sync", await wire.sync(value, path)),
         downloadSource: async (url, path) => runSingleResultHooks(options, "download", await wire.downloadSource(url, path), false),

@@ -126,7 +126,7 @@ export function createExecutableRoot(environment, currentDirectory, options = { 
     });
     const configuredWire = Object.freeze({
         ...baseWire,
-        attach: async (url, path) => { activeConfigurationPath = path; return baseWire.attach(url, path); },
+        attach: async (url, path, editorReceipts) => { activeConfigurationPath = path; return baseWire.attach(url, path, editorReceipts); },
         create: async (url, path) => { activeConfigurationPath = path; return baseWire.create(url, path); },
         view: async (url) => { activeConfigurationPath = currentDirectory; return baseWire.view(url); },
         downloadSource: async (url, path) => { activeConfigurationPath = path; return baseWire.downloadSource(url, path); },

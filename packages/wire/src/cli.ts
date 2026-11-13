@@ -228,7 +228,7 @@ function positionalWords(argv: readonly string[]): readonly string[] | null {
       continue;
     } else if (arg === "--output" || (arg === "--backend" && words[0] === "init") || (arg === "--debug" && argv[index + 1] !== undefined && debugModeNames.has(argv[index + 1]!))) {
       index += 1;
-    } else if (arg === "--debug" || (arg === "--paste" && authServices.has(words[0]!) && words[1] === "login") || arg.startsWith("--debug=") || arg.startsWith("--output=") || (arg.startsWith("--backend=") && words[0] === "init")) {
+    } else if ((arg === "--editor-receipts" && (words[0] === "attach" || (words[0] && isSourceUrl(words[0])))) || arg === "--debug" || (arg === "--paste" && authServices.has(words[0]!) && words[1] === "login") || arg.startsWith("--debug=") || arg.startsWith("--output=") || (arg.startsWith("--backend=") && words[0] === "init")) {
       continue;
     } else if (arg.startsWith("-")) {
       return null;

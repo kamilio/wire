@@ -441,6 +441,35 @@ test("packed package installs and runs outside the repository", async (context) 
     assert.equal((await run(["status", "Note.md"])).modified, true);
     assert.ok((await run(["history", "Note.md"])).some(revision => revision.kind === "local"));
   });
+  await context.test("packed CLI opts a clean Google Doc into local editor receipts", async () => {
+    const docUrl = "https://docs.google.com/document/d/mockdoc/edit";
+    const token = join(consumerRoot, "token.json"), preload = join(consumerRoot, "mock-google.mjs");
+    await writeFile(token, JSON.stringify({ token: "fixture", scopes: ["https://www.googleapis.com/auth/drive"], expiry: "2070-01-01" }));
+    await writeFile(preload, `globalThis.fetch = async (input, init) => {
+      const url = new URL(input);
+      if (init?.method && init.method !== 'GET') throw Error('Unexpected write');
+      if (url.host === 'docs.googleapis.com' && url.pathname === '/v1/documents/mockdoc')
+        return Response.json({documentId:'mockdoc', title:'Receipt Note', revisionId:'r1'});
+      if (url.host === 'www.googleapis.com' && url.pathname === '/drive/v3/files/mockdoc')
+        return Response.json({id:'mockdoc', name:'Receipt Note'});
+      if (url.host === 'www.googleapis.com' && url.pathname === '/drive/v3/files/mockdoc/export' && url.searchParams.get('mimeType') === 'text/markdown')
+        return new Response('original\\n');
+      throw Error('Unexpected request: '+url);
+    };`);
+    const opts = { cwd: consumerRoot, env: { HOME: consumerRoot, PATH: process.env.PATH, GOOGLE_DOCS_TOKEN_FILE: token } };
+    const args = ["--import", preload, join(installedRoot, "bin/wire.mjs")];
+    const run = async (...command) => JSON.parse((await execFileAsync(process.execPath, [...args, ...command, "--json"], opts)).stdout);
+    const { path: file } = await run("attach", docUrl);
+    assert.equal(await readFile(file, "utf8"), "original\n");
+    await run("attach", docUrl, "--editor-receipts");
+    const marked = await readFile(file, "utf8");
+    assert.match(marked, /^original\n\n<!-- wire-editor-basis:/);
+    assert.equal((await run("shell", file, "cat document.md")).stdout, "original\n");
+    assert.equal((await run("diff", file)).diff, "");
+    await writeFile(file, "unmarked edit\n");
+    await assert.rejects(run("sync", file), e => /receipt/i.test(e.stdout));
+    assert.equal(await readFile(file, "utf8"), "unmarked edit\n");
+  });
   const latticeHelp = await execFileAsync(join(consumerRoot, "node_modules", ".bin", "wire"), ["lattice", "--help"], {cwd: consumerRoot, env: environment});
   assert.doesNotMatch(latticeHelp.stdout, /scrape/);
   assert.deepEqual(await mcpTools(join(consumerRoot, "node_modules", ".bin", "wire-mcp"), consumerRoot, environment), ["attach", "init", "preview", "sync", "download", "detach", "open", "sync_all", "ashby__status", "ashby__login", "ashby__logout", "ashby__interviews", "ashby__pending", "ashby__latest", "ashby__prep", "ashby__template", "ashby__sync", "asana__status", "asana__login", "asana__logout", "asana__users__lookup", "asana__projects__list", "asana__projects__show", "asana__tasks__list", "asana__tasks__show", "asana__tasks__create", "asana__tasks__edit", "asana__tasks__move", "asana__tasks__comment", "asana__comments__edit", "chatgpt__status", "chatgpt__login", "chatgpt__logout", "gmail__status", "gmail__login", "gmail__logout", "google_docs__status", "google_docs__login", "google_docs__logout", "notion__status", "notion__login", "notion__logout", "notion__users__lookup", "slack__preview", "slack__attach", "slack__sync", "slack__status", "slack__login", "slack__logout", "slack__users__lookup", "slack__send", "slack__edit", "zoom__status", "zoom__login", "zoom__logout"]);

@@ -71,6 +71,18 @@ wire sync Notes.md
 
 The shell gets a private in-memory copy at `/document.md`. Quote the script so redirections run inside that shell. It can read and edit text with commands such as `cat`, `grep`, `sed`, and `printf`. Only the final contents of `/document.md` are saved, and only if the script succeeds and the working copy has not changed. Other virtual files disappear. No commit message or review comment is needed. A running `wire watch` can trigger sync automatically.
 
+By default, the Markdown file exactly matches the downloaded document. A history timestamp records when Wire observed the text. It cannot tell when you typed it, capture saves that were replaced before Wire saw them, or tell which revision an old editor window was showing. Saving that window after a download can look like a new edit that reverses the download.
+
+If an editor writes to an old open file after Wire replaces it, run `wire history Notes.md`. Wire checks retained files for that document and lists any newly discovered text as a `recovered` revision. Inspect it with `wire diff Notes.md --from working --to REVISION_ID` and copy any changes you want to keep. Discovery leaves both the working file and the remote document alone.
+
+For a Google Doc, enable editor receipts when attaching, or repeat attach on its clean registered link:
+
+```sh
+wire attach 'https://docs.google.com/document/d/DOCUMENT_ID/edit' --editor-receipts
+```
+
+Wire adds a local HTML comment to the Markdown. Keep it with the buffer: when an old window saves, Wire uses its receipt to find the revision that window saw. Wire removes the comment before sending content to Google Docs and hides it from `wire diff` and `wire shell`. Editors and hooks that read the file directly see the comment. An absent, invalid, or foreign receipt stops sync and leaves the file intact. Receipts identify an editing base; they do not record keystrokes or prove when an edit happened.
+
 A shell edit is published only if the provider can check that the remote revision still matches. Google Docs supports this with write access. For a Notion page, Sheet, or another provider without this check, Wire keeps the local draft and refuses the upload. You can copy the intended changes into the provider yourself.
 
 If sync reports a conflict, compare both saved versions, then choose which content to keep:

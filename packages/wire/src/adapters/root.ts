@@ -207,6 +207,7 @@ function wireUserErrorMessage(message: string): boolean {
     || /^Resource (path |identifier |URL )?not found: /.test(message)
     || /^Ambiguous resource path /.test(message)
     || /^(Unresolved Wire conflict|Working file changed since the conflict|Stale shell edit|No saved conflict|Unknown document revision|No saved (?:base|local|remote) revision|Linked Markdown is missing|Another Wire operation owns this document|Local file changed during (?:sync|detach)|This registry does not provide durable document history|This provider cannot conditionally publish|Resolve and sync the Wire draft before detaching|Notion cannot condition a save|Google Sheets cannot condition a save)/.test(message)
+    || /^((?:Invalid|Missing|Orphaned) Wire editor receipt|Editor receipts require|An older editor buffer|Document already has a different sync owner)/.test(message)
     || /^Login not saved$/.test(message)
     || /authentication (is missing|is missing or expired|failed|expired).*Run `wire (ashby|asana|chatgpt|gmail|google-docs|notion|slack|zoom) login`/i.test(message)
     || /^Asana API /.test(message)
@@ -441,18 +442,20 @@ type AsanaExplorer = {
 };
 
 export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, readInput?: TextInputReader, options: WireRootOptions = { allowPaste: true }, sendSlack?: (destination: string, markdown: string) => Promise<SlackSentMessage>, lookupSlack?: (query: string) => Promise<readonly JsonObject[]>, editSlack?: (url: string, markdown: string) => Promise<SlackSentMessage>, lookupNotion?: (query: string) => Promise<readonly JsonObject[]>, asana?: AsanaExplorer, latticeRoot?: () => Promise<string>): WireRoot {
-  const attachFromCliUrl = (url: string) => {
+  const attachFromCliUrl = (url: string, editorReceipts?: boolean) => {
     const removedCommand = removedCliCommandNames[url as keyof typeof removedCliCommandNames];
     if (removedCommand !== undefined) throw new UserError(`Unknown command: ${url}. ${removedCommand}`);
     if (!/^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(url)) throw new UserError(`Expected source URL: ${url}`);
-    return userFacing(() => wire.attach(url, currentDirectory));
+    return userFacing(() => wire.attach(url, currentDirectory, editorReceipts));
   };
   const defaultAttach = defineCommand({
     name: "attach",
     description: "Track a source URL as local Markdown. Shorthand: wire <url>.",
     positional: ["url"],
-    params: S.Object({ url: S.String({ description: "Supported source URL to attach." }) }),
-    handler: ({ params }) => attachFromCliUrl(params.url),
+    params: S.Object({ url: S.String({ description: "Supported source URL to attach." }),
+      "editor-receipts": S.Optional(S.Boolean({ description: "Google Docs: keep a local Markdown comment identifying the revision each editor buffer saw." })),
+    }),
+    handler: ({ params }) => attachFromCliUrl(params.url, params["editor-receipts"]),
     render: wirePresentation.attach,
   });
   const preview = defineCommand({
