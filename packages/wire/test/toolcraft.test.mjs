@@ -88,7 +88,7 @@ for (const [name, args, expected] of cliCases) {
 
 test("CLI help renders the URL attach command without a blank command name", async () => {
   const execution = await execFileAsync(process.execPath, [fixture, "--help"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.match(execution.stdout, /attach <url>\s+Track a source URL as local Markdown\. Shorthand: wire <url>\./);
+  assert.match(execution.stdout, /attach <url> \[--editor-receipts\]\s+Track a source URL as local Markdown\. Shorthand: wire <url>\./);
   assert.match(execution.stdout, /preview <url>\s+Preview a source URL without writing files\./);
   assert.match(execution.stdout, /sync <resource>\s+Two-way sync one registered resource\./);
   assert.match(execution.stdout, /download <url>\s+Download a source URL as local Markdown without tracking it\./);
@@ -296,7 +296,7 @@ test("CLI help in a tty does not render literal command row backticks", async (t
     else Object.defineProperty(process.stdout, "isTTY", originalIsTty);
   });
   await runWireCli(createRoot(createFakeWire(), "/workspace", auth, async () => ""), ["node", "wire", "--help"], "/workspace");
-  assert.match(output, /^\s+attach <url>\s+Track a source URL as/m);
+  assert.match(output, /^\s+attach <url> \[--editor-receipts\]\s+Track a source URL as/m);
   assert.doesNotMatch(output, /^\s+`attach <url>`/m);
 });
 
