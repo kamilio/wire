@@ -1,7 +1,7 @@
 import { defineService } from "wire-core";
 import { docBlocks, mergeDocBlocks } from "./doc-blocks.js";
 import { googleRead } from "./google-read.js";
-import { alreadyAppliedPlainLabelMove, nativeDocMarkdownEqual, nativeDocsGrant, tryUploadDocBlocks } from "./native-docs.js";
+import { alreadyAppliedPlainLabelMove, nativeDocMarkdownEqual, nativeDocsGrant, StaleDocRevision, tryUploadDocBlocks } from "./native-docs.js";
 import { inflateRawSync } from "node:zlib";
 import type { FetchedDocument, JsonObject, JsonValue, RuntimeCapabilities, Source, SynchronizedDocument } from "wire-core";
 
@@ -768,7 +768,7 @@ async function fetchGoogleDocument(runtime: RuntimeCapabilities, source: Source,
   return { title, markdown, ...(readRevision ? { readRevision } : {}), data: { document_id: id, title, output_path: null, sheet_gid: null, markdown, rows: null, ...(markdown.includes("data:image/") ? { original_images: true } : {}), ...(readRevision ? {position_revision: readRevision} : {}), ...(legacyImages === exported && readRevision ? {verified_revision: readRevision} : {}), ...(tab === null ? {} : { document_tab: tab }) } };
 }
 
-async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, _url: string, source: Source, base: JsonValue, markdown: string): Promise<SynchronizedDocument> {
+async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, url: string, source: Source, base: JsonValue, markdown: string, retryStaleRevision = true): Promise<SynchronizedDocument> {
   const remote = await fetchGoogleDocument(runtime, source, base);
   if (source.type === "presentation") {
     const baseMarkdown = objectValue(base)["markdown"];
@@ -816,9 +816,16 @@ async function synchronizeGoogleDocument(runtime: RuntimeCapabilities, _url: str
   const positionRevision = snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && sameBase
     ? snapshot["position_revision"] ?? snapshot["verified_revision"] : undefined;
   let wroteRemote = false, writtenRevision: string | undefined;
-  const native = await tryUploadDocBlocks(runtime, id, key, tab, remote.markdown, merged,
-    async revision => remote.readRevision === revision ? remote.markdown : (await fetchGoogleDocument(runtime, source)).markdown,
-    revision => { wroteRemote = true; writtenRevision = revision; }, typeof positionRevision === "string" ? positionRevision : undefined);
+  let native: boolean;
+  try {
+    native = await tryUploadDocBlocks(runtime, id, key, tab, remote.markdown, merged,
+      async revision => remote.readRevision === revision ? remote.markdown : (await fetchGoogleDocument(runtime, source)).markdown,
+      revision => { wroteRemote = true; writtenRevision = revision; }, typeof positionRevision === "string" ? positionRevision : undefined);
+  } catch (error) {
+    // Re-read and merge the original draft; never replay old offsets or an uncertain write.
+    if (retryStaleRevision && error instanceof StaleDocRevision) return synchronizeGoogleDocument(runtime, url, source, base, markdown, false);
+    throw error;
+  }
   if (!native) throw new Error("Google Docs uploads require an OAuth token with drive, drive.file, or both documents and drive.readonly scopes. Set GOOGLE_DOCS_TOKEN_FILE or GOOGLE_FORMS_TOKEN_FILE. Browser login supports downloads only.");
   const uploaded = await fetchGoogleDocument(runtime, source, {});
   if (!nativeDocMarkdownEqual(uploaded.markdown, merged)) throw new Error("Google Docs save verification failed");

@@ -657,6 +657,9 @@ async function anchoredComments(runtime: RuntimeCapabilities, id: string, header
   return found;
 }
 
+// Only raise this when no mutation was sent or Google explicitly rejected it.
+export class StaleDocRevision extends Error {}
+
 export async function tryUploadDocBlocks(runtime: RuntimeCapabilities, documentId: string, key: string | null, tabId: string | null, remoteMarkdown: string, desiredMarkdown: string, confirmRemote: (revision: string) => Promise<string>, onWrite?: (revision: string | undefined) => void, positionRevision?: string): Promise<boolean> {
   const token = (await nativeDocsGrant(runtime))?.token;
   if (!token) return false;
@@ -673,11 +676,20 @@ export async function tryUploadDocBlocks(runtime: RuntimeCapabilities, documentI
   const tab = tabId ? tabs.find(t => t.tabProperties.tabId === tabId) : tabs[0];
   if (!tab?.documentTab?.body?.content) return unsafe("missing target tab");
   const comments = await anchoredComments(runtime,documentId,headers,tab,tabs);
+  if (await confirmRemote(data.revisionId) !== remoteMarkdown) throw new StaleDocRevision("Google Docs changed before writing; sync again.");
   const requests = plan(tab, remoteMarkdown, desiredMarkdown,comments,positionRevision === data.revisionId);
-  if (await confirmRemote(data.revisionId) !== remoteMarkdown) throw new Error("Google Docs changed before writing; sync again.");
   if (!requests.length) return true;
   const update = await runtime.http.request(url + ":batchUpdate", { method: "POST", headers: { ...headers, "content-type": "application/json" }, redirect: "error", body: JSON.stringify({ writeControl: { requiredRevisionId: data.revisionId }, requests }) });
-  if (!update.ok) throw new Error("Google Docs block update failed: HTTP " + update.status + ". Sync again to check the current revision.");
+  if (!update.ok) {
+    if (update.status === 400) {
+      const body = await update.json().catch(() => null) as { error?: { code?: number; status?: string; message?: string } } | null;
+      if (body?.error?.code === 400 && body.error.status === "INVALID_ARGUMENT" && (body.error.message === "The required revision ID does not match the latest revision." ||
+          body.error.message === `The required revision ID '${data.revisionId}' does not match the latest revision.`)) {
+        throw new StaleDocRevision("Google Docs rejected the required revision. Sync again to check the current revision.");
+      }
+    }
+    throw new Error("Google Docs block update failed: HTTP " + update.status + ". Sync again to check the current revision.");
+  }
   if (onWrite) {
     const ack = await update.json() as { writeControl?: { requiredRevisionId?: string } };
     onWrite(typeof ack.writeControl?.requiredRevisionId === "string" ? ack.writeControl.requiredRevisionId : undefined);

@@ -19083,6 +19083,8 @@ async function anchoredComments(runtime2, id, headers, tab, tabs) {
   } while (cursor);
   return found;
 }
+var StaleDocRevision = class extends Error {
+};
 async function tryUploadDocBlocks(runtime2, documentId, key2, tabId, remoteMarkdown, desiredMarkdown, confirmRemote, onWrite, positionRevision) {
   const token = (await nativeDocsGrant(runtime2))?.token;
   if (!token) return false;
@@ -19104,11 +19106,19 @@ async function tryUploadDocBlocks(runtime2, documentId, key2, tabId, remoteMarkd
   const tab = tabId ? tabs.find((t) => t.tabProperties.tabId === tabId) : tabs[0];
   if (!tab?.documentTab?.body?.content) return unsafe("missing target tab");
   const comments = await anchoredComments(runtime2, documentId, headers, tab, tabs);
+  if (await confirmRemote(data.revisionId) !== remoteMarkdown) throw new StaleDocRevision("Google Docs changed before writing; sync again.");
   const requests = plan(tab, remoteMarkdown, desiredMarkdown, comments, positionRevision === data.revisionId);
-  if (await confirmRemote(data.revisionId) !== remoteMarkdown) throw new Error("Google Docs changed before writing; sync again.");
   if (!requests.length) return true;
   const update = await runtime2.http.request(url + ":batchUpdate", { method: "POST", headers: { ...headers, "content-type": "application/json" }, redirect: "error", body: JSON.stringify({ writeControl: { requiredRevisionId: data.revisionId }, requests }) });
-  if (!update.ok) throw new Error("Google Docs block update failed: HTTP " + update.status + ". Sync again to check the current revision.");
+  if (!update.ok) {
+    if (update.status === 400) {
+      const body2 = await update.json().catch(() => null);
+      if (body2?.error?.code === 400 && body2.error.status === "INVALID_ARGUMENT" && (body2.error.message === "The required revision ID does not match the latest revision." || body2.error.message === `The required revision ID '${data.revisionId}' does not match the latest revision.`)) {
+        throw new StaleDocRevision("Google Docs rejected the required revision. Sync again to check the current revision.");
+      }
+    }
+    throw new Error("Google Docs block update failed: HTTP " + update.status + ". Sync again to check the current revision.");
+  }
   if (onWrite) {
     const ack = await update.json();
     onWrite(typeof ack.writeControl?.requiredRevisionId === "string" ? ack.writeControl.requiredRevisionId : void 0);
@@ -19809,7 +19819,7 @@ async function fetchGoogleDocument(runtime2, source, previous) {
   }
   return { title: title2, markdown, ...readRevision ? { readRevision } : {}, data: { document_id: id, title: title2, output_path: null, sheet_gid: null, markdown, rows: null, ...markdown.includes("data:image/") ? { original_images: true } : {}, ...readRevision ? { position_revision: readRevision } : {}, ...legacyImages === exported && readRevision ? { verified_revision: readRevision } : {}, ...tab === null ? {} : { document_tab: tab } } };
 }
-async function synchronizeGoogleDocument(runtime2, _url, source, base, markdown) {
+async function synchronizeGoogleDocument(runtime2, url, source, base, markdown, retryStaleRevision = true) {
   const remote = await fetchGoogleDocument(runtime2, source, base);
   if (source.type === "presentation") {
     const baseMarkdown2 = objectValue(base)["markdown"];
@@ -19855,20 +19865,26 @@ Prefix it with an apostrophe or rewrite it as plain text before syncing.`);
   const sameBase = baseMarkdown === remote.markdown || snapshot["verified_revision"] !== void 0 && snapshot["verified_revision"] === objectValue(remote.data)["verified_revision"];
   const positionRevision = snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && sameBase ? snapshot["position_revision"] ?? snapshot["verified_revision"] : void 0;
   let wroteRemote = false, writtenRevision;
-  const native = await tryUploadDocBlocks(
-    runtime2,
-    id,
-    key2,
-    tab,
-    remote.markdown,
-    merged,
-    async (revision) => remote.readRevision === revision ? remote.markdown : (await fetchGoogleDocument(runtime2, source)).markdown,
-    (revision) => {
-      wroteRemote = true;
-      writtenRevision = revision;
-    },
-    typeof positionRevision === "string" ? positionRevision : void 0
-  );
+  let native;
+  try {
+    native = await tryUploadDocBlocks(
+      runtime2,
+      id,
+      key2,
+      tab,
+      remote.markdown,
+      merged,
+      async (revision) => remote.readRevision === revision ? remote.markdown : (await fetchGoogleDocument(runtime2, source)).markdown,
+      (revision) => {
+        wroteRemote = true;
+        writtenRevision = revision;
+      },
+      typeof positionRevision === "string" ? positionRevision : void 0
+    );
+  } catch (error) {
+    if (retryStaleRevision && error instanceof StaleDocRevision) return synchronizeGoogleDocument(runtime2, url, source, base, markdown, false);
+    throw error;
+  }
   if (!native) throw new Error("Google Docs uploads require an OAuth token with drive, drive.file, or both documents and drive.readonly scopes. Set GOOGLE_DOCS_TOKEN_FILE or GOOGLE_FORMS_TOKEN_FILE. Browser login supports downloads only.");
   const uploaded = await fetchGoogleDocument(runtime2, source, {});
   if (!nativeDocMarkdownEqual(uploaded.markdown, merged)) throw new Error("Google Docs save verification failed");

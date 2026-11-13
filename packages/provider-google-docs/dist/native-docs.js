@@ -803,6 +803,9 @@ async function anchoredComments(runtime, id, headers, tab, tabs) {
     } while (cursor);
     return found;
 }
+// Only raise this when no mutation was sent or Google explicitly rejected it.
+export class StaleDocRevision extends Error {
+}
 export async function tryUploadDocBlocks(runtime, documentId, key, tabId, remoteMarkdown, desiredMarkdown, confirmRemote, onWrite, positionRevision) {
     const token = (await nativeDocsGrant(runtime))?.token;
     if (!token)
@@ -827,14 +830,22 @@ export async function tryUploadDocBlocks(runtime, documentId, key, tabId, remote
     if (!tab?.documentTab?.body?.content)
         return unsafe("missing target tab");
     const comments = await anchoredComments(runtime, documentId, headers, tab, tabs);
-    const requests = plan(tab, remoteMarkdown, desiredMarkdown, comments, positionRevision === data.revisionId);
     if (await confirmRemote(data.revisionId) !== remoteMarkdown)
-        throw new Error("Google Docs changed before writing; sync again.");
+        throw new StaleDocRevision("Google Docs changed before writing; sync again.");
+    const requests = plan(tab, remoteMarkdown, desiredMarkdown, comments, positionRevision === data.revisionId);
     if (!requests.length)
         return true;
     const update = await runtime.http.request(url + ":batchUpdate", { method: "POST", headers: { ...headers, "content-type": "application/json" }, redirect: "error", body: JSON.stringify({ writeControl: { requiredRevisionId: data.revisionId }, requests }) });
-    if (!update.ok)
+    if (!update.ok) {
+        if (update.status === 400) {
+            const body = await update.json().catch(() => null);
+            if (body?.error?.code === 400 && body.error.status === "INVALID_ARGUMENT" && (body.error.message === "The required revision ID does not match the latest revision." ||
+                body.error.message === `The required revision ID '${data.revisionId}' does not match the latest revision.`)) {
+                throw new StaleDocRevision("Google Docs rejected the required revision. Sync again to check the current revision.");
+            }
+        }
         throw new Error("Google Docs block update failed: HTTP " + update.status + ". Sync again to check the current revision.");
+    }
     if (onWrite) {
         const ack = await update.json();
         onWrite(typeof ack.writeControl?.requiredRevisionId === "string" ? ack.writeControl.requiredRevisionId : undefined);

@@ -1945,6 +1945,73 @@ test("only a verified Docs batch revision can skip later exports; native revisio
   assert.equal(changed.markdown, text); assert.equal(exports, 4); assert.equal(changed.data.verified_revision, undefined);
 });
 
+test("Docs replans once after a known stale revision and never replays an uncertain write", async () => {
+  const mismatch = {error:{code:400,status:"INVALID_ARGUMENT",message:"The required revision ID does not match the latest revision."}};
+  for (const reason of ["before-post", "rejected", "overlap", "busy", "unrelated-400", "wrong-revision-400", "lost-ack", "verification"]) {
+    let lines = ["First", "Second"], rev = 1, nativeReads = 0;
+    const batches = [];
+    const base = lines.join("\n\n"), draft = "First\n\nEdited";
+    const rt = docsDriveRuntime(async (input, init) => {
+      const u = new URL(input);
+      if (u.pathname.endsWith("/export")) return new Response(lines.join("\n\n"));
+      if (u.pathname.endsWith("/comments")) return response({comments:[]});
+      if (u.pathname.endsWith(":batchUpdate")) {
+        const batch = JSON.parse(init.body);
+        assert.equal(batch.writeControl.requiredRevisionId, String(rev));
+        batches.push(batch);
+        if (reason === "unrelated-400") return Response.json({error:{...mismatch.error, message:"Invalid document range."}}, {status:400});
+        if (reason === "wrong-revision-400") return Response.json({error:{...mismatch.error,message:"The required revision ID 'not-our-revision' does not match the latest revision."}}, {status:400});
+        if (reason === "busy" || ((reason === "rejected" || reason === "overlap") && batches.length === 1)) {
+          lines[reason === "overlap" ? 1 : 0] = "Changed elsewhere " + (++rev);
+          return Response.json(reason === "rejected" ? {error:{...mismatch.error,message:`The required revision ID '${batch.writeControl.requiredRevisionId}' does not match the latest revision.`}} : mismatch, {status:400});
+        }
+        let content = lines.join("\n") + "\n";
+        for (const req of batch.requests) {
+          if (req.insertText) {
+            const {location, text} = req.insertText;
+            content = content.slice(0,location.index-1) + text + content.slice(location.index-1);
+          } else if (req.deleteContentRange) {
+            const range = req.deleteContentRange.range;
+            content = content.slice(0,range.startIndex-1) + content.slice(range.endIndex-1);
+          } else assert.ok(req.updateTextStyle);
+        }
+        lines = content.slice(0,-1).split("\n");
+        assert.equal(lines[1],"Edited");
+        rev++;
+        if (reason === "lost-ack") throw new Error("Disconnected after Google committed");
+        if (reason === "verification") lines[1] = "Unexpected content";
+        return response({writeControl:{requiredRevisionId:String(rev)}});
+      }
+      if (u.hostname === "www.googleapis.com") return response({id:"doc",name:"Test"});
+      if (u.searchParams.has("fields")) return response({documentId:"doc",title:"Test",revisionId:String(rev)});
+      if (reason === "before-post" && !nativeReads) { lines[0] = "Changed before planning"; rev++; }
+      nativeReads++;
+      let start = 1;
+      const content = lines.map(text => {
+        const startIndex = start, endIndex = start += text.length+1;
+        return {startIndex,endIndex,paragraph:{paragraphStyle:{namedStyleType:"NORMAL_TEXT"},elements:[{startIndex,endIndex,textRun:{content:text+"\n"}}]}};
+      });
+      return response({documentId:"doc",revisionId:String(rev),tabs:[{tabProperties:{tabId:"t.0"},documentTab:{body:{content}}}]});
+    });
+    const sync = synchronizeSource(rt,"https://docs.google.com/document/d/doc/edit",serviceCatalog,{markdown:base},draft,"local.md");
+    if (reason === "rejected" || reason === "before-post") {
+      const result = await sync;
+      assert.equal(result.wroteRemote, true);
+      assert.equal(result.markdown, lines.join("\n\n"));
+      assert.match(lines[0],/^Changed/);
+      assert.equal(nativeReads,2);
+      assert.deepEqual(batches.map(b => b.writeControl.requiredRevisionId), reason === "rejected" ? ["1","2"] : ["2"]);
+    } else {
+      const errors = {overlap:/changed remotely and locally/,busy:/rejected the required revision/, "unrelated-400":/HTTP 400/, "wrong-revision-400":/HTTP 400/,
+        "lost-ack":/Disconnected after Google committed/, verification:/save verification failed/};
+      await assert.rejects(sync,errors[reason]);
+      assert.equal(batches.length, reason === "busy" ? 2 : 1);
+      assert.equal(nativeReads, reason === "busy" ? 2 : 1);
+      if (reason === "overlap") assert.equal(lines[1],"Changed elsewhere 2");
+    }
+  }
+});
+
 test("Docs receipts distinguish an empty native plan from a successful batch without a revision receipt", async () => {
   let text = "Fruit.", posts = 0;
   const rt = docsDriveRuntime(async (input, init) => {
