@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { convert } from "@poe-platform/safe-bash/commands/pandoc";
+import { convert } from "#docx-converter";
 export async function docxMarkdown(bytes) {
     const result = await convert([{ bytes }], { from: "docx", to: "markdown" }, {});
     if (result.kind !== "text" || !result.text.trim() || result.diagnostics.length)
