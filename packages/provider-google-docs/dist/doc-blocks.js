@@ -106,11 +106,50 @@ export function boundedDeletion(base, side, other, i) {
     const count = (rows) => rows.reduce((n, r) => n + Number(r === value), 0);
     return count(side) === count(base) - 1;
 }
-function conflictMessage(location = "") {
-    return `Google Docs changed remotely and locally.${location} Resolve the conflict in Google Docs or the local Markdown file before syncing again.`;
+// In a run of identical blank paragraphs, a deletion can match any sibling.
+function checkBlankRuns(blocks, local, remote) {
+    const runAt = new Map();
+    for (let i = 1; i < blocks.length; i++) {
+        if (blocks[i] !== blocks[i - 1] || blocks[i].trim())
+            continue;
+        const run = runAt.get(i - 1) ?? i - 1;
+        runAt.set(i - 1, run);
+        runAt.set(i, run);
+    }
+    if (!runAt.size)
+        return;
+    const changesByRun = (changes) => {
+        // True means that the edit can change how many siblings survive.
+        const touched = new Map();
+        const mark = (run, ambiguous) => {
+            if (run !== undefined)
+                touched.set(run, ambiguous || touched.get(run) === true);
+        };
+        for (const { start, end, replacement } of changes) {
+            for (let i = start; i < end; i++)
+                mark(runAt.get(i), end - start > replacement.length);
+            if (start !== end)
+                continue;
+            const left = runAt.get(start - 1), right = runAt.get(start);
+            if (left === right)
+                mark(left, replacement.includes(blocks[start]));
+            // A matching blank appended at a boundary is indistinguishable from
+            // inserting that blank inside the run.
+            if (replacement[0] === blocks[start - 1])
+                mark(left, true);
+            if (replacement.at(-1) === blocks[start])
+                mark(right, true);
+        }
+        return touched;
+    };
+    const other = changesByRun(remote);
+    for (const [run, ambiguous] of changesByRun(local)) {
+        if (other.has(run) && (ambiguous || other.get(run)))
+            conflict();
+    }
 }
 function conflict(location = "") {
-    throw new WireMergeConflict(conflictMessage(location));
+    throw new WireMergeConflict(`Google Docs changed remotely and locally.${location} Resolve the conflict in Google Docs or the local Markdown file before syncing again.`);
 }
 export function mergeDocBlocks(base, local, remote, sameRendering = (a, b) => a === b) {
     if (base === remote || local === remote)
@@ -124,12 +163,17 @@ export function mergeDocBlocks(base, local, remote, sameRendering = (a, b) => a 
     // A previous write may have landed before its acknowledgment was lost.
     // Compare only replacements of the identical base interval. Keep Google's
     // spelling of an already-applied change, including its paragraph separators.
+    const shared = new Set();
     const localChanges = docChanges(blocks, localBlocks).filter(change => {
         const other = remoteAt.get(change.start);
-        return !other || other.end !== change.end || !sameRendering(change.replacement.join(""), other.replacement.join(""));
+        if (!other || other.end !== change.end || !sameRendering(change.replacement.join(""), other.replacement.join("")))
+            return true;
+        shared.add(other);
+        return false;
     });
     if (!localChanges.length)
         return remote;
+    checkBlankRuns(blocks, localChanges, remoteChanges.filter(change => !shared.has(change)));
     const positions = occurrences(blocks, 0, blocks.length);
     // Inserting or deleting repeated paragraphs leaves multiple plausible
     // identities. Do not compose another edit with a guessed correspondence.
@@ -141,7 +185,7 @@ export function mergeDocBlocks(base, local, remote, sameRendering = (a, b) => a 
             const repeated = [...blocks.slice(change.start, change.end), ...change.replacement].some(block => block.trim() && (positions.get(block) === -1 || (positions.has(block) && sidePositions.get(block) === -1)));
             if (repeated && !(change.end === change.start + 1 && !change.replacement.length &&
                 boundedDeletion(blocks, side, side === localBlocks ? remoteBlocks : localBlocks, change.start)))
-                throw new Error(conflictMessage());
+                conflict();
         }
     }
     const all = [...localChanges, ...remoteChanges].sort((a, b) => a.start - b.start || a.end - b.end);

@@ -98,6 +98,26 @@ for (const backend of ["sqlite", "files"]) {
   });
 }
 
+test("ambiguous repeated paragraphs preserve both drafts and can be resolved after restart", async t => {
+  const f = await fixture(t, "files");
+  const saved = (await f.read()).replace("Middle", "Edited");
+  await f.save(saved);
+  f.doc.value = f.A.replace("Middle", "Middle\nMiddle");
+  await assert.rejects(f.wire.sync(f.file, f.path), /Unresolved Wire conflict/);
+  const restarted = f.make();
+  const { conflict } = await restarted.historyStatus(f.file, f.path);
+  assert.ok(conflict, "an ambiguous merge must leave a durable conflict");
+  const snapshots = [];
+  for (const id of [conflict.base, conflict.local, conflict.remote])
+    snapshots.push((await restarted.historyDiff(f.file, f.path, id, id)).before);
+  assert.deepEqual(snapshots, [f.A, f.A.replace("Middle", "Edited"), f.doc.value]);
+  assert.equal(await f.read(), saved);
+  await restarted.resolveConflict(f.file, f.path, "remote");
+  assert.equal((await restarted.sync(f.file, f.path)).markdown, f.doc.value);
+  assert.equal((await restarted.historyStatus(f.file, f.path)).conflict, null);
+  assert.equal(f.doc.writes.length, 0);
+});
+
 test("lost, copied and malformed receipts never reach upload, sync, shell or another link", async t => {
   const f = await fixture(t, "files"), { wire, doc, file, path } = f;
   const valid = await f.read();

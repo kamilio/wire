@@ -27,8 +27,33 @@ test("overlapping changes, including competing inserts and ambiguous repeated de
     ["A\nX\nB\nC\n", "A\nY\nB\nC\n"],
   ]) assert.throws(() => mergeDocBlocks(base, local, remote), WireMergeConflict);
   assert.throws(() => mergeDocBlocks("A\nsame\nsame\nZ\n", "A\nchanged\nsame\nZ\n", "A\nsame\nZ\n"), /changed remotely and locally/);
-  assert.throws(() => mergeDocBlocks(base, "A\nNew B\nC\n", "A\nB\nB\nC\n"), err => !(err instanceof WireMergeConflict) && /changed remotely and locally/.test(err.message));
+  assert.throws(() => mergeDocBlocks(base, "A\nNew B\nC\n", "A\nB\nB\nC\n"), WireMergeConflict);
   assert.equal(mergeDocBlocks(base, "A\nX\nB\nNew C\n", "A\nX\nB\nC\n"), "A\nX\nB\nNew C\n");
+});
+
+test("deletions cannot claim separate blank paragraphs in the same repeated run", () => {
+  for (const run of ["\n\n", "\n\n\n", "  \n  \n"]) {
+    const oneLess = run.slice(run.indexOf("\n") + 1);
+    const base = "c\n" + run + "a\n", local = "c\n" + oneLess + "a\n", remote = oneLess + "a\n";
+    for (const other of [remote, "changed c\n" + remote]) {
+      for (const [left, right] of [[local, other], [other, local]])
+        assert.throws(() => mergeDocBlocks(base, left, right), WireMergeConflict);
+    }
+  }
+  const base = "c\n\n\na\n\n\nb\n";
+  const local = base.replace("c\n\n", "c\n");
+  assert.equal(mergeDocBlocks(base, local, local.replace("b", "end")), local.replace("b", "end"));
+  assert.equal(mergeDocBlocks(base, local, base.replace("a\n\n", "a\n")), local.replace("a\n\n", "a\n"));
+});
+
+test("deleting an indistinguishable blank conflicts with an edit or insertion inside its run", () => {
+  const base = "a\n\n\n\nc\n", deleted = "a\n\n\nc\n";
+  for (const other of ["a\nR\n\n\nc\n", "a\n\nR\n\nc\n", "a\n\nR\n\n\nc\n", "a\n\n\n\n\nc\n"]) {
+    for (const [left, right] of [[deleted, other], [other, deleted]])
+      assert.throws(() => mergeDocBlocks(base, left, right), WireMergeConflict);
+  }
+  for (const other of [base.replace("a", "A"), base.replace("c", "C"), base.replace("c", "added\nc")])
+    assert.equal(mergeDocBlocks(base, deleted, other), other.replace("\n\n\n", "\n\n"));
 });
 
 test("fenced code and tables are each one indivisible block", () => {

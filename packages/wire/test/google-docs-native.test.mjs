@@ -67,6 +67,12 @@ test("read grants are independent and complete grants take precedence across con
   assert.equal((await nativeDocsGrant(f.runtime))?.token,"/drive");
 });
 
+test("removing a leading native blank paragraph is a spacing edit", async () => {
+  const f = fixture(["", "a"]);
+  await assert.rejects(f.write("\na\n", "a\n"), /blank paragraph spacing/);
+  assert.equal(f.posts.length, 0);
+});
+
 test("unscoped multi-tab export is never mapped to a default tab",async()=>{
   const f=fixture(["one"],{extraTab:true});
   await assert.rejects(f.write("one\none","one\nchanged"),/explicit tab/);

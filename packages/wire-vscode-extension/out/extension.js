@@ -19588,11 +19588,37 @@ function boundedDeletion(base, side, other, i) {
   const count = (rows) => rows.reduce((n, r) => n + Number(r === value), 0);
   return count(side) === count(base) - 1;
 }
-function conflictMessage(location = "") {
-  return `Google Docs changed remotely and locally.${location} Resolve the conflict in Google Docs or the local Markdown file before syncing again.`;
+function checkBlankRuns(blocks, local, remote) {
+  const runAt = /* @__PURE__ */ new Map();
+  for (let i = 1; i < blocks.length; i++) {
+    if (blocks[i] !== blocks[i - 1] || blocks[i].trim()) continue;
+    const run = runAt.get(i - 1) ?? i - 1;
+    runAt.set(i - 1, run);
+    runAt.set(i, run);
+  }
+  if (!runAt.size) return;
+  const changesByRun = (changes) => {
+    const touched = /* @__PURE__ */ new Map();
+    const mark = (run, ambiguous) => {
+      if (run !== void 0) touched.set(run, ambiguous || touched.get(run) === true);
+    };
+    for (const { start, end, replacement } of changes) {
+      for (let i = start; i < end; i++) mark(runAt.get(i), end - start > replacement.length);
+      if (start !== end) continue;
+      const left = runAt.get(start - 1), right = runAt.get(start);
+      if (left === right) mark(left, replacement.includes(blocks[start]));
+      if (replacement[0] === blocks[start - 1]) mark(left, true);
+      if (replacement.at(-1) === blocks[start]) mark(right, true);
+    }
+    return touched;
+  };
+  const other = changesByRun(remote);
+  for (const [run, ambiguous] of changesByRun(local)) {
+    if (other.has(run) && (ambiguous || other.get(run))) conflict();
+  }
 }
 function conflict(location = "") {
-  throw new WireMergeConflict(conflictMessage(location));
+  throw new WireMergeConflict(`Google Docs changed remotely and locally.${location} Resolve the conflict in Google Docs or the local Markdown file before syncing again.`);
 }
 function mergeDocBlocks(base, local, remote, sameRendering = (a, b2) => a === b2) {
   if (base === remote || local === remote) return local;
@@ -19601,18 +19627,22 @@ function mergeDocBlocks(base, local, remote, sameRendering = (a, b2) => a === b2
   const localBlocks = docBlocks(local), remoteBlocks = docBlocks(remote);
   const remoteChanges = docChanges(blocks, remoteBlocks);
   const remoteAt = new Map(remoteChanges.map((change) => [change.start, change]));
+  const shared = /* @__PURE__ */ new Set();
   const localChanges = docChanges(blocks, localBlocks).filter((change) => {
     const other = remoteAt.get(change.start);
-    return !other || other.end !== change.end || !sameRendering(change.replacement.join(""), other.replacement.join(""));
+    if (!other || other.end !== change.end || !sameRendering(change.replacement.join(""), other.replacement.join(""))) return true;
+    shared.add(other);
+    return false;
   });
   if (!localChanges.length) return remote;
+  checkBlankRuns(blocks, localChanges, remoteChanges.filter((change) => !shared.has(change)));
   const positions = occurrences(blocks, 0, blocks.length);
   for (const [side, changes] of [[localBlocks, localChanges], [remoteBlocks, remoteChanges]]) {
     const sidePositions = occurrences(side, 0, side.length);
     for (const change of changes) {
       if (change.end - change.start === change.replacement.length) continue;
       const repeated = [...blocks.slice(change.start, change.end), ...change.replacement].some((block2) => block2.trim() && (positions.get(block2) === -1 || positions.has(block2) && sidePositions.get(block2) === -1));
-      if (repeated && !(change.end === change.start + 1 && !change.replacement.length && boundedDeletion(blocks, side, side === localBlocks ? remoteBlocks : localBlocks, change.start))) throw new Error(conflictMessage());
+      if (repeated && !(change.end === change.start + 1 && !change.replacement.length && boundedDeletion(blocks, side, side === localBlocks ? remoteBlocks : localBlocks, change.start))) conflict();
     }
   }
   const all = [...localChanges, ...remoteChanges].sort((a, b2) => a.start - b2.start || a.end - b2.end);
