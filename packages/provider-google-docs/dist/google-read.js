@@ -2,7 +2,7 @@
 export async function googleRead(runtime, url, init) {
     for (let attempt = 0;; attempt++) {
         const response = await runtime.http.request(url, init);
-        if (![429, 502, 503, 504].includes(response.status))
+        if (![429, 500, 502, 503, 504].includes(response.status))
             return response;
         const header = response.headers.get("retry-after")?.trim();
         const seconds = header && /^\d+$/.test(header) ? Number(header) : undefined;

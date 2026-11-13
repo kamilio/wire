@@ -18469,7 +18469,7 @@ function mergeDocBlocks(base, local, remote, sameRendering = (a, b2) => a === b2
 async function googleRead(runtime2, url, init) {
   for (let attempt = 0; ; attempt++) {
     const response = await runtime2.http.request(url, init);
-    if (![429, 502, 503, 504].includes(response.status)) return response;
+    if (![429, 500, 502, 503, 504].includes(response.status)) return response;
     const header = response.headers.get("retry-after")?.trim();
     const seconds = header && /^\d+$/.test(header) ? Number(header) : void 0;
     const date = header && /^[A-Za-z]/.test(header) ? Date.parse(header) : NaN;

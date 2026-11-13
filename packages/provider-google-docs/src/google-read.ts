@@ -4,7 +4,7 @@ import type { RuntimeCapabilities } from "wire-core";
 export async function googleRead(runtime: RuntimeCapabilities, url: string | URL, init: { headers?: HeadersInit; redirect?: RequestRedirect }): Promise<Response> {
   for (let attempt = 0; ; attempt++) {
     const response = await runtime.http.request(url, init);
-    if (![429, 502, 503, 504].includes(response.status)) return response;
+    if (![429, 500, 502, 503, 504].includes(response.status)) return response;
     const header = response.headers.get("retry-after")?.trim();
     const seconds = header && /^\d+$/.test(header) ? Number(header) : undefined;
     const date = header && /^[A-Za-z]/.test(header) ? Date.parse(header) : NaN;

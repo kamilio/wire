@@ -1877,6 +1877,18 @@ test("Google Docs retries a throttled export but stops when Retry-After exceeds 
   assert.equal(calls, 1);
 });
 
+test("Google Docs export recovers from HTTP 500 and stops after three retries", async () => {
+  const url = "https://docs.google.com/document/d/doc/edit";
+  const failed = () => new Response("", { status: 500, headers: { "retry-after": "0" } });
+  let calls = 0;
+  const result = await fetchSource(runtime(async () => ++calls === 1 ? failed() : exportResponse("Doc", "md", "ok")), url, serviceCatalog);
+  assert.equal(result.markdown, "ok");
+  assert.equal(calls, 2);
+  calls = 0;
+  await assert.rejects(fetchSource(runtime(async () => { calls++; return failed(); }), url, serviceCatalog), /HTTP 500/);
+  assert.equal(calls, 4);
+});
+
 function docsDriveRuntime(handler) {
   const rt = runtime(handler);
   return { ...rt, configuration: { getOptional: key => key === "GOOGLE_FORMS_TOKEN_FILE" ? "/grant" : undefined }, filesystem: {
