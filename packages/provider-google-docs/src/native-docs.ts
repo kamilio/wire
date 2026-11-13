@@ -9,7 +9,7 @@ function eligible(scopes: readonly string[] | undefined, requireWrite: boolean):
   return !!(has("drive") || has("drive.file") || (has("documents") && has("drive.readonly")));
 }
 
-export async function nativeDocsGrant(runtime: RuntimeCapabilities, readOnly = false): Promise<{ token: string; driveExport: boolean } | null> {
+export async function nativeDocsGrant(runtime: RuntimeCapabilities, readOnly = false): Promise<{ token: string; driveExport: boolean; canWrite: boolean } | null> {
   const optional = (key: string) => runtime.configuration.getOptional?.(key);
   for (const requireWrite of readOnly ? [true, false] : [true]) for (const name of ["GOOGLE_DOCS_TOKEN_FILE", "GOOGLE_FORMS_TOKEN_FILE"]) {
     const path = optional(name);
@@ -27,7 +27,7 @@ export async function nativeDocsGrant(runtime: RuntimeCapabilities, readOnly = f
       if (!eligible(grant.scopes,requireWrite)) continue;
     }
     if (!grant.token) throw new Error("Google Docs OAuth token is missing.");
-    return { token: grant.token, driveExport: !!grant.scopes?.some(scope => ["drive", "drive.file", "drive.readonly"].some(name => scope === "https://www.googleapis.com/auth/" + name)) };
+    return { token: grant.token, canWrite: eligible(grant.scopes,true), driveExport: !!grant.scopes?.some(scope => ["drive", "drive.file", "drive.readonly"].some(name => scope === "https://www.googleapis.com/auth/" + name)) };
   }
   return null;
 }
@@ -161,7 +161,7 @@ function characterMatches(a: ReturnType<typeof characters>, b: ReturnType<typeof
 
 type IndexedRange = { startIndex: number; endIndex: number };
 
-function plan(tab: Tab, previous: string, desired: string, comments: IndexedRange[]): DocsRequest[] {
+function plan(tab: Tab, previous: string, desired: string, comments: IndexedRange[], allowDuplicatePosition: boolean): DocsRequest[] {
   const oldLayout = spacedBlocks(previous), newLayout = spacedBlocks(desired);
   for (const c of docChanges(oldLayout,newLayout)) {
     const was = oldLayout.slice(c.start,c.end);
@@ -184,16 +184,43 @@ function plan(tab: Tab, previous: string, desired: string, comments: IndexedRang
   const guardText = (start: number, end: number) => {
     if (protectedRanges.some(r => start === end ? start >= r.startIndex && start <= r.endIndex : start < r.endIndex && end > r.startIndex)) return unsafe("edit overlaps a named range or anchored comment");
   };
+  function matches(e: Element, block: Block) {
+    const p = e.paragraph;
+    return p && p.elements.every(run => run.textRun) && p.elements.map(run => run.textRun!.content).join("") === block.text + "\n"
+      && (p.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT") === block.heading
+      && (p.bullet ? p.bullet.nestingLevel ?? 0 : null) === block.level;
+  }
+  // Paragraphs have no stable IDs. For repeated labels, the occurrence is
+  // provable only when the entire tab aligns and the edit did not move,
+  // insert, or remove paragraphs. Never guess from two nearby anchors.
+  let ordered: Element[] | undefined;
+  function byPosition(i: number): Element {
+    if (!ordered) {
+      if (!allowDuplicatePosition || changes.some(c => c.end-c.start !== 1 || c.replacement.length !== 1 || before.includes(c.replacement[0]!))) return unsafe("duplicate paragraph identity is ambiguous");
+      ordered = body.filter((e,n) => {
+        if (!e.paragraph) {
+          if (n === 0 && "sectionBreak" in e) return false;
+          return unsafe("opaque native content makes duplicate paragraph identity ambiguous");
+        }
+        return !e.paragraph.elements.every(r => r.textRun) || e.paragraph.elements.map(r => r.textRun!.content).join("") !== "\n";
+      });
+      if (ordered.length !== before.length || !ordered.every((e,n) => {
+        let b: Block;
+        try { b=paragraph(before[n]!); } catch { return false; }
+        if (!matches(e,b)) return false;
+        const bullet=e.paragraph!.bullet;
+        if (!bullet) return true;
+        const level=tab.documentTab.lists?.[bullet.listId]?.listProperties.nestingLevels[bullet.nestingLevel ?? 0];
+        return !!level && !!level.glyphType === b.numbered;
+      })) return unsafe("duplicate paragraphs do not align with the entire native tab");
+    }
+    return ordered[i]!;
+  }
   const locate = (i: number) => {
     const block = paragraph(before[i]!);
-    const matches = body.filter(e => {
-      const p = e.paragraph;
-      return p && p.elements.every(run => run.textRun) && p.elements.map(run => run.textRun!.content).join("") === block.text + "\n"
-        && (p.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT") === block.heading
-        && (p.bullet ? p.bullet.nestingLevel ?? 0 : null) === block.level;
-    });
-    if (matches.length !== 1) return unsafe("paragraph is missing or ambiguous");
-    const e = matches[0]!;
+    const candidates = body.filter(e => matches(e,block));
+    if (!candidates.length) return unsafe("paragraph is missing");
+    const e = candidates.length === 1 ? candidates[0]! : byPosition(i);
     if (!Number.isInteger(e.startIndex) || e.endIndex - e.startIndex! !== block.text.length + 1) return unsafe("unrecognized paragraph range");
     return { block, e, start: e.startIndex!, end: e.endIndex };
   };
@@ -380,7 +407,7 @@ async function anchoredComments(runtime: RuntimeCapabilities, id: string, header
   return found;
 }
 
-export async function tryUploadDocBlocks(runtime: RuntimeCapabilities, documentId: string, key: string | null, tabId: string | null, remoteMarkdown: string, desiredMarkdown: string, confirmRemote: (revision: string) => Promise<string>, wroteRevision?: (revision: string) => void): Promise<boolean> {
+export async function tryUploadDocBlocks(runtime: RuntimeCapabilities, documentId: string, key: string | null, tabId: string | null, remoteMarkdown: string, desiredMarkdown: string, confirmRemote: (revision: string) => Promise<string>, wroteRevision?: (revision: string) => void, positionRevision?: string): Promise<boolean> {
   const token = (await nativeDocsGrant(runtime))?.token;
   if (!token) return false;
   const url = "https://docs.googleapis.com/v1/documents/" + encodeURIComponent(documentId);
@@ -396,7 +423,7 @@ export async function tryUploadDocBlocks(runtime: RuntimeCapabilities, documentI
   const tab = tabId ? tabs.find(t => t.tabProperties.tabId === tabId) : tabs[0];
   if (!tab?.documentTab?.body?.content) return unsafe("missing target tab");
   const comments = await anchoredComments(runtime,documentId,headers,tab,tabs);
-  const requests = plan(tab, remoteMarkdown, desiredMarkdown,comments);
+  const requests = plan(tab, remoteMarkdown, desiredMarkdown,comments,positionRevision === data.revisionId);
   if (await confirmRemote(data.revisionId) !== remoteMarkdown) throw new Error("Google Docs changed before writing; sync again.");
   if (!requests.length) return true;
   const update = await runtime.http.request(url + ":batchUpdate", { method: "POST", headers: { ...headers, "content-type": "application/json" }, redirect: "error", body: JSON.stringify({ writeControl: { requiredRevisionId: data.revisionId }, requests }) });

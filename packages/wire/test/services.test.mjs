@@ -1850,6 +1850,7 @@ test("Google Docs OAuth export keeps the tab and key and never forwards the gran
   const endpoints = [];
   const base = runtime(async (input, init = {}) => {
     const u = new URL(input); endpoints.push(u);
+    if (u.hostname === "docs.googleapis.com") return response({ documentId:"doc", title:"Private tab", revisionId:"tab-rev" });
     if (u.hostname === "docs.google.com") {
       assert.equal(u.searchParams.get("tab"), "t.second");
       assert.equal(u.searchParams.get("resourcekey"), "r");
@@ -1863,7 +1864,7 @@ test("Google Docs OAuth export keeps the tab and key and never forwards the gran
     ...base.filesystem, readText: async () => JSON.stringify({token: "test-grant", expiry: "2030-01-01T00:00:00Z", refresh_token: "refresh", token_uri: "https://oauth2.googleapis.com/token", scopes: ["https://www.googleapis.com/auth/drive"]})
   }};
   const d = await fetchSource(rt, doc, serviceCatalog);
-  assert.equal(d.markdown, "Private tab text\n"); assert.equal(endpoints.length, 2);
+  assert.equal(d.markdown, "Private tab text\n"); assert.equal(endpoints.length, 3); assert.equal(d.data.position_revision, "tab-rev");
 });
 
 test("Google Docs retries a throttled export but stops when Retry-After exceeds its budget", async () => {
@@ -1887,6 +1888,7 @@ test("unscoped OAuth Docs use official Drive exports for Markdown and native lis
   const formats = [];
   const rt = docsDriveRuntime(async (input, init) => {
     const u = new URL(input);
+    if (u.hostname === "docs.googleapis.com") return response({ documentId: "doc", title: "Combined tabs.md", revisionId:"baseline-rev" });
     assert.equal(u.hostname, "www.googleapis.com");
     assert.equal(init.headers.Authorization, "Bearer grant");
     assert.equal(init.headers["X-Goog-Drive-Resource-Keys"], "doc/private");
@@ -1897,7 +1899,7 @@ test("unscoped OAuth Docs use official Drive exports for Markdown and native lis
     return new Response(zip({ "word/document.xml": '<w:document><w:body><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/></w:numPr></w:pPr><w:r><w:t>Parent</w:t></w:r></w:p></w:body></w:document>' }));
   });
   const doc = await fetchSource(rt, "https://docs.google.com/document/d/doc/edit?resourcekey=private", serviceCatalog);
-  assert.equal(doc.title, "Combined tabs.md"); assert.equal(doc.markdown, "* Parent\nSecond tab\n");
+  assert.equal(doc.data.position_revision, "baseline-rev"); assert.equal(doc.title, "Combined tabs.md"); assert.equal(doc.markdown, "* Parent\nSecond tab\n");
   assert.deepEqual(formats, ["text/markdown", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]);
 });
 

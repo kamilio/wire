@@ -701,14 +701,14 @@ async function fetchGoogleDocument(runtime, source, previous) {
         return response;
     };
     let readRevision, docTitle;
-    if (grant && previous !== undefined) {
+    if (grant && (previous !== undefined || grant.canWrite)) {
         const url = "https://docs.googleapis.com/v1/documents/" + encodeURIComponent(id) + "?fields=documentId,title,revisionId";
         const meta = await (await read(url)).json();
         if (meta.documentId !== id || typeof meta.title !== "string")
             throw new Error("Google Docs export returned unexpected document metadata");
         readRevision = meta.revisionId;
         docTitle = meta.title;
-        const snapshot = objectValue(previous);
+        const snapshot = previous === undefined ? {} : objectValue(previous);
         // Only a successfully verified, revision-controlled batch sets this key.
         // Never use Drive's version, ETag, or modifiedTime as a document revision.
         if (readRevision && snapshot["verified_revision"] === readRevision && snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && typeof snapshot["markdown"] === "string") {
@@ -747,7 +747,7 @@ async function fetchGoogleDocument(runtime, source, previous) {
             return (await googleExportBytes(runtime, word.toString(), "Docs Word export", grant?.token ?? null)).bytes;
         });
     }
-    return { title, markdown, ...(readRevision ? { readRevision } : {}), data: { document_id: id, title, output_path: null, sheet_gid: null, markdown, rows: null, ...(tab === null ? {} : { document_tab: tab }) } };
+    return { title, markdown, ...(readRevision ? { readRevision } : {}), data: { document_id: id, title, output_path: null, sheet_gid: null, markdown, rows: null, ...(readRevision ? { position_revision: readRevision } : {}), ...(tab === null ? {} : { document_tab: tab }) } };
 }
 async function synchronizeGoogleDocument(runtime, _url, source, base, markdown) {
     const remote = await fetchGoogleDocument(runtime, source, base);
@@ -802,8 +802,13 @@ async function synchronizeGoogleDocument(runtime, _url, source, base, markdown) 
         return remote;
     const id = source["document_id"] ?? source.identifier;
     const key = resourceKey(source), tab = documentTab(source);
+    const snapshot = objectValue(base);
+    // A same-looking paragraph can move (or be recreated) without changing
+    // Markdown. Positional lookup needs the actual revision of the local base.
+    const positionRevision = snapshot["document_id"] === id && (snapshot["document_tab"] ?? null) === tab && baseMarkdown === remote.markdown
+        ? snapshot["position_revision"] ?? snapshot["verified_revision"] : undefined;
     let writtenRevision;
-    const native = await tryUploadDocBlocks(runtime, id, key, tab, remote.markdown, merged, async (revision) => remote.readRevision === revision ? remote.markdown : (await fetchGoogleDocument(runtime, source)).markdown, revision => { writtenRevision = revision; });
+    const native = await tryUploadDocBlocks(runtime, id, key, tab, remote.markdown, merged, async (revision) => remote.readRevision === revision ? remote.markdown : (await fetchGoogleDocument(runtime, source)).markdown, revision => { writtenRevision = revision; }, typeof positionRevision === "string" ? positionRevision : undefined);
     if (!native)
         throw new Error("Google Docs uploads require an OAuth token with drive, drive.file, or both documents and drive.readonly scopes. Set GOOGLE_DOCS_TOKEN_FILE or GOOGLE_FORMS_TOKEN_FILE. Browser login supports downloads only.");
     const uploaded = await fetchGoogleDocument(runtime, source, {});

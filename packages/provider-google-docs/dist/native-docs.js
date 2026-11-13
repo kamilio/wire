@@ -32,7 +32,7 @@ export async function nativeDocsGrant(runtime, readOnly = false) {
             }
             if (!grant.token)
                 throw new Error("Google Docs OAuth token is missing.");
-            return { token: grant.token, driveExport: !!grant.scopes?.some(scope => ["drive", "drive.file", "drive.readonly"].some(name => scope === "https://www.googleapis.com/auth/" + name)) };
+            return { token: grant.token, canWrite: eligible(grant.scopes, true), driveExport: !!grant.scopes?.some(scope => ["drive", "drive.file", "drive.readonly"].some(name => scope === "https://www.googleapis.com/auth/" + name)) };
         }
     return null;
 }
@@ -184,7 +184,7 @@ function characterMatches(a, b) {
     matches.push([a.length, b.length]);
     return matches;
 }
-function plan(tab, previous, desired, comments) {
+function plan(tab, previous, desired, comments, allowDuplicatePosition) {
     const oldLayout = spacedBlocks(previous), newLayout = spacedBlocks(desired);
     for (const c of docChanges(oldLayout, newLayout)) {
         const was = oldLayout.slice(c.start, c.end);
@@ -209,17 +209,54 @@ function plan(tab, previous, desired, comments) {
         if (protectedRanges.some(r => start === end ? start >= r.startIndex && start <= r.endIndex : start < r.endIndex && end > r.startIndex))
             return unsafe("edit overlaps a named range or anchored comment");
     };
+    function matches(e, block) {
+        const p = e.paragraph;
+        return p && p.elements.every(run => run.textRun) && p.elements.map(run => run.textRun.content).join("") === block.text + "\n"
+            && (p.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT") === block.heading
+            && (p.bullet ? p.bullet.nestingLevel ?? 0 : null) === block.level;
+    }
+    // Paragraphs have no stable IDs. For repeated labels, the occurrence is
+    // provable only when the entire tab aligns and the edit did not move,
+    // insert, or remove paragraphs. Never guess from two nearby anchors.
+    let ordered;
+    function byPosition(i) {
+        if (!ordered) {
+            if (!allowDuplicatePosition || changes.some(c => c.end - c.start !== 1 || c.replacement.length !== 1 || before.includes(c.replacement[0])))
+                return unsafe("duplicate paragraph identity is ambiguous");
+            ordered = body.filter((e, n) => {
+                if (!e.paragraph) {
+                    if (n === 0 && "sectionBreak" in e)
+                        return false;
+                    return unsafe("opaque native content makes duplicate paragraph identity ambiguous");
+                }
+                return !e.paragraph.elements.every(r => r.textRun) || e.paragraph.elements.map(r => r.textRun.content).join("") !== "\n";
+            });
+            if (ordered.length !== before.length || !ordered.every((e, n) => {
+                let b;
+                try {
+                    b = paragraph(before[n]);
+                }
+                catch {
+                    return false;
+                }
+                if (!matches(e, b))
+                    return false;
+                const bullet = e.paragraph.bullet;
+                if (!bullet)
+                    return true;
+                const level = tab.documentTab.lists?.[bullet.listId]?.listProperties.nestingLevels[bullet.nestingLevel ?? 0];
+                return !!level && !!level.glyphType === b.numbered;
+            }))
+                return unsafe("duplicate paragraphs do not align with the entire native tab");
+        }
+        return ordered[i];
+    }
     const locate = (i) => {
         const block = paragraph(before[i]);
-        const matches = body.filter(e => {
-            const p = e.paragraph;
-            return p && p.elements.every(run => run.textRun) && p.elements.map(run => run.textRun.content).join("") === block.text + "\n"
-                && (p.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT") === block.heading
-                && (p.bullet ? p.bullet.nestingLevel ?? 0 : null) === block.level;
-        });
-        if (matches.length !== 1)
-            return unsafe("paragraph is missing or ambiguous");
-        const e = matches[0];
+        const candidates = body.filter(e => matches(e, block));
+        if (!candidates.length)
+            return unsafe("paragraph is missing");
+        const e = candidates.length === 1 ? candidates[0] : byPosition(i);
         if (!Number.isInteger(e.startIndex) || e.endIndex - e.startIndex !== block.text.length + 1)
             return unsafe("unrecognized paragraph range");
         return { block, e, start: e.startIndex, end: e.endIndex };
@@ -461,7 +498,7 @@ async function anchoredComments(runtime, id, headers, tab, tabs) {
     } while (cursor);
     return found;
 }
-export async function tryUploadDocBlocks(runtime, documentId, key, tabId, remoteMarkdown, desiredMarkdown, confirmRemote, wroteRevision) {
+export async function tryUploadDocBlocks(runtime, documentId, key, tabId, remoteMarkdown, desiredMarkdown, confirmRemote, wroteRevision, positionRevision) {
     const token = (await nativeDocsGrant(runtime))?.token;
     if (!token)
         return false;
@@ -485,7 +522,7 @@ export async function tryUploadDocBlocks(runtime, documentId, key, tabId, remote
     if (!tab?.documentTab?.body?.content)
         return unsafe("missing target tab");
     const comments = await anchoredComments(runtime, documentId, headers, tab, tabs);
-    const requests = plan(tab, remoteMarkdown, desiredMarkdown, comments);
+    const requests = plan(tab, remoteMarkdown, desiredMarkdown, comments, positionRevision === data.revisionId);
     if (await confirmRemote(data.revisionId) !== remoteMarkdown)
         throw new Error("Google Docs changed before writing; sync again.");
     if (!requests.length)

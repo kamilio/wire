@@ -46,7 +46,7 @@ function fixture(lines,{scopes=[drive],comments=[[]],writeCode=200,retryRead=fal
       return Response.json(doc);
     }}
   };
-  const write=(old,next,confirm=async()=>old,tab=null)=>tryUploadDocBlocks(runtime,"doc",null,tab,old,next,confirm);
+  const write=(old,next,confirm=async()=>old,tab=null,positionRevision=rev)=>tryUploadDocBlocks(runtime,"doc",null,tab,old,next,confirm,undefined,positionRevision);
   return {runtime,content,write,posts,reads,seen};
 }
 
@@ -121,7 +121,7 @@ test("same-block formatting changes only modify the specified native style field
 
 test("before any write reject ambiguous duplicate edits, opaque blocks, and inaccessible tabs",async()=>{
   const f=fixture(["item","middle","item"]);
-  await assert.rejects(f.write("item\nmiddle\nitem","edit\nmiddle\nitem"),/ambiguous/);
+  await assert.rejects(f.write("item\nmiddle","edit\nmiddle"),/do not align/);
   await assert.rejects(f.write("middle","![opaque](https://img.test/)"),/unsupported/);
   await assert.rejects(f.write("item","edit",undefined,"not-this-tab"),/tab/);
   assert.equal(f.posts.length,0);
@@ -168,4 +168,26 @@ test("a text change cannot silently consume a separate blank paragraph or orphan
   await assert.rejects(f.write("first\nsecond","first\n    * second"),/matching parent/);
   assert.equal(f.posts.length,0);
   assert.equal(nativeDocMarkdownEqual("first\nsecond","first\n\nsecond"),false);
+});
+
+test("edit the selected repeated bullet only when the entire tab proves its position",async()=>{
+  const lines=["Start",...["Label","Label","Label"].map(text=>({text,bullet:{listId:"l"}})),"End"];
+  const lists={l:{listProperties:{nestingLevels:[{glyphSymbol:"●"}]}}};
+  const f=fixture(lines,{lists});
+  const body="Start\n\n* Label  \n* Label  \n* Label\n\nEnd";
+  await f.write(body,body.replace("* Label  \n* Label  ","* Label  \n* Label updated  "));
+  const selected=f.content[2];
+  for (const request of f.posts[0].requests) {
+    const op=Object.values(request)[0];
+    assert.ok((op.location?.index??op.range.startIndex)>=selected.startIndex);
+    if(op.location) assert.ok(op.location.index<selected.endIndex);
+    else assert.ok(op.range.endIndex<=selected.endIndex+" updated".length);
+  }
+  assert.equal(f.posts[0].requests.filter(r=>r.insertText).map(r=>r.insertText.text).join("")," updated");
+  const refuse=fixture(lines,{lists});
+  await assert.rejects(refuse.write(body,body.replace("* Label","* Changed"),undefined,null,"stale-revision"),/ambiguous/);
+  await assert.rejects(refuse.write(body,body.replace("* Label  \n","")),/ambiguous/);
+  const compact=body.replaceAll("\n\n","\n");
+  await assert.rejects(refuse.write(compact,compact.replace("* Label","End").replace(/End$/,"* Label")),/ambiguous/);
+  assert.equal(refuse.posts.length,0);
 });
