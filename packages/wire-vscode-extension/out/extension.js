@@ -18415,8 +18415,8 @@ function docChanges(base, side) {
   gap(start, end, s, e);
   return changes;
 }
-function conflict() {
-  throw new Error("Google Docs changed remotely and locally. Resolve the conflict in Google Docs or the local Markdown file before syncing again.");
+function conflict(location = "") {
+  throw new Error(`Google Docs changed remotely and locally.${location} Resolve the conflict in Google Docs or the local Markdown file before syncing again.`);
 }
 function mergeDocBlocks(base, local, remote, sameRendering = (a, b2) => a === b2) {
   if (base === remote || local === remote) return local;
@@ -18442,7 +18442,22 @@ function mergeDocBlocks(base, local, remote, sameRendering = (a, b2) => a === b2
   let pos = 0, previous;
   const result = [];
   for (const change of all) {
-    if (change.start < pos || previous && previous.start === previous.end && change.start === change.end && previous.start === change.start) conflict();
+    if (change.start < pos || previous && previous.start === previous.end && change.start === change.end && previous.start === change.start) {
+      if (previous?.start === change.start && previous.end === change.end && change.end === change.start + 1) {
+        const unique = (rows, i) => i >= 0 && rows.every((row, n) => n === i || !sameRendering(row.replace(/\r?\n$/, ""), rows[i].replace(/\r?\n$/, "")));
+        const replacement = localChanges.find((c) => c.start === change.start)?.replacement;
+        if (replacement?.length === 1 && unique(blocks, change.start)) {
+          const block = replacement[0], index = localBlocks.indexOf(block);
+          if (unique(localBlocks, index)) {
+            const first = 1 + localBlocks.slice(0, index).reduce((n, b2) => n + b2.split("\n").length - 1, 0);
+            const last = first + block.replace(/\n$/, "").split("\n").length - 1;
+            if (last - first > 5) conflict(` Local Markdown line ${first} (start of block).`);
+            conflict(first === last ? ` Local Markdown line ${first}.` : ` Local Markdown lines ${first}-${last}.`);
+          }
+        }
+      }
+      conflict();
+    }
     result.push(blocks.slice(pos, change.start).join(""), change.replacement.join(""));
     pos = change.end;
     previous = change;
@@ -18575,6 +18590,22 @@ function spacedBlocks(md) {
   }
   return result;
 }
+function numberStarts(rows) {
+  const ordered = [], starts = [];
+  for (const row of rows) {
+    if (row === blank) continue;
+    const marker = /^([ \t]*)([-*+]|(\d+)[.)]) +/.exec(row);
+    if (!marker) {
+      ordered.length = 0;
+      continue;
+    }
+    const indent = marker[1].replace(/\t/g, "  ").length, number = marker[3];
+    ordered.splice(indent + 1);
+    if (number && !ordered[indent]) starts.push(number);
+    ordered[indent] = !!number;
+  }
+  return starts;
+}
 function nativeDocMarkdownEqual(left, right) {
   const normalized = (s) => spacedBlocks(s).map((l) => {
     try {
@@ -18583,7 +18614,7 @@ function nativeDocMarkdownEqual(left, right) {
       return l;
     }
   });
-  return JSON.stringify(normalized(left)) === JSON.stringify(normalized(right));
+  return JSON.stringify(numberStarts(spacedBlocks(left))) === JSON.stringify(numberStarts(spacedBlocks(right))) && JSON.stringify(normalized(left)) === JSON.stringify(normalized(right));
 }
 function characters(block) {
   let pos = 0, span = 0;
@@ -18622,11 +18653,13 @@ function characterMatches(a, b2) {
 }
 function plan(tab, previous, desired, comments, allowDuplicatePosition) {
   const oldLayout = spacedBlocks(previous), newLayout = spacedBlocks(desired);
+  if (JSON.stringify(numberStarts(oldLayout)) !== JSON.stringify(numberStarts(newLayout))) return unsafe("cannot reproduce a change in native list numbering");
   for (const c of docChanges(oldLayout, newLayout)) {
     const was = oldLayout.slice(c.start, c.end);
     if ((was.includes(blank) || c.replacement.includes(blank)) && (was.length !== c.replacement.length || was.some((v2, i) => v2 === blank !== (c.replacement[i] === blank)))) return unsafe("editing blank paragraph spacing");
   }
-  const before = oldLayout.filter((l) => l !== blank), after = newLayout.filter((l) => l !== blank);
+  const rows = (layout) => layout.filter((l) => l !== blank).map((l) => l.replace(/^([ \t]*)\d+([.)] +)/, (_2, indent, marker) => indent + "1" + marker));
+  const before = rows(oldLayout), after = rows(newLayout);
   let offset = 0;
   const changes = docChanges(before, after).map((c) => {
     const next = c.start + offset;
@@ -18691,11 +18724,12 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
     if (hasBullet) requests.push({ deleteParagraphBullets: { range: part } });
     if (headingChanged || hasBullet) requests.push({ updateParagraphStyle: { range: part, paragraphStyle: headingChanged ? { namedStyleType: block.heading } : {}, fields: headingChanged ? "namedStyleType,indentStart,indentFirstLine" : "indentStart,indentFirstLine" } });
     if (block.level !== null) {
+      if (block.numbered) return unsafe("cannot create a numbered level without a matching native list paragraph");
       const relative3 = block.level - priorLevel;
       if (relative3 < 0) return unsafe("outdent would split the preceding native list");
       const prefix = relative3 ? "x\n" + "	".repeat(relative3) : "";
       if (prefix) requests.push({ insertText: { location: location(start), text: prefix } });
-      requests.push({ createParagraphBullets: { range: range(start, start + prefix.length + 1), bulletPreset: block.numbered ? "NUMBERED_DECIMAL_ALPHA_ROMAN" : "BULLET_DISC_CIRCLE_SQUARE" } });
+      requests.push({ createParagraphBullets: { range: range(start, start + prefix.length + 1), bulletPreset: "BULLET_DISC_CIRCLE_SQUARE" } });
       if (prefix) requests.push({ deleteContentRange: { range: range(start, start + 2) } });
     }
   };
@@ -18706,6 +18740,7 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
     const levels = tab.documentTab.lists?.[bullet.listId]?.listProperties.nestingLevels;
     if (!levels?.length) return unsafe("cannot determine previous list format");
     if (!!levels[0]?.glyphType !== b2.numbered) return 0;
+    if (levels.some((l, i) => l.glyphSymbol !== ["\u25CF", "\u25CB", "\u25A0"][i % 3] || l.glyphFormat && l.glyphFormat !== "%" + i)) return unsafe("cannot reproduce the existing native list preset");
     return bullet.nestingLevel ?? 0;
   };
   function editable(target, destructive) {
@@ -18725,6 +18760,7 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
       const o = old[0], b2 = added[0];
       editable(o, false);
       const structure = b2.heading !== o.block.heading || b2.level !== o.block.level || b2.numbered !== o.block.numbered;
+      if (structure && o.block.numbered) return unsafe("recreating an existing numbered paragraph could restart its list");
       const from = characters(o.block), to = characters(b2), keep = characterMatches(from, to);
       let ai = 0, bi = 0;
       const edits = [];
@@ -18793,23 +18829,36 @@ function plan(tab, previous, desired, comments, allowDuplicatePosition) {
     const right = c.start < before.length ? locate(c.start) : void 0;
     const left = c.start > 0 ? locate(c.start - 1) : void 0;
     if (left && right && left.end !== right.start) return unsafe("native content between insertion anchors");
+    const sameLevel = (n) => {
+      const bullet = n?.e.paragraph?.bullet;
+      if (!bullet || !n || !added.every((b2) => b2.level === n.block.level && b2.numbered === n.block.numbered && b2.heading === n.block.heading)) return false;
+      const level = tab.documentTab.lists?.[bullet.listId]?.listProperties.nestingLevels[bullet.nestingLevel ?? 0];
+      if (!level) return unsafe("cannot determine native list preset");
+      return n.block.numbered ? /^(DECIMAL|ZERO_DECIMAL|ALPHA|UPPER_ALPHA|ROMAN|UPPER_ROMAN)$/.test(level.glyphType ?? "") : !!level.glyphSymbol;
+    };
+    const inheritLeft = sameLevel(left), inheritRight = sameLevel(right);
+    if (inheritLeft && inheritRight && left.e.paragraph.bullet.listId !== right.e.paragraph.bullet.listId) return unsafe("insertion is between two different native lists");
+    const inherit = inheritRight || inheritLeft;
+    if (!inherit && added.some((b2) => b2.numbered)) return unsafe("cannot insert numbered items without a matching native list paragraph");
+    if (!inherit && left?.e.paragraph?.bullet && left.e.paragraph.bullet.listId === right?.e.paragraph?.bullet?.listId && left.block.numbered) return unsafe("insertion could split a numbered list");
     const append = !right && !!left;
     if (append && left.end !== last?.endIndex || !left && right && right.start !== 1) return unsafe("native content beyond insertion anchor");
     if (!right && !left && !(last?.startIndex === 1 && last?.paragraph?.elements[0]?.textRun?.content === "\n")) return unsafe("no native insertion anchor");
-    const neighbor = right ?? left;
+    const splitLeft = append || !inheritRight && inheritLeft;
+    const neighbor = splitLeft ? left : right;
     if (neighbor) {
       editable(neighbor, false);
-      if (right?.e.paragraph?.paragraphStyle?.headingId) return unsafe("splitting a heading may move its anchor");
+      if (!splitLeft && right?.e.paragraph?.paragraphStyle?.headingId) return unsafe("splitting a heading may move its anchor");
     }
-    const at = right?.start ?? (left ? left.end - 1 : 1);
+    const at = splitLeft ? left.end - 1 : right?.start ?? 1;
     guardText(at, at);
     const text3 = added.map((b2) => b2.text).join("\n");
-    requests.push({ insertText: { location: location(at), text: append ? "\n" + text3 : right ? text3 + "\n" : text3 } });
-    let pos = at + Number(append);
+    requests.push({ insertText: { location: location(at), text: splitLeft ? "\n" + text3 : right ? text3 + "\n" : text3 } });
+    let pos = at + Number(splitLeft);
     let previousAdded;
     for (const b2 of added) {
-      const preceding = previousAdded ? previousAdded.numbered === b2.numbered ? previousAdded.level ?? 0 : 0 : precedingLevel(append ? left.end : pos, b2);
-      setParagraph(b2, pos, !!neighbor?.e.paragraph?.bullet, true, preceding, (neighbor?.block.heading ?? "NORMAL_TEXT") !== b2.heading);
+      const preceding = inherit ? 0 : previousAdded ? previousAdded.numbered === b2.numbered ? previousAdded.level ?? 0 : 0 : precedingLevel(append ? left.end : pos, b2);
+      setParagraph(b2, pos, !!neighbor?.e.paragraph?.bullet, !inherit, preceding, (neighbor?.block.heading ?? "NORMAL_TEXT") !== b2.heading);
       previousAdded = b2;
       style(b2, pos, true);
       pos += b2.text.length + 1;
