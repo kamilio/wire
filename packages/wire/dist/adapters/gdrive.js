@@ -1,3 +1,4 @@
+import { readSheetTabs, sheetMarkdown } from "./sheet-markdown.js";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
@@ -150,13 +151,7 @@ export async function previewDrive(runtime, url) {
         return (await drive(runtime, "/" + id, { alt: "media", supportsAllDrives: "true" })).text();
     return "# " + item.name + "\n\n" + item.mimeType;
 }
-async function sheetLinks(runtime, id) {
-    const fields = "sheets(properties(title),data(startRow,startColumn,rowData(values(formattedValue,hyperlink,userEnteredValue,textFormatRuns(format/link),userEnteredFormat/textFormat/link,chipRuns(chip/richLinkProperties/uri)))))";
-    const token = await runtime.googleFormsTokens.load();
-    const response = await runtime.http.request("https://sheets.googleapis.com/v4/spreadsheets/" + encodeURIComponent(id) + "?" + new URLSearchParams({ fields }), { headers: { authorization: "Bearer " + token.token } });
-    if (!response.ok)
-        throw new Error("Sheets HTTP " + response.status + ": " + (await response.text()).slice(0, 600));
-    const { sheets } = await response.json();
+function sheetLinks(sheets, id) {
     const links = Object.create(null);
     const labels = new Map();
     for (const tab of sheets)
@@ -237,6 +232,7 @@ export async function scrapeDrive(runtime, cwd, url, deleteVerifiedPdfs = false,
     const errors = [], skipped = [], retainedDocx = [], images = [];
     const priorPaths = new Map(Object.values(state.entries).filter(e => e.path).map(e => [e.id, e.path]));
     let labels = new Map();
+    const rootTabs = state.spreadsheet ? await readSheetTabs(runtime, source) : undefined;
     async function visit(files, dir) {
         for await (const f of files) {
             try {
@@ -255,9 +251,10 @@ export async function scrapeDrive(runtime, cwd, url, deleteVerifiedPdfs = false,
                 const suff = format?.[0] ?? (pdf && !/\.pdf$/i.test(name) ? ".pdf" : docx && !/\.docx$/i.test(name) ? ".docx" : "");
                 let path = join(dir, name + (name.endsWith(suff) ? "" : suff));
                 // Existing scrapes keep their original sidecar paths.
-                const markdownPath = () => state.entries[key(path + ".md")]?.id !== f.id && /\.(pdf|docx)$/i.test(path)
+                const spreadsheet = f.mimeType === google + "spreadsheet";
+                const markdownPath = () => state.entries[key(path + ".md")]?.id !== f.id && /\.(pdf|docx|xlsx)$/i.test(path)
                     ? path.slice(0, -extname(path).length) + ".md" : path + ".md";
-                const paths = () => (pdf || docx ? [path, markdownPath()] : [path]);
+                const paths = () => (pdf || docx || spreadsheet ? [path, markdownPath()] : [path]);
                 const key = (p) => "./" + p.normalize("NFC").toLowerCase();
                 const occupied = async () => {
                     for (const p of paths()) {
@@ -360,7 +357,12 @@ export async function scrapeDrive(runtime, cwd, url, deleteVerifiedPdfs = false,
                 const raw = new Uint8Array(await response.arrayBuffer());
                 const doc = f.mimeType === google + "document" ? await extractDocImages(runtime, f.id, full, Buffer.from(raw).toString("utf8")) : undefined;
                 const bytes = doc?.bytes ?? raw;
+                const table = spreadsheet ? Buffer.from(sheetMarkdown((f.id === source ? rootTabs : undefined) ?? await readSheetTabs(runtime, f.id))) : undefined;
                 await save(full, bytes);
+                if (table) {
+                    await save(join(cwd, markdownPath()), table);
+                    state.entries[key(markdownPath())] = { id: f.id, version: f.version, hash: digest(table) };
+                }
                 state.entries[key(path)] = { id: f.id, path, version: f.version, hash: digest(bytes), ...(doc ? { images: doc.images, originalImages: true } : {}) };
                 if (pdf || docx) {
                     const text = docx ? await (await import("./drive-docx.js")).docxMarkdown(bytes)
@@ -388,7 +390,7 @@ export async function scrapeDrive(runtime, cwd, url, deleteVerifiedPdfs = false,
     try {
         if (state.spreadsheet) {
             await visit([root], "");
-            const cells = await sheetLinks(runtime, source);
+            const cells = sheetLinks(rootTabs, source);
             state.links = cells.links;
             labels = cells.labels;
             for (const [id, refs] of Object.entries(state.links)) {

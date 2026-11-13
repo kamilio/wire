@@ -54,6 +54,7 @@ test("scrape paginates nested files, exports whole sheets and protects local edi
         assert.equal(init.headers.authorization, "Bearer saved");
         const u = new URL(input),
           id = u.pathname.split("/").pop();
+        if (u.hostname === "sheets.googleapis.com") return Response.json({ sheets: [{ properties: { title: "Scores" }, data: [{ rowData: [{ values: [{ formattedValue: "Score" }] }, { values: [{ formattedValue: "84%" }] }] }] }] });
         if (id === "source") return Response.json({ name: basename(dir), mimeType: google + "folder" });
         if (id === "export") {
           exports.push(u.searchParams.get("mimeType"));
@@ -80,6 +81,7 @@ test("scrape paginates nested files, exports whole sheets and protects local edi
     await assert.rejects(scrapeDrive(runtime, dir), /Local file changed/);
     assert.equal(await readFile(path, "utf8"), "local edits");
     assert.equal(exports.length, 2);
+    assert.equal(await readFile(join(dir, "Team", "Scores.md"), "utf8"), "## Scores\n\n| Score |\n| --- |\n| 84% |\n");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -250,8 +252,8 @@ test("spreadsheet scrape downloads all tabs and directly linked files, without w
         return Response.json({ sheets: [
           { properties: { title: "First" }, data: [{ rowData: [{ values: [
             { formattedValue: plain, hyperlink: plain, userEnteredValue: { stringValue: plain } },
-            { textFormatRuns: [{ format: { link: { uri: "https://docs.google.com/document/d/second/edit" } } }] },
-            { chipRuns: [{ chip: { richLinkProperties: { uri: "https://drive.google.com/drive/u/0/folders/group" } } }] },
+            { formattedValue: "See notes", textFormatRuns: [{ startIndex: 4, format: { link: { uri: "https://docs.google.com/document/d/second/edit" } } }] },
+            { formattedValue: "Packet for Alex", userEnteredValue: { stringValue: "Packet for @" }, chipRuns: [{ startIndex: 11, chip: { richLinkProperties: { uri: "https://drive.google.com/drive/u/0/folders/group" } } }] },
           ] }] }] },
           { properties: { title: "Second" }, data: [{ startRow: 4, startColumn: 26, rowData: [{ values: [
             { userEnteredValue: { formulaValue: '=HYPERLINK("https://drive.google.com/file/d/third/view","Notes")' } },
@@ -279,6 +281,12 @@ test("spreadsheet scrape downloads all tabs and directly linked files, without w
     await assert.rejects(scrapeDrive(runtime, dir, "https://docs.google.com/spreadsheets/d/tracker/edit"), /3 downloaded.*\n.*linked folder.*\nSecond!AA5 \(third\).*403/s);
     assert.equal(await readFile(join(target, "Eng tracker.xlsx"), "utf8"), "workbook export bytes");
     assert.equal(await readFile(join(target, "Review (2).md"), "utf8"), "document second");
+    const tableFile = join(target, "Eng tracker.md"), table = await readFile(tableFile, "utf8");
+    assert.ok(table.includes("See [notes](https://docs.google.com/document/d/second/edit) | Packet for [Alex](https://drive.google.com/drive/u/0/folders/group)"));
+    const second = table.split("## Second\n\n")[1].trimEnd().split("\n");
+    assert.equal(second.length, 6);
+    assert.equal(second[0].split("|").length - 2, 30);
+    assert.equal(second[5].split("|")[30].trim(), "https://somewhere.example/open?id=unrelated");
     assert.deepEqual(hits, ["tracker", "doc", "second", "group", "third"]);
     const state = JSON.parse(await readFile(join(target, ".wire-gdrive.json")));
     assert.deepEqual(state.links.doc, ["First!A1", "Second!AB5"]);
@@ -297,6 +305,9 @@ test("spreadsheet scrape downloads all tabs and directly linked files, without w
     await writeFile(join(target, "Review.md"), "local edit");
     await assert.rejects(scrapeDrive(runtime, target), /Local file changed/);
     assert.equal(await readFile(join(target, "Review.md"), "utf8"), "local edit");
+    await writeFile(tableFile, "edited table");
+    await assert.rejects(scrapeDrive(runtime, target), /Local file changed: Eng tracker.md/);
+    assert.equal(await readFile(tableFile, "utf8"), "edited table");
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -345,4 +356,16 @@ test("spreadsheet PDFs use the linked title, preserve the original, and keep edi
       assert.equal(downloads, 1);
     }
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("spreadsheet tables preserve displayed values, embedded breaks, blank columns, and multiple rich-text links", async () => {
+  const { sheetMarkdown } = await import("../dist/adapters/sheet-markdown.js");
+  const md = sheetMarkdown([{ properties: { title: "Summary" }, data: [{ rowData: [
+    { values: [{ formattedValue: "Cost | units" }, {}, { formattedValue: "Notes" }] },
+    { values: [{ formattedValue: "$1,000.00" }, {}, { formattedValue: "A+B\n<C>", textFormatRuns: [
+      { startIndex: 0, format: { link: { uri: "https://a.test/a(b)" } } },
+      { startIndex: 1 }, { startIndex: 2, format: { link: { uri: "https://b.test" } } }, { startIndex: 3 },
+    ] }] },
+  ] }] }, { properties: { title: "Empty" } }]);
+  assert.equal(md, "## Summary\n\n| Cost &#124; units |  | Notes |\n| --- | --- | --- |\n| $1,000.00 |  | [A](https://a.test/a%28b%29)+[B](https://b.test)<br>&lt;C&gt; |\n\n## Empty\n\n|  |\n| --- |\n");
 });
