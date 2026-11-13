@@ -23,7 +23,8 @@ const testRoot = join(realpathSync(tmpdir()), "wire-ts-operations");
 
 before(async () => {
   await rm(testRoot, { recursive: true, force: true });
-  await mkdir(testRoot, { recursive: true });
+  // Stop workspace discovery before it reaches a real registry above the fixture.
+  await mkdir(join(testRoot, ".wire"), { recursive: true, mode: 0o700 });
 });
 
 after(async () => {
