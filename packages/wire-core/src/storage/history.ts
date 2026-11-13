@@ -15,7 +15,7 @@ export type HistoryDiff = { from: string; to: string; before: string; after: str
 type Revision = HistoryEntry & { blob: string };
 export type HistoryRefs = {
   base: string | null; draft: string | null; remote: string | null; conflict: HistoryConflict | null;
-  editorReceipts?: EditorReceipts; editorDraft?: string;
+  editorReceipts?: EditorReceipts; retiredEditorReceipts?: EditorReceipts; editorDraft?: string;
   strict: boolean; revisions: Revision[]; resolution: FetchedDocument | null; resolutionParent: string | null;
 };
 type Publication = { acknowledged: boolean; path: string; expected: string | null; next: string; token: string; refs: HistoryRefs; resource: Resource | null };
@@ -138,7 +138,7 @@ export class DocumentHistory {
         const raw = await working(path);
         if (raw === null) continue;
         // A pre-enrollment displaced file has no receipt. Its parent is unknown.
-        view = editorView(raw, hasEditorReceipt(raw) ? this.refs.editorReceipts : undefined);
+        view = editorView(raw, hasEditorReceipt(raw) ? { ...this.refs.retiredEditorReceipts, ...this.refs.editorReceipts } : undefined);
         if (view.shown && !this.refs.revisions.some(r => r.id === view.shown)) throw new Error("Orphaned receipt");
       } catch (cause) {
         throw new Error("A retained editor save is unreadable. Inspect the private copy: " + path, { cause });

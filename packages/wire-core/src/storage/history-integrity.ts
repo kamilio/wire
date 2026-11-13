@@ -14,9 +14,9 @@ export function validateRefs(refs: HistoryRefs) {
     known.add(r.id);
   }
   for (const ref of [refs.base, refs.remote, refs.draft, refs.resolutionParent, refs.editorDraft]) if (ref != null && !known.has(ref)) return corrupt();
-  if (refs.editorReceipts !== undefined) {
-    if (!refs.editorReceipts || typeof refs.editorReceipts !== "object" || Array.isArray(refs.editorReceipts)) return corrupt();
-    for (const [key, record] of Object.entries(refs.editorReceipts)) {
+  for (const receipts of [refs.editorReceipts, refs.retiredEditorReceipts]) if (receipts !== undefined) {
+    if (!receipts || typeof receipts !== "object" || Array.isArray(receipts)) return corrupt();
+    for (const [key, record] of Object.entries(receipts)) {
       if (!/^[a-f0-9]{48}$/.test(key) || !record || typeof record.crlf !== "boolean" || !known.has(record.shown) || !known.has(record.base)) return corrupt();
     }
   }

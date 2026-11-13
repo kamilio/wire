@@ -112,6 +112,7 @@ test("lost, copied and malformed receipts never reach upload, sync, shell or ano
   await wire.attach(f.url,path,true);
   assert.ok((await f.read()).includes("wire-editor-basis:"));
   assert.notEqual(await f.read(),valid);
+  assert.ok((await wire.historyLog(file,path)).length);
   await f.save(valid);
   await assert.rejects(wire.sync(file,path), /receipt/);
 });

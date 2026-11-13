@@ -198,7 +198,7 @@ export class DocumentHistory {
                 if (raw === null)
                     continue;
                 // A pre-enrollment displaced file has no receipt. Its parent is unknown.
-                view = editorView(raw, hasEditorReceipt(raw) ? this.refs.editorReceipts : undefined);
+                view = editorView(raw, hasEditorReceipt(raw) ? { ...this.refs.retiredEditorReceipts, ...this.refs.editorReceipts } : undefined);
                 if (view.shown && !this.refs.revisions.some(r => r.id === view.shown))
                     throw new Error("Orphaned receipt");
             }

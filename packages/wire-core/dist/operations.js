@@ -550,7 +550,9 @@ export function composeWire(dependencies) {
             if (previousView)
                 await h.captureLocal(previousView.markdown, previousView.shown ?? undefined);
             const next = await h.observe(fetched);
-            const { editorReceipts: _receipts, ...plainRefs } = h.refs;
+            const { editorReceipts, ...plainRefs } = h.refs;
+            if (editorReceipts)
+                plainRefs.retiredEditorReceipts = { ...plainRefs.retiredEditorReceipts, ...editorReceipts };
             await h.publish(outputPath, onDisk, fetched.markdown, { ...plainRefs, base: next, remote: next, draft: null }, null, r => registry.put(r));
         }
         else

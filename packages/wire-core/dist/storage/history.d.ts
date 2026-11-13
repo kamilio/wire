@@ -33,6 +33,7 @@ export type HistoryRefs = {
     remote: string | null;
     conflict: HistoryConflict | null;
     editorReceipts?: EditorReceipts;
+    retiredEditorReceipts?: EditorReceipts;
     editorDraft?: string;
     strict: boolean;
     revisions: Revision[];
