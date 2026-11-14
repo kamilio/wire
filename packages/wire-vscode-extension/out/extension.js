@@ -15917,7 +15917,7 @@ function composeWire(dependencies) {
       } else next = await history.observe(fetched);
       const refs = { ...history.refs, base: next, remote: next, draft: null, strict: false, resolution: null, resolutionParent: null, conflict: null };
       delete refs.editorDraft;
-      if (concurrentEdit && previousMarkdown === fetched.markdown) {
+      if (previousMarkdown === fetched.markdown && (concurrentEdit || action === "uploaded" && current !== null && !refs.editorReceipts)) {
         await history.publish(outputPath, onDisk ?? "", onDisk ?? "", refs, resource, (r) => registry.put(r), true);
         stored = await registry.get(resource.id);
       } else if (concurrentEdit) {

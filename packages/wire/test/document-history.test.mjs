@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
+import { DocumentHistory } from "../../wire-core/dist/storage/history.js";
 import { composeWire, configuredWireRoot, initializeWire, openWireRegistry, switchWireBackend, wireRelativePath, WireMergeConflict } from "wire-core";
 
 async function fixture(t, backend) {
@@ -89,6 +90,39 @@ test("a provider observation during a failed local publish never advances the ma
   assert.deepEqual((await after.historyDiff(file, path, "base", "remote")).after, doc.markdown);
   assert.equal(await readFile(file, "utf8"), "changed during provider read\n");
   assert.equal(doc.writes, 0);
+});
+
+test("rapid saves after a confirmed upload use the sent edit as base, while competing edits still conflict", async t => {
+  const { file, path, doc, wire, make } = await fixture(t, "files");
+  const original = DocumentHistory.prototype.publish;
+  let followup;
+  t.mock.method(DocumentHistory.prototype, "publish", async function (...args) {
+    // The provider has confirmed this exact edit and store has read the file.
+    // The next save lands just before the journal checks the working file.
+    if (followup !== undefined) {
+      await writeFile(file, followup);
+      followup = undefined;
+    }
+    return original.apply(this, args);
+  });
+  await writeFile(file, "save 1\n");
+  for (let n = 1; n <= 3; n++) {
+    followup = "save " + (n + 1) + "\n";
+    await wire.sync(file, path);
+    assert.equal(doc.markdown, "save " + n + "\n");
+    assert.equal(await readFile(file, "utf8"), "save " + (n + 1) + "\n");
+    assert.equal((await make().historyDiff(file, path, "base", "working")).before, doc.markdown);
+  }
+  await make().sync(file, path);
+  assert.equal(doc.markdown, "save 4\n");
+  await writeFile(file, "save 5\n");
+  doc.markdown = "competing edit\n";
+  await assert.rejects(make().sync(file, path), /Unresolved Wire conflict/);
+  const conflict = (await wire.historyStatus(file, path)).conflict;
+  const text = id => wire.historyDiff(file, path, id, id).then(d => d.before);
+  assert.deepEqual([await text(conflict.base), await text(conflict.local), await text(conflict.remote)],
+    ["save 4\n", "save 5\n", "competing edit\n"]);
+  assert.equal(doc.writes, 4);
 });
 
 test("an interrupted stage write cannot become a partially delivered document", async t => {

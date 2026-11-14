@@ -248,9 +248,11 @@ export function composeWire(dependencies) {
                 next = await history.observe(fetched);
             const refs = { ...history.refs, base: next, remote: next, draft: null, strict: false, resolution: null, resolutionParent: null, conflict: null };
             delete refs.editorDraft;
-            // A confirmed push of the exact draft the editor already saw is safe to
-            // acknowledge even if another save arrived while it was in flight.
-            if (concurrentEdit && previousMarkdown === fetched.markdown) {
+            // Plain tracked files already contain the sent bytes. A confirmed exact
+            // upload only needs a registry/history acknowledgment: the editor may
+            // save again between this read and publication.
+            if (previousMarkdown === fetched.markdown && (concurrentEdit ||
+                (action === "uploaded" && current !== null && !refs.editorReceipts))) {
                 await history.publish(outputPath, onDisk ?? "", onDisk ?? "", refs, resource, r => registry.put(r), true);
                 stored = await registry.get(resource.id);
             }
