@@ -360,7 +360,7 @@ export class DocumentHistory {
                 }
             }
             await cleanup();
-            throw new Error("Local file changed during sync: " + basename(p.path) + ". Local changes were preserved. Run wire sync again.");
+            throw new Error("Local file changed during sync: " + basename(p.path) + ". Local changes were preserved. The next sync will retry.");
         };
         // A private hard link to the displaced inode is retained, even if another
         // application still has a writable file descriptor open on it.

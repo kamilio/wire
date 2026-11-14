@@ -15480,7 +15480,7 @@ var DocumentHistory = class _DocumentHistory {
         }
       }
       await cleanup();
-      throw new Error("Local file changed during sync: " + (0, import_node_path2.basename)(p.path) + ". Local changes were preserved. Run wire sync again.");
+      throw new Error("Local file changed during sync: " + (0, import_node_path2.basename)(p.path) + ". Local changes were preserved. The next sync will retry.");
     };
     if (!p.acknowledged && !await exists(delivered)) {
       let current = await working(p.path);
@@ -15863,11 +15863,11 @@ function composeWire(dependencies) {
     const raw = history ? await working(outputPath) : await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
     const view2 = raw === null ? null : history ? history.view(raw) : editorView(raw);
     const onDisk = view2?.markdown ?? null;
-    if (expectedRaw !== void 0 && raw !== expectedRaw && (enableReceipts || history?.refs.editorReceipts)) throw new Error("Local file changed during sync; run wire sync again.");
+    if (expectedRaw !== void 0 && raw !== expectedRaw && (enableReceipts || history?.refs.editorReceipts)) throw new Error("Local file changed during sync. The next sync will retry.");
     if (!current && fixedOutputPath === void 0 && onDisk !== null) throw new Error("Another file appeared at the proposed attachment path; retry attach.");
     const previous = (previousMarkdown === void 0 ? onDisk : previousMarkdown) ?? "";
     const concurrentEdit = previousMarkdown !== void 0 && onDisk !== previousMarkdown && onDisk !== fetched.markdown;
-    const retry = `Local file changed during sync: ${relativePath}. Local changes were preserved. Run wire sync again.`;
+    const retry = `Local file changed during sync: ${relativePath}. Local changes were preserved. The next sync will retry.`;
     if (concurrentEdit && current !== null && fetched.markdown !== previousMarkdown) {
       if (history) {
         await history.observe(fetched);

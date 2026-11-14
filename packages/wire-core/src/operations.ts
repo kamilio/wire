@@ -263,11 +263,11 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     const raw = history ? await working(outputPath) : await dependencies.filesystem.exists(outputPath) ? await dependencies.filesystem.readText(outputPath) : null;
     const view = raw === null ? null : history ? history.view(raw) : editorView(raw);
     const onDisk = view?.markdown ?? null;
-    if (expectedRaw !== undefined && raw !== expectedRaw && (enableReceipts || history?.refs.editorReceipts)) throw new Error("Local file changed during sync; run wire sync again.");
+    if (expectedRaw !== undefined && raw !== expectedRaw && (enableReceipts || history?.refs.editorReceipts)) throw new Error("Local file changed during sync. The next sync will retry.");
     if (!current && fixedOutputPath === undefined && onDisk !== null) throw new Error("Another file appeared at the proposed attachment path; retry attach.");
     const previous = (previousMarkdown === undefined ? onDisk : previousMarkdown) ?? "";
     const concurrentEdit = previousMarkdown !== undefined && onDisk !== previousMarkdown && onDisk !== fetched.markdown;
-    const retry = `Local file changed during sync: ${relativePath}. Local changes were preserved. Run wire sync again.`;
+    const retry = `Local file changed during sync: ${relativePath}. Local changes were preserved. The next sync will retry.`;
     // Only advance the common base if the editor saw that version. Otherwise a retry
     // could mistake remote additions that never reached disk for local deletions.
     if (concurrentEdit && current !== null && fetched.markdown !== previousMarkdown) {
