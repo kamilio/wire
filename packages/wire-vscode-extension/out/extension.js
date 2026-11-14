@@ -15318,21 +15318,21 @@ var DocumentHistory = class _DocumentHistory {
   async revision(kind, markdown, parents) {
     plainMarkdown(markdown);
     const blob = hash(markdown), ancestry = [...new Set(parents.filter((p) => p !== null))];
-    if (ancestry.length === 1 && this.refs.revisions.find((r) => r.id === ancestry[0])?.blob === blob) return ancestry[0];
-    const id = hash(JSON.stringify([kind, blob, ancestry]));
-    if (!this.refs.revisions.some((r) => r.id === id)) {
-      const path = (0, import_node_path2.join)(this.dir, blob + ".md");
-      if (!await exists(path)) {
-        const tmp = (0, import_node_path2.join)(this.dir, (0, import_node_crypto4.randomUUID)());
-        try {
-          await write(tmp, markdown);
-          await (0, import_promises4.rename)(tmp, path);
-        } finally {
-          await (0, import_promises4.rm)(tmp, { force: true });
-        }
+    const parent = ancestry.length === 1 && this.refs.revisions.find((r) => r.id === ancestry[0]);
+    const id = parent && parent.blob === blob ? parent.id : hash(JSON.stringify([kind, blob, ancestry]));
+    const path = (0, import_node_path2.join)(this.dir, blob + ".md");
+    const stored = await working(path);
+    if (stored !== markdown) {
+      if (stored !== null || this.refs.revisions.some((r) => r.blob === blob)) throw new Error("Corrupt Wire history snapshot: " + id);
+      const tmp = (0, import_node_path2.join)(this.dir, (0, import_node_crypto4.randomUUID)());
+      try {
+        await write(tmp, markdown);
+        await (0, import_promises4.rename)(tmp, path);
+      } finally {
+        await (0, import_promises4.rm)(tmp, { force: true });
       }
-      this.refs.revisions.push({ id, kind, at: this.now().toISOString(), blob, parents: ancestry });
     }
+    if (!this.refs.revisions.some((r) => r.id === id)) this.refs.revisions.push({ id, kind, at: this.now().toISOString(), blob, parents: ancestry });
     return id;
   }
   token(raw = null) {
@@ -16078,6 +16078,20 @@ function composeWire(dependencies) {
     let raw = history ? await working(outputPath) : await dependencies.filesystem.readText(outputPath);
     if (raw === null) throw new Error("Linked file missing: " + outputPath);
     let view2 = history ? history.view(raw) : editorView(raw);
+    const active = /* @__PURE__ */ new Map();
+    if (history) {
+      await history.seed(markdownSnapshot(snapshot));
+      for (const ref of [
+        history.refs.base,
+        history.refs.remote,
+        history.refs.draft,
+        view2.shown,
+        view2.base,
+        history.refs.resolution ? history.refs.resolutionParent : null
+      ]) {
+        if (ref && !active.has(ref)) active.set(ref, await history.text(ref));
+      }
+    }
     await history?.checkPendingDraft(view2);
     if (history?.refs.conflict && "editor" in history.refs.conflict) {
       const c = history.refs.conflict;
@@ -16101,9 +16115,8 @@ function composeWire(dependencies) {
       view2 = history.view(raw);
     }
     const markdown = view2.markdown;
-    const base = view2.base && history && view2.base !== history.refs.base && view2.base !== history.refs.resolutionParent ? { markdown: await history.text(view2.base) } : history?.refs.resolution && (!view2.base || view2.base === history.refs.resolutionParent) ? storedSnapshot(history.refs.resolution) : syncBase(source.service, snapshot, resource.data);
-    if (history) await history.seed(markdownSnapshot(snapshot));
-    const baseMarkdown = markdownSnapshot(base) ?? (history?.refs.base ? await history.text(history.refs.base) : null);
+    const base = view2.base && history && view2.base !== history.refs.base && view2.base !== history.refs.resolutionParent ? { markdown: active.get(view2.base) } : history?.refs.resolution && (!view2.base || view2.base === history.refs.resolutionParent) ? storedSnapshot(history.refs.resolution) : syncBase(source.service, snapshot, resource.data);
+    const baseMarkdown = markdownSnapshot(base) ?? (history?.refs.base ? active.get(history.refs.base) : null);
     const localChanged = baseMarkdown !== null && markdown !== baseMarkdown;
     if (localChanged && !history?.refs.strict && !serviceCanSynchronize(resource.urls[0], dependencies.catalog)) throw new Error(`${source.service} is download-only and the local file has edits. Run \`wire download ${primaryLink(resource).path}\` to discard them.`);
     if (source.service === "google-docs" && source["document_tab"] === "t.0") {

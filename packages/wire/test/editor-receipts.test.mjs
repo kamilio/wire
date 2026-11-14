@@ -1,6 +1,6 @@
 import { synchronizeSource, uploadSource } from "wire-core";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { composeWire, configuredWireRoot, initializeWire, openWireRegistry, wireRelativePath } from "../../wire-core/dist/index.js";
@@ -60,6 +60,50 @@ async function fixture(t, backend) {
   const wire = make(), url = "https://docs.example/receipt", { path: file } = await wire.attach(url, path, true);
   return { A, B, C, doc, make, wire, path, file, url, read: () => readFile(file, "utf8"), save: text => writeFile(file, text) };
 }
+
+test("sync checks the active history base before publishing disjoint edits and ignores retired blobs", async t => {
+  const f = await fixture(t, "files");
+  const history = join(f.path, ".wire", "history");
+  const dir = join(history, (await readdir(history)).find(name => /^[a-f0-9]{64}$/.test(name)));
+  const refsFile = join(dir, "refs.json");
+  const refs = JSON.parse(await readFile(refsFile, "utf8"));
+  const blob = join(dir, refs.revisions.find(r => r.id === refs.base).blob + ".md");
+  const edited = (await f.read()).replace("Top", "Local top");
+  await f.save(edited);
+  const remote = f.A.replace("Bottom", "Remote bottom");
+  f.doc.value = remote;
+  await writeFile(blob, "damaged base");
+  await assert.rejects(f.wire.sync(f.file, f.path), /Corrupt Wire history snapshot/);
+  assert.equal(f.doc.writes.length, 0);
+  assert.equal(f.doc.value, remote);
+  assert.equal(await f.read(), edited);
+  assert.deepEqual(JSON.parse(await readFile(refsFile, "utf8")), refs);
+
+  await writeFile(blob, f.A);
+  assert.equal((await f.make().sync(f.file, f.path)).markdown, remote.replace("Top", "Local top"));
+  await writeFile(blob, "now only a historical ancestor");
+  await f.save((await f.read()).replace("Middle", "New middle"));
+  await f.make().sync(f.file, f.path);
+  assert.equal(f.doc.writes.length, 2);
+});
+
+test("a provider observation cannot reuse damaged historical bytes before writing", async t => {
+  const f = await fixture(t, "sqlite");
+  const history = join(f.path, ".wire", "history");
+  const dir = join(history, (await readdir(history)).find(name => /^[a-f0-9]{64}$/.test(name)));
+  const refs = JSON.parse(await readFile(join(dir, "refs.json"), "utf8"));
+  const blob = join(dir, refs.revisions[0].blob + ".md");
+  f.doc.value = f.B;
+  await f.wire.sync(f.file, f.path);
+  const saved = (await f.read()).replace("Top", "New top");
+  await f.save(saved);
+  f.doc.value = f.A;
+  await writeFile(blob, "damaged old observation");
+  await assert.rejects(f.make().sync(f.file, f.path), /Corrupt Wire history snapshot/);
+  assert.equal(f.doc.writes.length, 0);
+  assert.equal(f.doc.value, f.A);
+  assert.equal(await f.read(), saved);
+});
 
 for (const backend of ["sqlite", "files"]) {
   test(backend + ": open A, materialize B, save stale A, merge with live C, then save A again", async t => {

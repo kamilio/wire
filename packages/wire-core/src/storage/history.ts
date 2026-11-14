@@ -132,16 +132,16 @@ export class DocumentHistory {
   async revision(kind: HistoryEntry["kind"], markdown: string, parents: (string | null)[]): Promise<string> {
     plainMarkdown(markdown);
     const blob = hash(markdown), ancestry = [...new Set(parents.filter((p): p is string => p !== null))];
-    if (ancestry.length === 1 && this.refs.revisions.find(r => r.id === ancestry[0])?.blob === blob) return ancestry[0]!;
-    const id = hash(JSON.stringify([kind, blob, ancestry]));
-    if (!this.refs.revisions.some(r => r.id === id)) {
-      const path = join(this.dir, blob + ".md");
-      if (!await exists(path)) {
-        const tmp = join(this.dir, randomUUID());
-        try { await write(tmp, markdown); await rename(tmp, path); } finally { await rm(tmp, { force: true }); }
-      }
-      this.refs.revisions.push({ id, kind, at: this.now().toISOString(), blob, parents: ancestry });
+    const parent = ancestry.length === 1 && this.refs.revisions.find(r => r.id === ancestry[0]);
+    const id = parent && parent.blob === blob ? parent.id : hash(JSON.stringify([kind, blob, ancestry]));
+    const path = join(this.dir, blob + ".md");
+    const stored = await working(path);
+    if (stored !== markdown) {
+      if (stored !== null || this.refs.revisions.some(r => r.blob === blob)) throw new Error("Corrupt Wire history snapshot: " + id);
+      const tmp = join(this.dir, randomUUID());
+      try { await write(tmp, markdown); await rename(tmp, path); } finally { await rm(tmp, { force: true }); }
     }
+    if (!this.refs.revisions.some(r => r.id === id)) this.refs.revisions.push({ id, kind, at: this.now().toISOString(), blob, parents: ancestry });
     return id;
   }
   token(raw: string | null = null) { return hash(stableJsonCompact([this.refs, raw])); }

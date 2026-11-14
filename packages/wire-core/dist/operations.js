@@ -444,6 +444,17 @@ export function composeWire(dependencies) {
         if (raw === null)
             throw new Error("Linked file missing: " + outputPath);
         let view = history ? history.view(raw) : editorView(raw);
+        // These revisions supply this save's ancestry and recovery copies. Verify
+        // them before changing local pointers or allowing a provider to write.
+        const active = new Map();
+        if (history) {
+            await history.seed(markdownSnapshot(snapshot));
+            for (const ref of [history.refs.base, history.refs.remote, history.refs.draft, view.shown, view.base,
+                history.refs.resolution ? history.refs.resolutionParent : null]) {
+                if (ref && !active.has(ref))
+                    active.set(ref, await history.text(ref));
+            }
+        }
         await history?.checkPendingDraft(view);
         if (history?.refs.conflict && "editor" in history.refs.conflict) {
             const c = history.refs.conflict;
@@ -473,11 +484,9 @@ export function composeWire(dependencies) {
         // A stale receipt proves Markdown ancestry, not native paragraph positions.
         // Never attach a newer snapshot's verified revision or IDs to older bytes.
         const base = view.base && history && view.base !== history.refs.base && view.base !== history.refs.resolutionParent
-            ? { markdown: await history.text(view.base) }
+            ? { markdown: active.get(view.base) }
             : history?.refs.resolution && (!view.base || view.base === history.refs.resolutionParent) ? storedSnapshot(history.refs.resolution) : syncBase(source.service, snapshot, resource.data);
-        if (history)
-            await history.seed(markdownSnapshot(snapshot));
-        const baseMarkdown = markdownSnapshot(base) ?? (history?.refs.base ? await history.text(history.refs.base) : null);
+        const baseMarkdown = markdownSnapshot(base) ?? (history?.refs.base ? active.get(history.refs.base) : null);
         const localChanged = baseMarkdown !== null && markdown !== baseMarkdown;
         if (localChanged && !history?.refs.strict && !serviceCanSynchronize(resource.urls[0], dependencies.catalog))
             throw new Error(`${source.service} is download-only and the local file has edits. Run \`wire download ${primaryLink(resource).path}\` to discard them.`);
