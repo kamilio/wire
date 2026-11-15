@@ -55,7 +55,9 @@ export type Wire = Readonly<{
     attach(url: string, path: string, editorReceipts?: boolean): Promise<WireResult>;
     adopt(url: string, existingFilePath: string, editorReceipts?: boolean): Promise<WireResult>;
     historyStatus(value: string, path: string): Promise<HistoryStatus>;
-    historyLog(value: string, path: string): Promise<readonly HistoryEntry[]>;
+    historyLog(value: string, path: string, diff?: (from: string, to: string, before: string, after: string) => Promise<string>): Promise<readonly (HistoryEntry & {
+        patch?: string;
+    })[]>;
     historyDiff(value: string, path: string, from?: string, to?: string): Promise<HistoryDiff>;
     resolveConflict(value: string, path: string, choice: "local" | "remote" | "working" | "editor" | "shell"): Promise<HistoryStatus>;
     checkpoint(value: string, path: string, expected: string, markdown: string, token: string): Promise<HistoryStatus>;

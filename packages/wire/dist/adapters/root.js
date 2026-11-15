@@ -442,6 +442,13 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
         render: wirePresentation.sync,
     });
     const resource = S.String({ description: "Registered resource URL, resource ID, or Markdown path." });
+    const historyText = (revisions, theme) => revisions.map(r => {
+        const title = `${r.id}  ${r.at}  ${r.kind}`;
+        if (!r.patch)
+            return title;
+        const patch = theme ? r.patch.replace(/^[+-].*$/gm, line => line[0] === "+" ? theme.success(line) : theme.error(line)) : r.patch;
+        return title + "\n" + patch;
+    }).join("\n") || "No revisions recorded.";
     const historyStatusText = (status) => `${status.path}: ${status.conflict ? "conflict" : status.modified ? "local changes" : "clean"}`;
     const authCommand = (service) => {
         const title = serviceTitle(service);
@@ -645,9 +652,13 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
             }),
             defineCommand({
                 name: "history", scope: ["cli"], description: "List local revisions, newest first.",
-                positional: ["resource"], params: S.Object({ resource }),
-                handler: ({ params }) => userFacing(() => wire.historyLog(params.resource, currentDirectory)),
-                render: render(revisions => revisions.map(r => `${r.id}  ${r.at}  ${r.kind}`).join("\n") || "No revisions recorded."),
+                positional: ["resource"], params: S.Object({ resource,
+                    patch: S.Optional(S.Boolean({ short: "p", description: "Show a unified diff against the first parent of each revision." })),
+                }),
+                handler: ({ params }) => userFacing(async () => wire.historyLog(params.resource, currentDirectory, params.patch ? (await import("./document-shell.js")).documentDiff : undefined)),
+                render: { ...render(revisions => historyText(revisions)),
+                    rich: (revisions, primitives) => richText(historyText(revisions, primitives.getTheme()), primitives),
+                },
             }),
             defineCommand({
                 name: "diff", scope: ["cli"], description: "Compare two versions. Defaults to the last sync and working copy.",

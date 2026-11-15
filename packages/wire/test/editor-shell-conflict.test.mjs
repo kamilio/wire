@@ -62,7 +62,17 @@ export function createExecutableRoot(_env,cwd) {
     await cli("sync",file);
     assert.equal(await readFile(remote,"utf8"),"Editor title\nShell middle\nEnd\nRemote tail\n");
     const entries=JSON.parse(await cli("history",file,"--output","json"));
-    assert.ok(entries.some(r=>r.kind==="merge" && r.parents.includes(saved.editor) && r.parents.includes(saved.shell)));
+    const merged=entries.find(r=>r.kind==="merge" && r.parents.includes(saved.editor) && r.parents.includes(saved.shell));
+    assert.ok(merged);
+    const patches=JSON.parse(await cli("history",file,"--patch","--output","json"));
+    assert.deepEqual(patches.map(({patch,...metadata})=>metadata),entries);
+    assert.match(patches.at(-1).patch,/^--- \/dev\/null\n[\s\S]*\n\+Title\n/);
+    const parentDiff=await cli("diff",file,"--from",merged.parents[0],"--to",merged.id,"--markdown");
+    assert.equal(patches.find(r=>r.id===merged.id).patch.trimEnd(),parentDiff.trimEnd());
+    const printed=await cli("history",file,"-p","--markdown");
+    assert.ok(printed.startsWith(entries[0].id));
+    assert.match(printed,/\n-Middle\n\+Shell middle\n/);
+    assert.doesNotMatch(printed,/<!-- wire/);
 
     const start=await readFile(file,"utf8");
     await cli("shell",file,"sed -i 's/End/Shell ending/' document.md");

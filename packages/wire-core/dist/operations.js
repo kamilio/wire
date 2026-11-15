@@ -765,7 +765,19 @@ export function composeWire(dependencies) {
             await h.checkPendingDraft(h.view(raw));
         return h.status(path);
     });
-    const historyLog = (v, p) => withDocument(v, p, h => h.log());
+    const historyLog = async (v, p, diff) => {
+        const { history, entries } = await withDocument(v, p, async (history) => ({ history, entries: await history.log() }));
+        if (!diff)
+            return entries;
+        // Saved snapshots are immutable. Release the document lock before formatting patches.
+        const result = [];
+        for (const entry of entries) {
+            const parent = entry.parents[0];
+            const patch = await diff(parent ?? "/dev/null", entry.id, parent ? await history.text(parent) : "", await history.text(entry.id));
+            result.push({ ...entry, patch });
+        }
+        return result;
+    };
     const historyDiff = (v, p, from = "base", to = "working") => withDocument(v, p, async (h, path) => {
         const raw = await working(path);
         const current = raw === null ? null : h.view(raw).markdown;

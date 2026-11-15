@@ -66,6 +66,7 @@ wire shell Notes.md 'sed -i "s/Old heading/New heading/" document.md'
 wire status Notes.md
 wire diff Notes.md
 wire history Notes.md
+wire history Notes.md --patch
 wire sync Notes.md
 ```
 
@@ -98,7 +99,7 @@ wire resolve Notes.md working    # use the file after editing it yourself
 wire sync Notes.md
 ```
 
-Use `local` or `remote` instead of `working` to select a saved side. Resolution updates the local file. `wire diff` defaults to the last sync versus the working copy. Pass revision IDs from `wire history` to compare older versions.
+Use `local` or `remote` instead of `working` to select a saved side. Resolution updates the local file. `wire diff` defaults to the last sync versus the working copy. Pass revision IDs from `wire history` to compare older versions. Use `wire history Notes.md -p` to read those changes in order, newest first. Each patch compares the saved text with its first parent. A revision with no recorded parent is shown against an empty document.
 
 For a Notion page with subpages, `wire download <url>` saves a directory with an `index.md` for each page. Open the root index and follow the local links. Ordinary links and mentions stay remote. Pages without subpages still download as one Markdown file.
 

@@ -70,7 +70,7 @@ export type Wire = Readonly<{
   attach(url: string, path: string, editorReceipts?: boolean): Promise<WireResult>;
   adopt(url: string, existingFilePath: string, editorReceipts?: boolean): Promise<WireResult>;
   historyStatus(value: string, path: string): Promise<HistoryStatus>;
-  historyLog(value: string, path: string): Promise<readonly HistoryEntry[]>;
+  historyLog(value: string, path: string, diff?: (from: string, to: string, before: string, after: string) => Promise<string>): Promise<readonly (HistoryEntry & { patch?: string })[]>;
   historyDiff(value: string, path: string, from?: string, to?: string): Promise<HistoryDiff>;
   resolveConflict(value: string, path: string, choice: "local" | "remote" | "working" | "editor" | "shell"): Promise<HistoryStatus>;
   checkpoint(value: string, path: string, expected: string, markdown: string, token: string): Promise<HistoryStatus>;
@@ -784,7 +784,18 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     if (raw !== null) await h.checkPendingDraft(h.view(raw));
     return h.status(path);
   });
-  const historyLog = (v: string, p: string) => withDocument(v, p, h => h.log());
+  const historyLog: Wire["historyLog"] = async (v, p, diff) => {
+    const { history, entries } = await withDocument(v, p, async history => ({ history, entries: await history.log() }));
+    if (!diff) return entries;
+    // Saved snapshots are immutable. Release the document lock before formatting patches.
+    const result = [];
+    for (const entry of entries) {
+      const parent = entry.parents[0];
+      const patch = await diff(parent ?? "/dev/null", entry.id, parent ? await history.text(parent) : "", await history.text(entry.id));
+      result.push({ ...entry, patch });
+    }
+    return result;
+  };
   const historyDiff = (v: string, p: string, from = "base", to = "working") => withDocument(v, p, async (h, path) => {
     const raw = await working(path);
     const current = raw === null ? null : h.view(raw).markdown;

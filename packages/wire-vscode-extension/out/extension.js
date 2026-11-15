@@ -16371,7 +16371,17 @@ function composeWire(dependencies) {
     if (raw !== null) await h.checkPendingDraft(h.view(raw));
     return h.status(path);
   });
-  const historyLog = (v2, p) => withDocument(v2, p, (h) => h.log());
+  const historyLog = async (v2, p, diff) => {
+    const { history, entries } = await withDocument(v2, p, async (history2) => ({ history: history2, entries: await history2.log() }));
+    if (!diff) return entries;
+    const result = [];
+    for (const entry of entries) {
+      const parent = entry.parents[0];
+      const patch = await diff(parent ?? "/dev/null", entry.id, parent ? await history.text(parent) : "", await history.text(entry.id));
+      result.push({ ...entry, patch });
+    }
+    return result;
+  };
   const historyDiff = (v2, p, from = "base", to = "working") => withDocument(v2, p, async (h, path) => {
     const raw = await working(path);
     const current = raw === null ? null : h.view(raw).markdown;
