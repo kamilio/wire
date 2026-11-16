@@ -5,10 +5,13 @@ import type { zoomProvider } from "provider-zoom";
 import type { SlackSentMessage } from "provider-slack";
 import type { Auth, AuthResult, AuthService } from "../auth.js";
 import { type readAgenda } from "./calendar.js";
+import { type listDocComments, type changeDocComment } from "./doc-comments.js";
 export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
 export type WireRootOptions = Readonly<{
     allowPaste: boolean;
+    listDocComments?: (url: string) => ReturnType<typeof listDocComments>;
+    changeDocComment?: (action: Parameters<typeof changeDocComment>[1], url: string, value?: string) => ReturnType<typeof changeDocComment>;
     ashby?: (action: string, arg?: string) => Promise<string>;
     previewDrive?: (url: string) => Promise<string>;
     scrapeDrive?: (url?: string, deleteVerifiedPdfs?: boolean, deleteVerifiedDocx?: boolean) => Promise<string>;

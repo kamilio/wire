@@ -95,10 +95,10 @@ async function extractDocImages(runtime, id, full, text) {
 const folderUrl = /^https:\/\/drive\.google\.com\/drive\/(?:u\/\d+\/)?folders\/([\w-]+)\/?(?:[?#].*)?$/;
 const sheetUrl = /^https:\/\/docs\.google\.com\/spreadsheets\/(?:u\/\d+\/)?d\/([\w-]+)(?:[/?#].*)?$/;
 const safeName = (name) => name.replace(/[/\\:\x00-\x1f]/g, "_").replace(/^\.+/, "_") || "_";
-async function drive(runtime, path, params) {
+export async function drive(runtime, path, params, init) {
     const token = await runtime.googleFormsTokens.load();
     const response = await runtime.http.request("https://www.googleapis.com/drive/v3/files" + path + "?" + new URLSearchParams(params), {
-        headers: { authorization: "Bearer " + token.token },
+        ...init, headers: { ...init?.headers, authorization: "Bearer " + token.token },
     });
     if (!response.ok)
         throw new Error("Drive HTTP " + response.status + ": " + (await response.text()).slice(0, 600));

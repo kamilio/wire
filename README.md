@@ -109,6 +109,16 @@ Run `wire --help` for the full CLI.
 
 `wire sync <file>` merges edits to different paragraphs. It applies local edits to the selected tab in one batch, conditional on the current Google Docs revision. For documents with several tabs, attach the URL of the tab you want to edit, including its `tab=` parameter. An unscoped download can contain all tabs. Nested list items keep their own paragraphs. In imported lists, a plain section label between two spacers can cross one nested bullet group without recreating its bullets. If both sides changed the same paragraph, open the local file and the Doc to reconcile it. Wire leaves both copies in place. It also stops when it cannot safely map an edit to the native paragraphs.
 
+Use `wire preview <doc-url> --comments` or `wire sync <resource> --comments` to show document-wide Google Docs threads, quoted passages, replies, and resolution status. Comments only appear in the output; they never become editable document text. Copy a thread URL from that output:
+
+```sh
+wire google-docs comments reply '<thread-url>' --body 'Added the example.'
+wire google-docs comments resolve '<thread-url>'
+wire google-docs comments reopen '<thread-url>'
+```
+
+A successful reply, resolve, or reopen prints its undo command. The same operations are available through Wire MCP.
+
 Attached Markdown embeds original image pixels at the size used in Google Docs. Syncing an older attachment upgrades its thumbnails locally. Edit the image itself in Google Docs.
 
 **Change for existing users**. Google’s browser editor can accept a stale save and combine two versions of the same paragraph. Browser login now supports downloads only. For uploads, set `GOOGLE_DOCS_TOKEN_FILE` to an authorized OAuth token with Google’s `drive` scope, a `drive.file` grant for that file, or both `documents` and `drive.readonly`. Wire needs access to Drive comments to protect anchored feedback. Wire also accepts an eligible existing `GOOGLE_FORMS_TOKEN_FILE` used for Drive. For grants that need refreshing, set `GOOGLE_CREDENTIALS_FILE` to the corresponding client credentials.

@@ -1,6 +1,7 @@
 import { UserError, defineCommand, defineGroup, S } from "toolcraft";
 import { defaultWireBackend, registryPathForBackend } from "wire-core";
 import { formatAgenda } from "./calendar.js";
+import { formatDocComments } from "./doc-comments.js";
 const authServices = ["ashby", "asana", "chatgpt", "codesignal", "gmail", "google-docs", "notion", "slack", "zoom"];
 const removedCliCommandNames = Object.freeze({
     create: "Use `wire attach <url>` or `wire <url>`.",
@@ -425,21 +426,40 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
         handler: ({ params }) => attachFromCliUrl(params.url, params["editor-receipts"]),
         render: wirePresentation.attach,
     });
+    const comments = S.Optional(S.Boolean({ description: "Show Google Docs comment threads and replies, including resolved threads." }));
+    const readComments = async (url) => {
+        if (!options.listDocComments)
+            throw new UserError("Google Docs comments unavailable.");
+        return options.listDocComments(url);
+    };
+    const commentText = (v) => v.comments ? "\n\n" + formatDocComments(v.comments) : "";
     const preview = defineCommand({
         name: "preview",
         description: "Preview a source URL without writing files.",
         positional: ["url"],
-        params: S.Object({ url: S.String({ description: "Supported source URL to preview." }) }),
-        handler: ({ params }) => userFacing(() => wire.view(params.url)),
-        render: wirePresentation.view,
+        params: S.Object({ url: S.String({ description: "Supported source URL to preview." }), comments }),
+        handler: ({ params }) => userFacing(async () => {
+            const threads = params.comments ? await readComments(params.url) : undefined;
+            const doc = await wire.view(params.url);
+            return threads ? { ...doc, comments: threads } : doc;
+        }),
+        render: render((v) => v.markdown + commentText(v)),
     });
     const sync = defineCommand({
         name: "sync",
         description: "Two-way sync one registered resource.",
         positional: ["resource"],
-        params: S.Object({ resource: S.String({ description: "Registered resource URL, resource ID, or Markdown path." }) }),
-        handler: ({ params }) => userFacing(() => wire.sync(params.resource, currentDirectory)),
-        render: wirePresentation.sync,
+        params: S.Object({ resource: S.String({ description: "Registered resource URL, resource ID, or Markdown path." }), comments }),
+        handler: ({ params }) => userFacing(async () => {
+            const threads = params.comments ? await readComments((await wire.showResource(params.resource, currentDirectory)).urls[0]) : undefined;
+            const result = await wire.sync(params.resource, currentDirectory);
+            return threads ? { ...result, comments: threads } : result;
+        }),
+        render: {
+            json: (v) => ({ ...wireResultJson(v), ...(v.comments && { comments: v.comments }) }),
+            markdown: (v) => formatWireResult(v) + commentText(v),
+            rich: (v, p) => richText(formatWireResultRich(v, p) + commentText(v), p),
+        },
     });
     const resource = S.String({ description: "Registered resource URL, resource ID, or Markdown path." });
     const historyText = (revisions, theme) => revisions.map(r => {
@@ -453,6 +473,18 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
     const authCommand = (service) => {
         const title = serviceTitle(service);
         const group = authGroup(service, `Manage ${title} login.`, "Capture cookies once; normal commands reuse saved cookies.", auth, readInput, options);
+        if (service === "google-docs" && options.changeDocComment) {
+            const thread = S.String({ description: "Google Docs thread URL from --comments." });
+            return defineGroup({ ...group, children: [...group.children, defineGroup({ name: "comments", description: "Reply to, resolve, or reopen Google Docs threads.", children: ["reply", "resolve", "reopen", "delete-reply"].map(action => defineCommand({
+                            name: action, description: { reply: "Reply to a thread.", resolve: "Resolve a thread and print its undo command.",
+                                reopen: "Reopen a resolved thread.", "delete-reply": "Delete your own reply by ID." }[action],
+                            positional: action === "delete-reply" ? ["thread", "reply"] : ["thread"],
+                            params: S.Object({ thread, ...(action === "reply" && { body: S.String({ description: "Reply text." }) }),
+                                ...(action === "delete-reply" && { reply: S.String({ description: "Reply ID." }) }) }),
+                            handler: ({ params }) => userFacing(() => options.changeDocComment(action, params.thread, params.body ?? params.reply)),
+                            render: render((v) => v.message + " " + v.url + (v.undo ? "\nUndo: " + v.undo : "")),
+                        })) })] });
+        }
         const lookup = service === "slack" ? lookupSlack : service === "notion" ? lookupNotion : service === "asana" ? asana?.lookup : undefined;
         const users = lookup === undefined ? [] : [defineGroup({ name: "users", description: "Find people by email or name.", children: [defineCommand({
                         name: "lookup",

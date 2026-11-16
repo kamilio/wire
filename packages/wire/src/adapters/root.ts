@@ -8,9 +8,12 @@ import type { Auth, AuthResult, AuthService } from "../auth.js";
 
 import { formatAgenda, type readAgenda } from "./calendar.js";
 
+import { formatDocComments, type listDocComments, type changeDocComment } from "./doc-comments.js";
+
+type Comments = { comments?: Awaited<ReturnType<typeof listDocComments>> };
 export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
-export type WireRootOptions = Readonly<{ allowPaste: boolean; ashby?: (action: string, arg?: string) => Promise<string>; previewDrive?: (url: string) => Promise<string>; scrapeDrive?: (url?: string, deleteVerifiedPdfs?: boolean, deleteVerifiedDocx?: boolean) => Promise<string>; calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
+export type WireRootOptions = Readonly<{ allowPaste: boolean; listDocComments?: (url: string) => ReturnType<typeof listDocComments>; changeDocComment?: (action: Parameters<typeof changeDocComment>[1], url: string, value?: string) => ReturnType<typeof changeDocComment>; ashby?: (action: string, arg?: string) => Promise<string>; previewDrive?: (url: string) => Promise<string>; scrapeDrive?: (url?: string, deleteVerifiedPdfs?: boolean, deleteVerifiedDocx?: boolean) => Promise<string>; calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
 
 const authServices = ["ashby", "asana", "chatgpt", "codesignal", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
 const removedCliCommandNames = Object.freeze({
@@ -461,21 +464,39 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
     handler: ({ params }) => attachFromCliUrl(params.url, params["editor-receipts"]),
     render: wirePresentation.attach,
   });
+  const comments = S.Optional(S.Boolean({ description: "Show Google Docs comment threads and replies, including resolved threads." }));
+  const readComments = async (url: string) => {
+    if (!options.listDocComments) throw new UserError("Google Docs comments unavailable.");
+    return options.listDocComments(url);
+  };
+  const commentText = (v: Comments) => v.comments ? "\n\n" + formatDocComments(v.comments) : "";
   const preview = defineCommand({
     name: "preview",
     description: "Preview a source URL without writing files.",
     positional: ["url"],
-    params: S.Object({ url: S.String({ description: "Supported source URL to preview." }) }),
-    handler: ({ params }) => userFacing(() => wire.view(params.url)),
-    render: wirePresentation.view,
+    params: S.Object({ url: S.String({ description: "Supported source URL to preview." }), comments }),
+    handler: ({ params }) => userFacing(async () => {
+      const threads = params.comments ? await readComments(params.url) : undefined;
+      const doc = await wire.view(params.url);
+      return threads ? { ...doc, comments: threads } : doc;
+    }),
+    render: render((v: FetchedDocument & Comments) => v.markdown + commentText(v)),
   });
   const sync = defineCommand({
     name: "sync",
     description: "Two-way sync one registered resource.",
     positional: ["resource"],
-    params: S.Object({ resource: S.String({ description: "Registered resource URL, resource ID, or Markdown path." }) }),
-    handler: ({ params }) => userFacing(() => wire.sync(params.resource, currentDirectory)),
-    render: wirePresentation.sync,
+    params: S.Object({ resource: S.String({ description: "Registered resource URL, resource ID, or Markdown path." }), comments }),
+    handler: ({ params }) => userFacing(async () => {
+      const threads = params.comments ? await readComments((await wire.showResource(params.resource, currentDirectory)).urls[0]!) : undefined;
+      const result = await wire.sync(params.resource, currentDirectory);
+      return threads ? { ...result, comments: threads } : result;
+    }),
+    render: {
+      json: (v: WireResult & Comments) => ({ ...wireResultJson(v), ...(v.comments && { comments: v.comments }) }),
+      markdown: (v: WireResult & Comments) => formatWireResult(v) + commentText(v),
+      rich: (v: WireResult & Comments, p: any) => richText(formatWireResultRich(v, p) + commentText(v), p),
+    },
   });
   const resource = S.String({ description: "Registered resource URL, resource ID, or Markdown path." });
   type RevisionList = Awaited<ReturnType<Wire["historyLog"]>>;
@@ -491,6 +512,19 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
   const authCommand = (service: (typeof authServices)[number]) => {
     const title = serviceTitle(service);
     const group = authGroup(service, `Manage ${title} login.`, "Capture cookies once; normal commands reuse saved cookies.", auth!, readInput, options);
+    if (service === "google-docs" && options.changeDocComment) {
+      const thread = S.String({ description: "Google Docs thread URL from --comments." });
+      return defineGroup({ ...group, children: [...group.children, defineGroup({ name: "comments", description: "Reply to, resolve, or reopen Google Docs threads.", children:
+        (["reply", "resolve", "reopen", "delete-reply"] as const).map(action => defineCommand({
+          name: action, description: { reply: "Reply to a thread.", resolve: "Resolve a thread and print its undo command.",
+            reopen: "Reopen a resolved thread.", "delete-reply": "Delete your own reply by ID." }[action],
+          positional: action === "delete-reply" ? ["thread", "reply"] : ["thread"],
+          params: S.Object({ thread, ...(action === "reply" && { body: S.String({ description: "Reply text." }) }),
+            ...(action === "delete-reply" && { reply: S.String({ description: "Reply ID." }) }) }),
+          handler: ({params}) => userFacing(() => options.changeDocComment!(action, params.thread, params.body ?? params.reply)),
+          render: render((v: Awaited<ReturnType<typeof changeDocComment>>) => v.message + " " + v.url + (v.undo ? "\nUndo: " + v.undo : "")),
+        })) })] });
+    }
     const lookup = service === "slack" ? lookupSlack : service === "notion" ? lookupNotion : service === "asana" ? asana?.lookup : undefined;
     const users = lookup === undefined ? [] : [defineGroup({ name: "users", description: "Find people by email or name.", children: [defineCommand({
       name: "lookup",

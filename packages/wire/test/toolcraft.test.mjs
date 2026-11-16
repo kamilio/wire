@@ -89,8 +89,8 @@ for (const [name, args, expected] of cliCases) {
 test("CLI help renders the URL attach command without a blank command name", async () => {
   const execution = await execFileAsync(process.execPath, [fixture, "--help"], { env: { ...process.env, NO_COLOR: "1" } });
   assert.match(execution.stdout, /attach <url> \[--editor-receipts\]\s+Track a source URL as local Markdown\. Shorthand: wire <url>\./);
-  assert.match(execution.stdout, /preview <url>\s+Preview a source URL without writing files\./);
-  assert.match(execution.stdout, /sync <resource>\s+Two-way sync one registered resource\./);
+  assert.match(execution.stdout, /preview <url> \[--comments\]\s+Preview a source URL without writing files\./);
+  assert.match(execution.stdout, /sync <resource> \[--comments\]\s+Two-way sync one registered resource\./);
   assert.match(execution.stdout, /download <url>\s+Download a source URL as local Markdown without tracking it\./);
   assert.match(execution.stdout, /detach <resource>\s+Download one registered resource and stop tracking it\./);
   assert.match(execution.stdout, /watch <file>\s+Continuously sync a registered Markdown file\./);
@@ -173,7 +173,7 @@ test("CLI help command renders root and command help", async () => {
 test("CLI command help ignores valid debug modes before command paths", async () => {
   for (const args of [["--debug=raw", "help", "sync"], ["--debug", "raw", "sync", "--help"], ["sync", "--debug=raw", "help"]]) {
     const sync = await execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } });
-    assert.match(sync.stdout, /(?:^sync (?:-|—) Two-way sync one registered resource\.|sync <resource>\s+Two-way sync one registered resource\.)/m);
+    assert.match(sync.stdout, /(?:^sync (?:-|—) Two-way sync one registered resource\.|sync <resource> \[--comments\]\s+Two-way sync one registered resource\.)/m);
     assert.match(sync.stdout, /(?:Usage: wire sync \[OPTIONS\] <resource>|Usage: wire \[command\] \[OPTIONS\])/);
     assert.doesNotMatch(sync.stdout, /Expected source URL or command|Unknown command|Use --debug/);
     assert.equal(sync.stderr, "");
