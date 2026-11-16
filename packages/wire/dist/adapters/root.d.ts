@@ -10,6 +10,7 @@ export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
 export type WireRootOptions = Readonly<{
     allowPaste: boolean;
+    scrapeClaude?: () => Promise<string>;
     listDocComments?: (url: string) => ReturnType<typeof listDocComments>;
     changeDocComment?: (action: Parameters<typeof changeDocComment>[1], url: string, value?: string) => ReturnType<typeof changeDocComment>;
     ashby?: (action: string, arg?: string) => Promise<string>;

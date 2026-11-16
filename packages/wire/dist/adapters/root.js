@@ -623,6 +623,11 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
         scope: ["cli", "mcp", "sdk"],
         children: [
             defaultAttach,
+            ...(options.scrapeClaude ? [defineGroup({ name: "claude", description: "Archive Claude.ai conversations.", scope: ["cli"], children: [
+                        defineCommand({ name: "scrape", description: "Save active and archived conversations from all your Claude chat workspaces into ./claude using signed-in Chrome.", scope: ["cli"], params: S.Object({}),
+                            handler: () => userFacing(options.scrapeClaude), render: render(v => v),
+                        }),
+                    ] })] : []),
             ...(options.scrapeDrive ? [defineGroup({ name: "gdrive", description: "Download Google Drive folders and spreadsheets.", scope: ["cli"], children: [
                         ...(options.previewDrive ? [defineCommand({ name: "preview", description: "List a Drive folder or read a file without saving it.", scope: ["cli"], positional: ["url"],
                                 params: S.Object({ url: S.String({ description: "Google Drive folder or file URL." }) }),

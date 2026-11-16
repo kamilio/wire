@@ -13,7 +13,7 @@ import { formatDocComments, type listDocComments, type changeDocComment } from "
 type Comments = { comments?: Awaited<ReturnType<typeof listDocComments>> };
 export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
-export type WireRootOptions = Readonly<{ allowPaste: boolean; listDocComments?: (url: string) => ReturnType<typeof listDocComments>; changeDocComment?: (action: Parameters<typeof changeDocComment>[1], url: string, value?: string) => ReturnType<typeof changeDocComment>; ashby?: (action: string, arg?: string) => Promise<string>; previewDrive?: (url: string) => Promise<string>; scrapeDrive?: (url?: string, deleteVerifiedPdfs?: boolean, deleteVerifiedDocx?: boolean) => Promise<string>; calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
+export type WireRootOptions = Readonly<{ allowPaste: boolean; scrapeClaude?: () => Promise<string>; listDocComments?: (url: string) => ReturnType<typeof listDocComments>; changeDocComment?: (action: Parameters<typeof changeDocComment>[1], url: string, value?: string) => ReturnType<typeof changeDocComment>; ashby?: (action: string, arg?: string) => Promise<string>; previewDrive?: (url: string) => Promise<string>; scrapeDrive?: (url?: string, deleteVerifiedPdfs?: boolean, deleteVerifiedDocx?: boolean) => Promise<string>; calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
 
 const authServices = ["ashby", "asana", "chatgpt", "codesignal", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
 const removedCliCommandNames = Object.freeze({
@@ -657,6 +657,11 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
     scope: ["cli", "mcp", "sdk"],
     children: [
       defaultAttach,
+      ...(options.scrapeClaude ? [defineGroup({ name: "claude", description: "Archive Claude.ai conversations.", scope: ["cli"], children: [
+        defineCommand({ name: "scrape", description: "Save active and archived conversations from all your Claude chat workspaces into ./claude using signed-in Chrome.", scope: ["cli"], params: S.Object({}),
+          handler: () => userFacing(options.scrapeClaude!), render: render<string>(v => v),
+        }),
+      ] })] : []),
       ...(options.scrapeDrive ? [defineGroup({ name: "gdrive", description: "Download Google Drive folders and spreadsheets.", scope: ["cli"], children: [
         ...(options.previewDrive ? [defineCommand({ name: "preview", description: "List a Drive folder or read a file without saving it.", scope: ["cli"], positional: ["url"],
           params: S.Object({ url: S.String({description: "Google Drive folder or file URL."}) }),
