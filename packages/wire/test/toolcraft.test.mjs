@@ -90,7 +90,7 @@ test("CLI help renders the URL attach command without a blank command name", asy
   const execution = await execFileAsync(process.execPath, [fixture, "--help"], { env: { ...process.env, NO_COLOR: "1" } });
   assert.match(execution.stdout, /attach <url> \[--editor-receipts\]\s+Track a source URL as local Markdown\. Shorthand: wire <url>\./);
   assert.match(execution.stdout, /preview <url> \[--comments\]\s+Preview a source URL without writing files\./);
-  assert.match(execution.stdout, /sync <resource> \[--comments\]\s+Two-way sync one registered resource\./);
+  assert.match(execution.stdout, /sync <resource> \[--comments\] \[--share-org\]\s+Sync a tracked resource or upload a new Markdown file to Notion\./);
   assert.match(execution.stdout, /download <url>\s+Download a source URL as local Markdown without tracking it\./);
   assert.match(execution.stdout, /detach <resource>\s+Download one registered resource and stop tracking it\./);
   assert.match(execution.stdout, /watch <file>\s+Continuously sync a registered Markdown file\./);
@@ -141,7 +141,7 @@ test("CLI help command renders root and command help", async () => {
   assert.equal(version.stderr, "");
   for (const args of [["help", "sync"], ["sync", "help"]]) {
     const sync = await execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } });
-    assert.match(sync.stdout, /^sync (?:-|—) Two-way sync one registered resource\./m);
+    assert.match(sync.stdout, /^sync (?:-|—) Sync a tracked resource or upload a new Markdown file to Notion\./m);
     assert.match(sync.stdout, /Usage: wire sync \[OPTIONS\] <resource>/);
     assert.doesNotMatch(sync.stdout, /Expected source URL or command|Unknown command|Resource not found|Use --debug/);
     assert.equal(sync.stderr, "");
@@ -173,7 +173,7 @@ test("CLI help command renders root and command help", async () => {
 test("CLI command help ignores valid debug modes before command paths", async () => {
   for (const args of [["--debug=raw", "help", "sync"], ["--debug", "raw", "sync", "--help"], ["sync", "--debug=raw", "help"]]) {
     const sync = await execFileAsync(process.execPath, [fixture, ...args], { env: { ...process.env, NO_COLOR: "1" } });
-    assert.match(sync.stdout, /(?:^sync (?:-|—) Two-way sync one registered resource\.|sync <resource> \[--comments\]\s+Two-way sync one registered resource\.)/m);
+    assert.match(sync.stdout, /(?:^sync (?:-|—) Sync a tracked resource or upload a new Markdown file to Notion\.|sync <resource> \[--comments\] \[--share-org\]\s+Sync a tracked resource or upload a new Markdown file to Notion\.)/m);
     assert.match(sync.stdout, /(?:Usage: wire sync \[OPTIONS\] <resource>|Usage: wire \[command\] \[OPTIONS\])/);
     assert.doesNotMatch(sync.stdout, /Expected source URL or command|Unknown command|Use --debug/);
     assert.equal(sync.stderr, "");
@@ -239,7 +239,7 @@ test("CLI open help describes URL opening and resource details", async () => {
 
 test("CLI sync, download, and detach help distinguish tracking semantics", async () => {
   const sync = await execFileAsync(process.execPath, [fixture, "sync", "--help"], { env: { ...process.env, NO_COLOR: "1" } });
-  assert.match(sync.stdout, /^sync (?:-|—) Two-way sync one registered resource\./m);
+  assert.match(sync.stdout, /^sync (?:-|—) Sync a tracked resource or upload a new Markdown file to Notion\./m);
   assert.match(sync.stdout, /<resource>\s+Registered resource URL, resource ID, or Markdown path\. \(required\)/);
   assert.doesNotMatch(sync.stdout, /without tracking/);
   const download = await execFileAsync(process.execPath, [fixture, "download", "--help"], { env: { ...process.env, NO_COLOR: "1" } });
