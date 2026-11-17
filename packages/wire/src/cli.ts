@@ -228,7 +228,7 @@ function positionalWords(argv: readonly string[]): readonly string[] | null {
       continue;
     } else if (arg === "--output" || (arg === "--backend" && words[0] === "init") || (arg === "--debug" && argv[index + 1] !== undefined && debugModeNames.has(argv[index + 1]!))) {
       index += 1;
-    } else if ((arg === "--editor-receipts" && (words[0] === "attach" || (words[0] && isSourceUrl(words[0])))) || arg === "--debug" || (arg === "--paste" && authServices.has(words[0]!) && words[1] === "login") || arg.startsWith("--debug=") || arg.startsWith("--output=") || (arg.startsWith("--backend=") && words[0] === "init")) {
+    } else if ((arg === "--share-org" && words[0] === "sync") || (arg === "--editor-receipts" && (words[0] === "attach" || (words[0] && isSourceUrl(words[0])))) || arg === "--debug" || (arg === "--paste" && authServices.has(words[0]!) && words[1] === "login") || arg.startsWith("--debug=") || arg.startsWith("--output=") || (arg.startsWith("--backend=") && words[0] === "init")) {
       continue;
     } else if (arg.startsWith("-")) {
       return null;
@@ -246,7 +246,6 @@ function excessPositionals(argv: readonly string[]): Readonly<{ commandPath: str
   const command = words[0]!;
   if (command in fixedCommandPositionals) return Object.freeze({ commandPath: command, expected: fixedCommandPositionals[command as keyof typeof fixedCommandPositionals].expected, received: words.length - 1 });
   if (command === "asana" && (words[1] === "projects" || words[1] === "tasks") && (words[2] === "list" || words[2] === "show")) return { commandPath: words.slice(0, 3).join(" "), expected: words[1] === "projects" && words[2] === "list" ? 0 : 1, received: words.length - 3 };
-  if (command === "notion" && words[1] === "share-org") return { commandPath: "notion share-org", expected: 1, received: words.length - 2 };
   if (command === "slack" && slackResourceCommands.has(words[1]!)) return { commandPath: `slack ${words[1]}`, expected: 1, received: words.length - 2 };
   if ((command === "slack" || command === "notion" || command === "asana") && words[1] === "users" && words[2] === "lookup") return { commandPath: `${command} users lookup`, expected: 1, received: words.length - 3 };
   if (command === "slack" && (words[1] === "send" || words[1] === "edit")) return { commandPath: `slack ${words[1]}`, expected: 2, received: words.length - 2 };
@@ -269,7 +268,6 @@ function missingPositionals(argv: readonly string[]): Readonly<{ commandPath: st
   const command = words[0]!;
   if (command === "asana" && words[1] === "projects" && words[2] === "show" && words.length === 3) return { commandPath: words.join(" "), name: "project" };
   if (command === "asana" && words[1] === "tasks" && (words[2] === "list" || words[2] === "show") && words.length === 3) return { commandPath: words.join(" "), name: words[2] === "list" ? "project" : "task" };
-  if (command === "notion" && words[1] === "share-org" && words.length < 3) return { commandPath: "notion share-org", name: "resource" };
   if (command === "slack" && slackResourceCommands.has(words[1]!) && words.length < 3) return { commandPath: `slack ${words[1]}`, name: words[1] === "sync" ? "resource" : "url" };
   if ((command === "slack" || command === "notion" || command === "asana") && words[1] === "users" && words[2] === "lookup" && words.length < 4) return { commandPath: `${command} users lookup`, name: "query" };
   if (command === "slack" && (words[1] === "send" || words[1] === "edit") && words.length < 4) return { commandPath: `slack ${words[1]}`, name: words.length === 2 ? words[1] === "send" ? "destination" : "url" : "markdown" };
@@ -308,7 +306,7 @@ function renderRemovedCommand(argv: readonly string[]): boolean {
 function renderUnknownAuthCommand(argv: readonly string[]): boolean {
   if (hasRootSeparator(argv)) return false;
   const words = positionalWords(argv);
-  if (words === null || words.length < 2 || !authServices.has(words[0]!) || authCommands.has(words[1]!) || (words[0] === "ashby" && ["interviews","pending","latest","prep","template","sync"].includes(words[1]!)) || (words[0] === "notion" && words[1] === "share-org") || (words[0] === "google-docs" && words[1] === "comments") || (words[0] === "zoom" && words[1] === "scrape") || words[0] === "asana" && (words[1] === "projects" || words[1] === "tasks" || words[1] === "comments") || (words[0] === "slack" || words[0] === "notion" || words[0] === "asana") && words[1] === "users" || words[0] === "slack" && (words[1] === "send" || words[1] === "edit" || slackResourceCommands.has(words[1]!))) return false;
+  if (words === null || words.length < 2 || !authServices.has(words[0]!) || authCommands.has(words[1]!) || (words[0] === "ashby" && ["interviews","pending","latest","prep","template","sync"].includes(words[1]!)) || (words[0] === "google-docs" && words[1] === "comments") || (words[0] === "zoom" && words[1] === "scrape") || words[0] === "asana" && (words[1] === "projects" || words[1] === "tasks" || words[1] === "comments") || (words[0] === "slack" || words[0] === "notion" || words[0] === "asana") && words[1] === "users" || words[0] === "slack" && (words[1] === "send" || words[1] === "edit" || slackResourceCommands.has(words[1]!))) return false;
   renderCliError(argv, `Unknown command: ${words[1]}`, `wire ${words[0]} --help`, `Unknown command: ${cliValue(words[1]!)}`);
   return true;
 }

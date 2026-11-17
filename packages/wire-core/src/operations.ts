@@ -77,7 +77,7 @@ export type Wire = Readonly<{
   create(url: string, path: string): Promise<WireResult>;
   view(url: string): Promise<FetchedDocument>;
   downloadSource(url: string, path: string): Promise<WireResult>;
-  sync(value: string, path: string): Promise<WireResult>;
+  sync(value: string, path: string, shareOrg?: (id: string) => Promise<string>): Promise<WireResult>;
   download(value: string, path: string): Promise<WireResult>;
   detach(value: string, path: string): Promise<WireResult>;
   unlink(value: string, path: string): Promise<WireResult>;
@@ -463,7 +463,7 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     return registry.get(value);
   };
 
-  const syncInner = async (value: string, path: string): Promise<WireResult> => {
+  const syncInner = async (value: string, path: string, shareOrg: boolean): Promise<WireResult> => {
     const candidatePath = resolve(path, value);
     const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
     const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
@@ -481,6 +481,7 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     const outputPath = join(dirname(root), primaryLink(resource).path);
     const outputDirectory = dirname(outputPath);
     const source = legacyDefaultTab(resource, dependencies.catalog) ?? parseSourceUrl(resource.urls[0]!, dependencies.catalog);
+    if (shareOrg && source.service !== "notion") throw new Error("--share-org is only supported for Notion pages");
     await owner(registry, source, resource.urls[0]!);
     const history = await restore(root, registry, source, outputPath);
     resource = await registry.get(resource.id);
@@ -591,7 +592,11 @@ export function composeWire<FetchInput>(dependencies: WireDependencies<FetchInpu
     const key = !ids.length && await dependencies.filesystem.exists(candidate) ? "path:" + dependencies.workspace.relativePath(candidate, root) : sourceLock(parseSourceUrl((await resolveResource(registry, value, root, path)).urls[0]!, dependencies.catalog));
     return locked(root, registry, key, fn);
   };
-  const sync = (v: string, p: string) => underResourceLock(v, p, () => syncInner(v, p));
+  const sync: Wire["sync"] = (value, path, shareOrg) => underResourceLock(value, path, async () => {
+    const result = await syncInner(value, path, shareOrg !== undefined);
+    if (shareOrg) await shareOrg(parseSourceUrl(result.summary.remote, dependencies.catalog).identifier);
+    return result;
+  });
   const downloadInner = async (value: string, path: string): Promise<WireResult> => {
     const candidatePath = resolve(path, value);
     const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);

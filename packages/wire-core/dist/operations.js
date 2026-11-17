@@ -409,7 +409,7 @@ export function composeWire(dependencies) {
             throw new Error(`Resource path not found: ${value}`);
         return registry.get(value);
     };
-    const syncInner = async (value, path) => {
+    const syncInner = async (value, path, shareOrg) => {
         const candidatePath = resolve(path, value);
         const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);
         const registry = await dependencies.workspace.openRegistry(root, dependencies.home);
@@ -429,6 +429,8 @@ export function composeWire(dependencies) {
         const outputPath = join(dirname(root), primaryLink(resource).path);
         const outputDirectory = dirname(outputPath);
         const source = legacyDefaultTab(resource, dependencies.catalog) ?? parseSourceUrl(resource.urls[0], dependencies.catalog);
+        if (shareOrg && source.service !== "notion")
+            throw new Error("--share-org is only supported for Notion pages");
         await owner(registry, source, resource.urls[0]);
         const history = await restore(root, registry, source, outputPath);
         resource = await registry.get(resource.id);
@@ -559,7 +561,12 @@ export function composeWire(dependencies) {
         const key = !ids.length && await dependencies.filesystem.exists(candidate) ? "path:" + dependencies.workspace.relativePath(candidate, root) : sourceLock(parseSourceUrl((await resolveResource(registry, value, root, path)).urls[0], dependencies.catalog));
         return locked(root, registry, key, fn);
     };
-    const sync = (v, p) => underResourceLock(v, p, () => syncInner(v, p));
+    const sync = (value, path, shareOrg) => underResourceLock(value, path, async () => {
+        const result = await syncInner(value, path, shareOrg !== undefined);
+        if (shareOrg)
+            await shareOrg(parseSourceUrl(result.summary.remote, dependencies.catalog).identifier);
+        return result;
+    });
     const downloadInner = async (value, path) => {
         const candidatePath = resolve(path, value);
         const root = await wireRoot(dependencies, await dependencies.filesystem.exists(candidatePath) ? candidatePath : path);

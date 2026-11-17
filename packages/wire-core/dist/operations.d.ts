@@ -64,7 +64,7 @@ export type Wire = Readonly<{
     create(url: string, path: string): Promise<WireResult>;
     view(url: string): Promise<FetchedDocument>;
     downloadSource(url: string, path: string): Promise<WireResult>;
-    sync(value: string, path: string): Promise<WireResult>;
+    sync(value: string, path: string, shareOrg?: (id: string) => Promise<string>): Promise<WireResult>;
     download(value: string, path: string): Promise<WireResult>;
     detach(value: string, path: string): Promise<WireResult>;
     unlink(value: string, path: string): Promise<WireResult>;

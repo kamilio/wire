@@ -281,6 +281,29 @@ test("sync uploads existing unregistered markdown after automatically initializi
   assert.deepEqual(result.summary, { action: "uploaded", added: 0, modified: 0, removed: 0, remote: "https://notion.test/uploaded", local: markdownPath });
 });
 
+test("sync shares only a successfully uploaded or synced Notion page", async () => {
+  const home = join(testRoot, "share-org");
+  await mkdir(home);
+  const file = join(home, "note.md");
+  const markdown = "# Note\n";
+  await writeFile(file, markdown);
+  const page = { title: "Note", markdown, data: { markdown } };
+  let fetched = 0;
+  const wire = createWire(home, async () => { fetched++; return page; }, [], async () => ({ ...page, url: "https://notion.test/new" }));
+  const shared = [];
+  const share = async id => { shared.push(id); return id; };
+  await wire.sync(file, home, share);
+  await wire.sync(file, home);
+  await wire.sync(file, home, share);
+  assert.deepEqual(shared, ["new", "new"]);
+  const slack = await wire.attach("https://slack.test/thread", home);
+  const before = fetched;
+  await assert.rejects(wire.sync(slack.path, home, share), /only supported for Notion/);
+  assert.equal(fetched, before);
+  await assert.rejects(wire.sync("missing.md", home, share));
+  assert.deepEqual(shared, ["new", "new"]);
+});
+
 test("create extracts supported relationships and returns JSON-shaped data", async () => {
   const project = join(testRoot, "relationships");
   await mkdir(project);

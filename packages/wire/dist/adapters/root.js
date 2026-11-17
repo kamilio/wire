@@ -445,14 +445,18 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
         }),
         render: render((v) => v.markdown + commentText(v)),
     });
-    const sync = defineCommand({
+    const sync = (notion) => defineCommand({
         name: "sync",
-        description: "Two-way sync one registered resource.",
+        description: notion ? "Sync a tracked resource or upload a new Markdown file to Notion." : "Two-way sync one registered resource.",
         positional: ["resource"],
-        params: S.Object({ resource: S.String({ description: "Registered resource URL, resource ID, or Markdown path." }), comments }),
+        params: S.Object({ resource: S.String({ description: "Registered resource URL, resource ID, or Markdown path." }), comments,
+            ...(notion && { "share-org": S.Optional(S.Boolean({ description: "After a successful Notion sync or upload, give workspace members view access." })) }),
+        }),
         handler: ({ params }) => userFacing(async () => {
             const threads = params.comments ? await readComments((await wire.showResource(params.resource, currentDirectory)).urls[0]) : undefined;
-            const result = await wire.sync(params.resource, currentDirectory);
+            if (params["share-org"] && !options.shareNotionWithOrg)
+                throw new UserError("Notion workspace sharing is unavailable");
+            const result = await wire.sync(params.resource, currentDirectory, params["share-org"] ? options.shareNotionWithOrg : undefined);
             return threads ? { ...result, comments: threads } : result;
         }),
         render: {
@@ -499,18 +503,6 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
                             return service === "slack" ? `${user["id"]}  ${user["real_name"] ?? user["name"]}  ${profile?.["email"] ?? ""}` : `${user["userId"]}  ${user["name"] ?? ""}  ${(user["aliases"] ?? []).join(", ")}`;
                         }).join("\n")),
                     })] })];
-        if (service === "notion" && options.shareNotionWithOrg)
-            return defineGroup({ ...group, children: [...group.children, ...users, defineCommand({
-                        name: "share-org", description: "Give workspace members view access to a tracked Notion page.", positional: ["resource"],
-                        params: S.Object({ resource: S.String({ description: "Tracked Notion file or URL." }) }),
-                        handler: ({ params }) => userFacing(async () => {
-                            const resource = await wire.showResource(params.resource, currentDirectory);
-                            const notion = resource.identifiers.find(id => id.service === "notion");
-                            if (!notion)
-                                throw new UserError("Expected a tracked Notion page");
-                            return options.shareNotionWithOrg(notion.identifier);
-                        }), render: render((url) => "Workspace members can view " + url),
-                    })] });
         const writes = asana?.writes;
         const createTask = writes?.create;
         if (service === "asana" && asana !== undefined)
@@ -613,7 +605,7 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
                     })] });
         if (service !== "slack")
             return users.length === 0 ? group : defineGroup({ ...group, children: [...group.children, ...users] });
-        return defineGroup({ name: "slack", description: "Read Slack channels, DMs, and threads, send Markdown, and manage login.", children: [preview, defaultAttach, sync, ...group.children, ...users, ...(sendSlack === undefined ? [] : [defineCommand({
+        return defineGroup({ name: "slack", description: "Read Slack channels, DMs, and threads, send Markdown, and manage login.", children: [preview, defaultAttach, sync(false), ...group.children, ...users, ...(sendSlack === undefined ? [] : [defineCommand({
                         name: "send",
                         description: "Send Markdown to a channel, email, @username, user ID, or URL. Top-level --- separators split it into a parent and thread replies; a thread URL replies there.",
                         positional: ["destination", "markdown"],
@@ -692,7 +684,7 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
                 handler: () => userFacing(() => wire.switchBackend(currentDirectory)),
                 render: wirePresentation.switchBackend,
             }),
-            sync,
+            sync(true),
             defineCommand({
                 name: "status", scope: ["cli"], description: "Show local changes or conflicts for one tracked document.",
                 positional: ["resource"], params: S.Object({ resource }),
