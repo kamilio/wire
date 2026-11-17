@@ -1036,7 +1036,7 @@ function notionDocument(pageId, tree, mentions, emailMentions, comments) {
     const markdown = renderNotionTreeToMarkdown(tree, mentions, emailMentions) + comments;
     return { title: markdown.split("\n")[0].replace(/^# */, ""), markdown, data: notionData(pageId, markdown, tree, mentions, emailMentions) };
 }
-async function fetchTree(runtime, url, source) {
+async function readPage(runtime, url, pageId) {
     const cookies = await runtime.cookies.loadSaved("notion");
     if (cookies === null)
         throw notionAuthError();
@@ -1047,13 +1047,34 @@ async function fetchTree(runtime, url, source) {
     const spaces = await notionPost(runtime, "getSpaces", cookie, {}, {});
     const spaceView = object(object(spaces[userId])["space_view"]);
     const initialSpaceId = object(spaceView[Object.keys(spaceView)[0]])["spaceId"];
-    const pageId = formatBlockId(source.identifier);
-    let headers = { "x-notion-active-user-header": userId, "x-notion-space-id": initialSpaceId, referer: url, ...(csrf === undefined ? {} : { "x-csrf-token": csrf }) };
+    const headers = { "x-notion-active-user-header": userId, "x-notion-space-id": initialSpaceId, referer: url, ...(csrf === undefined ? {} : { "x-csrf-token": csrf }) };
     const pageData = await notionPost(runtime, "getRecordValues", cookie, { requests: [{ table: "block", id: pageId }] }, headers);
     const page = object(pageData["results"][0]["value"]);
+    const spaceId = page["space_id"];
+    return { page, userId, cookie, spaceId, headers: { ...headers, "x-notion-space-id": spaceId } };
+}
+export async function shareNotionWithOrg(runtime, identifier) {
+    const pageId = formatBlockId(identifier);
+    if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(pageId))
+        throw new Error("Invalid Notion page ID");
+    const url = `https://www.notion.so/${pageId}`;
+    const { page, cookie, spaceId, headers } = await readPage(runtime, url, pageId);
+    if (page["type"] !== "page" || page["alive"] !== true)
+        throw new Error("Expected an active Notion page");
+    const hasAccess = (block) => block["permissions"]?.some(entry => entry["type"] === "space_permission" && ["reader", "comment_only", "editor", "read_and_write"].includes(entry["role"]));
+    if (!hasAccess(page)) {
+        const operation = { pointer: pointer(pageId, spaceId), path: ["permissions"], command: "setPermissionItem", args: { type: "space_permission", role: "reader" } };
+        await notionPost(runtime, "saveTransactionsFanout", cookie, { requestId: randomUUID(), transactions: [{ id: randomUUID(), spaceId, operations: [operation] }] }, headers);
+        const result = await notionPost(runtime, "getRecordValues", cookie, { requests: [{ table: "block", id: pageId }] }, headers);
+        if (!hasAccess(object(result["results"][0]["value"])))
+            throw new Error("Notion did not confirm workspace access");
+    }
+    return url;
+}
+async function fetchTree(runtime, url, source) {
+    const pageId = formatBlockId(source.identifier);
+    const { page, userId, cookie, spaceId, headers } = await readPage(runtime, url, pageId);
     const blocks = new Map([[pageId, page]]);
-    const spaceId = blocks.get(pageId)["space_id"];
-    headers = { ...headers, "x-notion-space-id": spaceId };
     while (true) {
         const missing = new Set();
         const pending = [pageId];

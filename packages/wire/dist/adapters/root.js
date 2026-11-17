@@ -499,6 +499,18 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
                             return service === "slack" ? `${user["id"]}  ${user["real_name"] ?? user["name"]}  ${profile?.["email"] ?? ""}` : `${user["userId"]}  ${user["name"] ?? ""}  ${(user["aliases"] ?? []).join(", ")}`;
                         }).join("\n")),
                     })] })];
+        if (service === "notion" && options.shareNotionWithOrg)
+            return defineGroup({ ...group, children: [...group.children, ...users, defineCommand({
+                        name: "share-org", description: "Give workspace members view access to a tracked Notion page.", positional: ["resource"],
+                        params: S.Object({ resource: S.String({ description: "Tracked Notion file or URL." }) }),
+                        handler: ({ params }) => userFacing(async () => {
+                            const resource = await wire.showResource(params.resource, currentDirectory);
+                            const notion = resource.identifiers.find(id => id.service === "notion");
+                            if (!notion)
+                                throw new UserError("Expected a tracked Notion page");
+                            return options.shareNotionWithOrg(notion.identifier);
+                        }), render: render((url) => "Workspace members can view " + url),
+                    })] });
         const writes = asana?.writes;
         const createTask = writes?.create;
         if (service === "asana" && asana !== undefined)

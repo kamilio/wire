@@ -7,6 +7,7 @@ import {
   diffNotionBlockTrees,
   fetchNotionDocument,
   lookupNotionUsers,
+  shareNotionWithOrg,
   notionBlockContentHash,
   parseNotionMarkdown,
   renderNotionTreeToMarkdown,
@@ -73,6 +74,9 @@ function notionRuntime(page, submitted) {
       if (path === "getRecordValues") return Response.json({ results: bodyValue.requests.map(({ id }) => ({ value: blockMap[id].value.value })) });
       if (path === "saveTransactionsFanout") {
         for (const operation of bodyValue.transactions[0].operations) {
+          if (operation.command === "setPermissionItem") {
+            blockMap[operation.pointer.id].value.value.permissions.push(operation.args);
+          }
           if (operation.path[0] === "properties") {
             assert.equal(operation.command, "updateBlockPropertyValue", "Block property value updates must use high-level property operations");
             assert.equal(operation.args.primitiveOp.command, "set");
@@ -87,6 +91,24 @@ function notionRuntime(page, submitted) {
     cookies: { load: async () => [{ name: "notion_user_id", value: "user" }, { name: "token_v2", value: "token" }], loadSaved: async () => [{ name: "notion_user_id", value: "user" }, { name: "token_v2", value: "token" }], metadata: async () => ({}), delete: async () => {} },
   };
 }
+
+test("org sharing grants workspace view only and preserves existing grants on repeat", async () => {
+  const page = remoteTree("");
+  const owner = { type: "user_permission", user_id: "owner", role: "editor" };
+  const reader = { type: "space_permission", role: "reader" };
+  page.block.permissions = [owner];
+  const submitted = [];
+  const runtime = notionRuntime(page, submitted);
+  await shareNotionWithOrg(runtime, notionSource.identifier);
+  await shareNotionWithOrg(runtime, notionSource.identifier);
+  assert.equal(submitted.length, 1);
+  assert.deepEqual(submitted[0], [{ pointer: { table: "block", id: page.id, spaceId: "space" },
+    path: ["permissions"], command: "setPermissionItem", args: reader }]);
+  assert.deepEqual(page.block.permissions, [owner, reader]);
+  page.block.permissions[1] = { type: "space_permission", role: "editor" };
+  await shareNotionWithOrg(runtime, notionSource.identifier);
+  assert.equal(submitted.length, 1);
+});
 
 test("notion parser, renderer, and content hashes cover supported Markdown tooling", () => {
   const cases = [

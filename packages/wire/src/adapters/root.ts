@@ -13,7 +13,7 @@ import { formatDocComments, type listDocComments, type changeDocComment } from "
 type Comments = { comments?: Awaited<ReturnType<typeof listDocComments>> };
 export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
-export type WireRootOptions = Readonly<{ allowPaste: boolean; scrapeClaude?: () => Promise<string>; listDocComments?: (url: string) => ReturnType<typeof listDocComments>; changeDocComment?: (action: Parameters<typeof changeDocComment>[1], url: string, value?: string) => ReturnType<typeof changeDocComment>; ashby?: (action: string, arg?: string) => Promise<string>; previewDrive?: (url: string) => Promise<string>; scrapeDrive?: (url?: string, deleteVerifiedPdfs?: boolean, deleteVerifiedDocx?: boolean) => Promise<string>; calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
+export type WireRootOptions = Readonly<{ allowPaste: boolean; shareNotionWithOrg?: (id: string) => Promise<string>; scrapeClaude?: () => Promise<string>; listDocComments?: (url: string) => ReturnType<typeof listDocComments>; changeDocComment?: (action: Parameters<typeof changeDocComment>[1], url: string, value?: string) => ReturnType<typeof changeDocComment>; ashby?: (action: string, arg?: string) => Promise<string>; previewDrive?: (url: string) => Promise<string>; scrapeDrive?: (url?: string, deleteVerifiedPdfs?: boolean, deleteVerifiedDocx?: boolean) => Promise<string>; calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
 
 const authServices = ["ashby", "asana", "chatgpt", "codesignal", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
 const removedCliCommandNames = Object.freeze({
@@ -538,6 +538,16 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
         return service === "slack" ? `${user["id"]}  ${user["real_name"] ?? user["name"]}  ${profile?.["email"] ?? ""}` : `${user["userId"]}  ${user["name"] ?? ""}  ${(user["aliases"] as readonly string[] | undefined ?? []).join(", ")}`;
       }).join("\n")),
     })] })];
+    if (service === "notion" && options.shareNotionWithOrg) return defineGroup({ ...group, children: [...group.children, ...users, defineCommand({
+      name: "share-org", description: "Give workspace members view access to a tracked Notion page.", positional: ["resource"],
+      params: S.Object({ resource: S.String({ description: "Tracked Notion file or URL." }) }),
+      handler: ({ params }) => userFacing(async () => {
+        const resource = await wire.showResource(params.resource, currentDirectory);
+        const notion = resource.identifiers.find(id => id.service === "notion");
+        if (!notion) throw new UserError("Expected a tracked Notion page");
+        return options.shareNotionWithOrg!(notion.identifier);
+      }), render: render((url: string) => "Workspace members can view " + url),
+    })] });
     const writes = asana?.writes;
     const createTask = writes?.create;
     if (service === "asana" && asana !== undefined) return defineGroup({ ...group, description: "Browse Asana projects, edit tasks and comments, and manage login.", children: [...group.children, ...users,

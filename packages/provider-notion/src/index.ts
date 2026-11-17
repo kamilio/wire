@@ -7,4 +7,4 @@ export const notionProvider = Object.freeze({
   services: [notionService] as const,
 });
 
-export { lookupNotionUsers } from "./notion-sync.js";
+export { lookupNotionUsers, shareNotionWithOrg } from "./notion-sync.js";

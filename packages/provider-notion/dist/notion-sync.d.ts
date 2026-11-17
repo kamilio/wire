@@ -51,6 +51,7 @@ export declare function diffNotionBlockTrees(remoteTree: NotionTree, localBlocks
 }>;
 export declare function renderNotionTreeToMarkdown(tree: NotionTree, mentions?: UserMentions, emailMentions?: EmailMentions, download?: boolean): string;
 export declare function lookupNotionUsers(runtime: RuntimeCapabilities, query: string): Promise<readonly JsonObject[]>;
+export declare function shareNotionWithOrg(runtime: RuntimeCapabilities, identifier: string): Promise<string>;
 export declare function fetchNotionDocument(runtime: RuntimeCapabilities, url: string, source: Source): Promise<FetchedDocument>;
 export declare function downloadNotionDirectory(runtime: RuntimeCapabilities, url: string, source: Source, write: DownloadWriter): Promise<DownloadedDocument | null>;
 export declare function uploadNotionDocument(runtime: RuntimeCapabilities, markdown: string, _markdownPath: string): Promise<UploadedDocument>;
