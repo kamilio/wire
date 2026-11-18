@@ -731,7 +731,7 @@ test("Notion submits no operation when persisting the observed parent fails", as
   assert.equal(submitted.length, 0);
 });
 
-test("Notion strict pushes cannot overwrite a same-block edit made after the read", async () => {
+test("Notion guarded pushes detect a same-block edit during save preparation", async () => {
   for (const requireConditionalWrite of [true, false]) {
     const page = remoteTree("Original", "Page");
     const submitted = [], runtime = notionRuntime(page, submitted);
@@ -753,17 +753,42 @@ test("Notion strict pushes cannot overwrite a same-block edit made after the rea
     };
     const sync = synchronizeNotionDocument(runtime, "https://www.notion.so/" + notionSource.identifier, notionSource,
       { markdown: "# Page\n\nOriginal" }, "# Page\n\nLocal", "page.md", doc => {
-        assert.equal(doc.markdown, "# Page\n\nOriginal");
+        if (online === "Original") assert.equal(doc.markdown, "# Page\n\nOriginal");
+        else assert.equal(doc.markdown, "# Page\n\nConcurrent edit");
         online = "Concurrent edit";
       }, requireConditionalWrite);
     if (requireConditionalWrite) {
-      await assert.rejects(sync, /Notion cannot condition a save/);
+      await assert.rejects(sync, WireMergeConflict);
       assert.equal(online, "Concurrent edit");
       assert.equal(submitted.length, 0);
     } else {
       assert.equal((await sync).wroteRemote, true);
       assert.equal(online, "Local"); // Legacy save has no revision precondition.
     }
+  }
+});
+
+test("Notion guarded pushes save unchanged pages, including nested insertions and titles", async () => {
+  for (const [original, target] of [
+    ["# Page\n\nOriginal", "# Page\n\nLocal"],
+    ["# Page\n\nOriginal", "# Renamed\n\nOriginal"],
+    ["# Page\n\n1. Queue?\n  - Tasks or events?", "# Page\n\n1. Queue?\n  - Tasks or events?\n    - Both are valuable."],
+  ]) {
+    const submitted = [];
+    const page = remoteTree(body(original), "Page");
+    const runtime = notionRuntime(page, submitted);
+    const request = runtime.http.request;
+    let pageReads = 0;
+    runtime.http.request = async (url, init) => {
+      if (String(url).endsWith("/getRecordValues") && JSON.parse(init.body).requests[0].id === page.id) pageReads++;
+      if (String(url).endsWith("/saveTransactionsFanout")) assert.equal(pageReads, 2);
+      return request(url, init);
+    };
+    const result = await synchronizeNotionDocument(runtime, "https://www.notion.so/" + notionSource.identifier,
+      notionSource, { markdown: original }, target, "page.md", undefined, true);
+    assert.equal(result.wroteRemote, true);
+    assert.equal(result.markdown, target);
+    assert.equal(submitted.length, 1);
   }
 });
 

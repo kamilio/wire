@@ -1282,9 +1282,13 @@ export async function synchronizeNotionDocument(runtime, url, source, base, mark
     const save = async (operations) => {
         if (operations.length === 0)
             return;
-        // saveTransactionsFanout cannot check the tree revision at commit time.
-        if (requireConditionalWrite)
-            throw new Error("Notion cannot condition a save on the revision read. Local draft preserved; apply the edit in Notion.");
+        if (requireConditionalWrite) {
+            const latest = await fetchTree(runtime, url, source);
+            if (compact(latest.tree) !== compact(remote.tree)) {
+                await observeRemote?.(notionDocument(latest.tree.id, latest.tree, mentions, emailMentions, latest.comments));
+                throw new WireMergeConflict("Notion changed while preparing the save");
+            }
+        }
         await notionPost(runtime, "saveTransactionsFanout", remote.cookie, { requestId: randomUUID(), transactions: [{ id: randomUUID(), spaceId: remote.spaceId, operations }] }, remote.headers);
     };
     const baseObject = object(base);
