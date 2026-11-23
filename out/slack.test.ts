@@ -81,6 +81,45 @@ describe("Markdown to native Slack rich text", () => {
 });
 
 describe("native Slack to Markdown", () => {
+  it("renders every table cell type with alignment, formatting, and escaped cell contents", () => {
+    const table = { type: "table", column_settings: [null, { align: "center", is_wrapped: true }, { align: "right" }], rows: [
+      [{ type: "raw_text", text: "Name | label" }, { type: "raw_text", text: "Details" }, { type: "raw_text", text: "Amount" }, { type: "raw_text", text: "Extra" }],
+      [{ type: "raw_text", text: "*literal* \\| & <br>" }, section([text("bold", { bold: true }), text(" ", {}), { type: "user", user_id: "U1" }, text("\nnext\r\nline", {}), { type: "link", text: "a|b", url: "https://example.com/a|b" }])[0]!, { type: "raw_number", value: 1234.5, text: "$1,234.50" }, { type: "raw_text", text: "" }],
+      [{ type: "raw_text", text: "short row" }],
+    ] };
+    expect(slackBlocksToMarkdown([table], new Map([["U1", "Alice"]]))).toBe([
+      "| Name \\| label | Details | Amount | Extra |",
+      "| :--- | :---: | ---: | :--- |",
+      "| \\*literal\\* \\\\\\| & \\<br\\> | **bold** [@Alice](slack://user?id=U1)<br>next<br>line[a\\|b](<https://example.com/a\\|b>) | $1,234.50 |  |",
+      "| short row |  |  |  |",
+    ].join("\n"));
+  });
+
+  it("keeps multiline rich-text cells, lists, quotes, and code inside their table row", () => {
+    const cell = { type: "rich_text", elements: [
+      { type: "rich_text_section", elements: [text("first", {})] },
+      { type: "rich_text_section", elements: [text("second", { italic: true })] },
+      { type: "rich_text_list", style: "ordered", offset: 2, elements: [{ type: "rich_text_section", elements: [text("item", {})] }] },
+      { type: "rich_text_quote", elements: [text("quote", {})] },
+      { type: "rich_text_preformatted", elements: [text("a|b\n`tick`", {})] },
+    ] };
+    expect(slackBlocksToMarkdown([{ type: "table", rows: [[{ type: "raw_text", text: "Header" }], [cell]] }], users)).toBe(
+      "| Header |\n| :--- |\n| first<br><br>*second*<br><br>3. item<br><br>> quote<br><br><pre><code>a&#124;b<br>&#96;tick&#96;</code></pre> |",
+    );
+  });
+
+  it("renders header-only and empty tables", () => {
+    expect(slackBlocksToMarkdown([{ type: "table", rows: [[{ type: "raw_text", text: "Header" }]] }], users)).toBe("| Header |\n| :--- |");
+    expect(slackBlocksToMarkdown([{ type: "table", rows: [] }], users)).toBe("");
+  });
+
+  it("preserves literal pipes, backslashes, backticks, and HTML in table code", () => {
+    const cell = section([text("a\\|b `tick` <br> &", { code: true })])[0]!;
+    expect(slackBlocksToMarkdown([{ type: "table", rows: [[{ type: "raw_text", text: "Code" }], [cell]] }], users)).toBe(
+      "| Code |\n| :--- |\n| <code>a&#92;&#124;b &#96;tick&#96; &#60;br&#62; &#38;</code> |",
+    );
+  });
+
   it.each(["---", "===", "#", "# heading", "- list", "+ list", "1. numbered", "2) numbered", "*literal*", "_literal_", "~literal~", "[link](url)", "<@U1>", "\\path", "&amp;", "foo_bar_baz", "a\nb", " leading "]) ("roundtrips literal text %s", (value) => {
     const markdown = slackBlocksToMarkdown(section([text(value, {})]), users);
     expect(markdownToSlackBlocks(markdown)).toEqual(section([text(value, {})]));
@@ -97,6 +136,11 @@ describe("native Slack to Markdown", () => {
     const url = "https://example.slack.com/archives/C111/p1234567890000001";
     const mention = { type: "message_mention", channel_id: "C111", message_ts: "1234567890.000001", author_id: "U1", thread_ts: "1234567889.000001", text: url, url };
     expect(slackBlocksToMarkdown(section([mention]), users)).toBe(`[${url}](<${url}>)`);
+  });
+
+  it("renders attachment mentions with their label and original URL", () => {
+    const url = "https://docs.google.com/spreadsheets/d/example/edit?gid=0#gid=0";
+    expect(slackBlocksToMarkdown(section([{ type: "attachment_mention", text: "Review [sheet]", url }]), users)).toBe(`[Review \\[sheet\\]](<${url}>)`);
   });
 
   it("renders bot blocks, images, and buttons", () => {
@@ -232,6 +276,22 @@ describe("Slack sending and reading", () => {
     const fetched = await slackService.fetch(mocked.value, url, slackService.parse(new URL(url)));
     expect(fetched.markdown).toContain("**new**");
     expect(fetched.markdown.indexOf("old")).toBeLessThan(fetched.markdown.indexOf("**new**"));
+  });
+
+  it.each(["https://example.slack.com/archives/C1", "https://example.slack.com/archives/C1/p1234567890000001"])("reads tables in messages and attachments through %s", async (url) => {
+    const table = { type: "table", column_settings: [{ is_wrapped: true }], rows: [[{ type: "raw_text", text: "Owner" }], [section([{ type: "user", user_id: "U1" }])[0]!]] };
+    const mocked = runtime((method) => {
+      if (method === "users.info") return { user: { name: "alice", profile: { real_name: "Alice" } } };
+      if (method === "conversations.history" || method === "conversations.replies") return { messages: [
+        { ts: "1234567890.000001", username: "Bot", text: "Table", blocks: [table] },
+        { ts: "1234567891.000001", username: "Bot", text: "Attachment", attachments: [{ blocks: [table] }] },
+      ] };
+      throw new Error(method);
+    });
+    const fetched = await slackService.fetch(mocked.value, url, slackService.parse(new URL(url)));
+    expect(fetched.markdown.match(/\| \[@Alice\]\(slack:\/\/user\?id=U1\) \|/g)).toHaveLength(2);
+    expect(mocked.calls.filter(({ method }) => method === "users.info")).toHaveLength(1);
+    expect(fetched.data["messages"]).toMatchObject([{ blocks: [table] }, { attachments: [{ blocks: [table] }] }]);
   });
 });
 

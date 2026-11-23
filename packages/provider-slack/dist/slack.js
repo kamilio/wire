@@ -20,7 +20,9 @@ function cleanText(text) {
 function markdownText(value) {
     return value.replace(/[\\`*_{}\[\]<>~|]/g, "\\$&").replace(/^(\s*)([#>+\-=])/gm, "$1\\$2").replace(/^(\s*[0-9]+)([.)])/gm, "$1\\$2");
 }
-function codeSpan(value) {
+function codeSpan(value, tableCell = false) {
+    if (tableCell)
+        return `<code>${value.replace(/[^\p{L}\p{N}\s]/gu, (character) => `&#${character.codePointAt(0)};`)}</code>`;
     const fence = "`".repeat(Math.max(0, ...[...value.matchAll(/`+/g)].map((match) => match[0].length)) + 1);
     const padding = value.startsWith("`") || value.endsWith("`") || /^ .* $/.test(value) && value.trim() !== "" ? " " : "";
     return `${fence}${padding}${value}${padding}${fence}`;
@@ -178,7 +180,7 @@ export function markdownToSlackBlocks(markdown) {
         throw new Error("Expected Markdown document");
     return [{ type: "rich_text", elements: slackSections(ast.children, markdown, 0) }];
 }
-function richInline(elements, users) {
+function richInline(elements, users, tableCell = false) {
     let output = "";
     let active = [];
     for (const element of elements) {
@@ -186,8 +188,9 @@ function richInline(elements, users) {
         let text;
         switch (element["type"]) {
             case "text":
-                text = style?.["code"] === true ? codeSpan(element["text"]) : markdownText(element["text"]);
+                text = style?.["code"] === true ? codeSpan(element["text"], tableCell) : markdownText(element["text"]);
                 break;
+            case "attachment_mention":
             case "message_mention":
             case "link":
                 text = `[${markdownText(element["text"] === undefined ? element["url"] : element["text"])}](<${element["url"].replace(/>/g, "%3E")}>)`;
@@ -213,7 +216,7 @@ function richInline(elements, users) {
                 text = element["fallback"] === undefined ? new Date(Number(element["timestamp"]) * 1000).toISOString() : markdownText(element["fallback"]);
                 break;
             case "color":
-                text = codeSpan(element["value"]);
+                text = codeSpan(element["value"], tableCell);
                 break;
             default: throw new Error(`Unsupported Slack rich-text element: ${element["type"]}`);
         }
@@ -232,7 +235,7 @@ function richInline(elements, users) {
     return output.slice(0, output.length - trailing.length) + active.reverse().join("") + trailing;
 }
 export function slackBlocksToMarkdown(blocks, users) {
-    const render = (block) => {
+    const render = (block, tableCell = false) => {
         const elements = block["elements"];
         switch (block["type"]) {
             case "rich_text": {
@@ -240,32 +243,52 @@ export function slackBlocksToMarkdown(blocks, users) {
                 for (const [index, child] of elements.entries()) {
                     const previous = elements[index - 1];
                     const adjacentLists = child["type"] === "rich_text_list" && previous?.["type"] === "rich_text_list" && (child["style"] === previous["style"] || child["indent"] !== previous["indent"]);
-                    output.push(`${index === 0 ? "" : adjacentLists ? "\n" : "\n\n"}${render(child)}`);
+                    output.push(`${index === 0 ? "" : adjacentLists ? "\n" : "\n\n"}${render(child, tableCell)}`);
                 }
                 return output.join("");
             }
-            case "rich_text_section": return richInline(elements, users);
-            case "rich_text_preformatted": return codeBlock(elements.map((element) => element["text"] === undefined ? element["url"] : element["text"]).join(""));
-            case "rich_text_quote": return richInline(elements, users).split("\n").map((line) => `> ${line}`).join("\n");
+            case "rich_text_section": return richInline(elements, users, tableCell);
+            case "rich_text_preformatted": {
+                const value = elements.map((element) => element["text"] === undefined ? element["url"] : element["text"]).join("");
+                return tableCell ? `<pre>${codeSpan(value, true)}</pre>` : codeBlock(value);
+            }
+            case "rich_text_quote": return richInline(elements, users, tableCell).split("\n").map((line) => `> ${line}`).join("\n");
             case "rich_text_list": return elements.map((element, index) => {
                 const indent = block["indent"] === undefined ? 0 : block["indent"];
                 const offset = block["offset"] === undefined ? 0 : block["offset"];
                 const prefix = block["style"] === "ordered" ? `${offset + index + 1}. ` : "- ";
-                return `${"    ".repeat(indent)}${prefix}${richInline(element["elements"], users).replace(/\n/g, `\n${"    ".repeat(indent)}${" ".repeat(prefix.length)}`)}`;
+                return `${"    ".repeat(indent)}${prefix}${richInline(element["elements"], users, tableCell).replace(/\n/g, `\n${"    ".repeat(indent)}${" ".repeat(prefix.length)}`)}`;
             }).join("\n");
-            case "section": return [...(block["text"] === undefined ? [] : [render(block["text"])]), ...(block["fields"] === undefined ? [] : block["fields"].map(render))].join("\n\n");
+            case "section": return [...(block["text"] === undefined ? [] : [render(block["text"])]), ...(block["fields"] === undefined ? [] : block["fields"].map((child) => render(child)))].join("\n\n");
             case "mrkdwn": return cleanText(block["text"]);
+            case "raw_text":
+            case "raw_number":
             case "plain_text": return markdownText(block["text"]);
+            case "table": {
+                const rows = block["rows"];
+                const columns = block["column_settings"];
+                const width = Math.max(0, ...rows.map((row) => row.length));
+                const lines = rows.map((row) => `| ${Array.from({ length: width }, (_, index) => {
+                    const cell = row[index];
+                    if (cell === undefined)
+                        return "";
+                    const content = render(cell, true);
+                    return content.replace(/(\\*)\|/g, (_match, slashes) => `${slashes}${slashes.length % 2 === 0 ? "\\" : ""}|`).replace(/\r\n?|\n/g, "<br>");
+                }).join(" | ")} |`);
+                if (lines.length > 0)
+                    lines.splice(1, 0, `| ${Array.from({ length: width }, (_, index) => columns?.[index]?.["align"] === "right" ? "---:" : columns?.[index]?.["align"] === "center" ? ":---:" : ":---").join(" | ")} |`);
+                return lines.join("\n");
+            }
             case "header": return `## ${render(block["text"])}`;
             case "divider": return "---";
-            case "context": return elements.map(render).join(" · ");
+            case "context": return elements.map((child) => render(child)).join(" · ");
             case "image": return `![${markdownText(block["alt_text"])}](<${block["image_url"]}>)`;
-            case "actions": return elements.map(render).join(" · ");
+            case "actions": return elements.map((child) => render(child)).join(" · ");
             case "button": return block["url"] === undefined ? render(block["text"]) : `[${render(block["text"])}](<${block["url"]}>)`;
             default: throw new Error(`Unsupported Slack block: ${block["type"]}`);
         }
     };
-    return blocks.map(render).join("\n\n");
+    return blocks.map((child) => render(child)).join("\n\n");
 }
 async function api(runtime, origin, token, cookie, method, parameters) {
     const body = new URLSearchParams({ token, ...parameters });

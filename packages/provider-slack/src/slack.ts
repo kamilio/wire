@@ -25,7 +25,8 @@ function markdownText(value: string): string {
   return value.replace(/[\\`*_{}\[\]<>~|]/g, "\\$&").replace(/^(\s*)([#>+\-=])/gm, "$1\\$2").replace(/^(\s*[0-9]+)([.)])/gm, "$1\\$2");
 }
 
-function codeSpan(value: string): string {
+function codeSpan(value: string, tableCell = false): string {
+  if (tableCell) return `<code>${value.replace(/[^\p{L}\p{N}\s]/gu, (character) => `&#${character.codePointAt(0)};`)}</code>`;
   const fence = "`".repeat(Math.max(0, ...[...value.matchAll(/`+/g)].map((match) => match[0].length)) + 1);
   const padding = value.startsWith("`") || value.endsWith("`") || /^ .* $/.test(value) && value.trim() !== "" ? " " : "";
   return `${fence}${padding}${value}${padding}${fence}`;
@@ -146,14 +147,15 @@ export function markdownToSlackBlocks(markdown: string): readonly JsonObject[] {
   return [{ type: "rich_text", elements: slackSections(ast.children, markdown, 0) }];
 }
 
-function richInline(elements: readonly JsonObject[], users: ReadonlyMap<string, string>): string {
+function richInline(elements: readonly JsonObject[], users: ReadonlyMap<string, string>, tableCell = false): string {
   let output = "";
   let active: string[] = [];
   for (const element of elements) {
     const style = element["style"] as JsonObject | undefined;
     let text: string;
     switch (element["type"]) {
-      case "text": text = style?.["code"] === true ? codeSpan(element["text"] as string) : markdownText(element["text"] as string); break;
+      case "text": text = style?.["code"] === true ? codeSpan(element["text"] as string, tableCell) : markdownText(element["text"] as string); break;
+      case "attachment_mention":
       case "message_mention":
       case "link": text = `[${markdownText(element["text"] === undefined ? element["url"] as string : element["text"] as string)}](<${(element["url"] as string).replace(/>/g, "%3E")}>)`; break;
       case "user": {
@@ -166,7 +168,7 @@ function richInline(elements: readonly JsonObject[], users: ReadonlyMap<string, 
       case "broadcast": text = `<!${element["range"]}>`; break;
       case "emoji": text = typeof element["unicode"] === "string" ? String.fromCodePoint(...element["unicode"].split("-").map((part) => Number.parseInt(part, 16))) : `:${element["name"]}:`; break;
       case "date": text = element["fallback"] === undefined ? new Date(Number(element["timestamp"]) * 1000).toISOString() : markdownText(element["fallback"] as string); break;
-      case "color": text = codeSpan(element["value"] as string); break;
+      case "color": text = codeSpan(element["value"] as string, tableCell); break;
       default: throw new Error(`Unsupported Slack rich-text element: ${element["type"]}`);
     }
     const markers = [style?.["bold"] === true ? "**" : "", style?.["italic"] === true ? "*" : "", style?.["strike"] === true ? "~~" : ""].filter((marker) => marker !== "");
@@ -184,7 +186,7 @@ function richInline(elements: readonly JsonObject[], users: ReadonlyMap<string, 
 }
 
 export function slackBlocksToMarkdown(blocks: readonly JsonObject[], users: ReadonlyMap<string, string>): string {
-  const render = (block: JsonObject): string => {
+  const render = (block: JsonObject, tableCell = false): string => {
     const elements = block["elements"] as readonly JsonObject[];
     switch (block["type"]) {
       case "rich_text": {
@@ -192,32 +194,50 @@ export function slackBlocksToMarkdown(blocks: readonly JsonObject[], users: Read
         for (const [index, child] of elements.entries()) {
           const previous = elements[index - 1];
           const adjacentLists = child["type"] === "rich_text_list" && previous?.["type"] === "rich_text_list" && (child["style"] === previous["style"] || child["indent"] !== previous["indent"]);
-          output.push(`${index === 0 ? "" : adjacentLists ? "\n" : "\n\n"}${render(child)}`);
+          output.push(`${index === 0 ? "" : adjacentLists ? "\n" : "\n\n"}${render(child, tableCell)}`);
         }
         return output.join("");
       }
-      case "rich_text_section": return richInline(elements, users);
-      case "rich_text_preformatted": return codeBlock(elements.map((element) => element["text"] === undefined ? element["url"] as string : element["text"] as string).join(""));
-      case "rich_text_quote": return richInline(elements, users).split("\n").map((line) => `> ${line}`).join("\n");
+      case "rich_text_section": return richInline(elements, users, tableCell);
+      case "rich_text_preformatted": {
+        const value = elements.map((element) => element["text"] === undefined ? element["url"] as string : element["text"] as string).join("");
+        return tableCell ? `<pre>${codeSpan(value, true)}</pre>` : codeBlock(value);
+      }
+      case "rich_text_quote": return richInline(elements, users, tableCell).split("\n").map((line) => `> ${line}`).join("\n");
       case "rich_text_list": return elements.map((element, index) => {
         const indent = block["indent"] === undefined ? 0 : block["indent"] as number;
         const offset = block["offset"] === undefined ? 0 : block["offset"] as number;
         const prefix = block["style"] === "ordered" ? `${offset + index + 1}. ` : "- ";
-        return `${"    ".repeat(indent)}${prefix}${richInline(element["elements"] as readonly JsonObject[], users).replace(/\n/g, `\n${"    ".repeat(indent)}${" ".repeat(prefix.length)}`)}`;
+        return `${"    ".repeat(indent)}${prefix}${richInline(element["elements"] as readonly JsonObject[], users, tableCell).replace(/\n/g, `\n${"    ".repeat(indent)}${" ".repeat(prefix.length)}`)}`;
       }).join("\n");
-      case "section": return [...(block["text"] === undefined ? [] : [render(block["text"] as JsonObject)]), ...(block["fields"] === undefined ? [] : (block["fields"] as readonly JsonObject[]).map(render))].join("\n\n");
+      case "section": return [...(block["text"] === undefined ? [] : [render(block["text"] as JsonObject)]), ...(block["fields"] === undefined ? [] : (block["fields"] as readonly JsonObject[]).map((child) => render(child)))].join("\n\n");
       case "mrkdwn": return cleanText(block["text"] as string);
+      case "raw_text":
+      case "raw_number":
       case "plain_text": return markdownText(block["text"] as string);
+      case "table": {
+        const rows = block["rows"] as readonly (readonly JsonObject[])[];
+        const columns = block["column_settings"] as readonly (JsonObject | null)[] | undefined;
+        const width = Math.max(0, ...rows.map((row) => row.length));
+        const lines = rows.map((row) => `| ${Array.from({ length: width }, (_, index) => {
+          const cell = row[index];
+          if (cell === undefined) return "";
+          const content = render(cell, true);
+          return content.replace(/(\\*)\|/g, (_match, slashes: string) => `${slashes}${slashes.length % 2 === 0 ? "\\" : ""}|`).replace(/\r\n?|\n/g, "<br>");
+        }).join(" | ")} |`);
+        if (lines.length > 0) lines.splice(1, 0, `| ${Array.from({ length: width }, (_, index) => columns?.[index]?.["align"] === "right" ? "---:" : columns?.[index]?.["align"] === "center" ? ":---:" : ":---").join(" | ")} |`);
+        return lines.join("\n");
+      }
       case "header": return `## ${render(block["text"] as JsonObject)}`;
       case "divider": return "---";
-      case "context": return elements.map(render).join(" · ");
+      case "context": return elements.map((child) => render(child)).join(" · ");
       case "image": return `![${markdownText(block["alt_text"] as string)}](<${block["image_url"]}>)`;
-      case "actions": return elements.map(render).join(" · ");
+      case "actions": return elements.map((child) => render(child)).join(" · ");
       case "button": return block["url"] === undefined ? render(block["text"] as JsonObject) : `[${render(block["text"] as JsonObject)}](<${block["url"]}>)`;
       default: throw new Error(`Unsupported Slack block: ${block["type"]}`);
     }
   };
-  return blocks.map(render).join("\n\n");
+  return blocks.map((child) => render(child)).join("\n\n");
 }
 
 async function api(runtime: RuntimeCapabilities, origin: string, token: string, cookie: string, method: string, parameters: Readonly<Record<string, string>>): Promise<JsonObject> {
