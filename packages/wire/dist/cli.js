@@ -252,6 +252,8 @@ function excessPositionals(argv) {
         return { commandPath: `${command} users lookup`, expected: 1, received: words.length - 3 };
     if (command === "slack" && (words[1] === "send" || words[1] === "edit"))
         return { commandPath: `slack ${words[1]}`, expected: 2, received: words.length - 2 };
+    if (command === "codesignal" && (words[1] === "edit" || words[1] === "run"))
+        return { commandPath: `codesignal ${words[1]}`, expected: words[1] === "edit" ? 2 : 1, received: words.length - 2 };
     if (command === "claude" && words[1] === "scrape")
         return { commandPath: "claude scrape", expected: 0, received: words.length - 2 };
     if (command === "gdrive" && (words[1] === "scrape" || words[1] === "preview"))
@@ -285,6 +287,8 @@ function missingPositionals(argv) {
         return { commandPath: `${command} users lookup`, name: "query" };
     if (command === "slack" && (words[1] === "send" || words[1] === "edit") && words.length < 4)
         return { commandPath: `slack ${words[1]}`, name: words.length === 2 ? words[1] === "send" ? "destination" : "url" : "markdown" };
+    if (command === "codesignal" && (words[1] === "edit" || words[1] === "run") && words.length < (words[1] === "edit" ? 4 : 3))
+        return { commandPath: `codesignal ${words[1]}`, name: words.length === 2 ? "url" : "path" };
     if (!(command in fixedCommandPositionals))
         return null;
     const positional = fixedCommandPositionals[command];
@@ -324,7 +328,7 @@ function renderUnknownAuthCommand(argv) {
     if (hasRootSeparator(argv))
         return false;
     const words = positionalWords(argv);
-    if (words === null || words.length < 2 || !authServices.has(words[0]) || authCommands.has(words[1]) || (words[0] === "ashby" && ["interviews", "pending", "latest", "prep", "template", "sync"].includes(words[1])) || (words[0] === "google-docs" && words[1] === "comments") || (words[0] === "zoom" && words[1] === "scrape") || words[0] === "asana" && (words[1] === "projects" || words[1] === "tasks" || words[1] === "comments") || (words[0] === "slack" || words[0] === "notion" || words[0] === "asana") && words[1] === "users" || words[0] === "slack" && (words[1] === "send" || words[1] === "edit" || slackResourceCommands.has(words[1])))
+    if (words === null || words.length < 2 || !authServices.has(words[0]) || authCommands.has(words[1]) || (words[0] === "ashby" && ["interviews", "pending", "latest", "prep", "template", "sync"].includes(words[1])) || (words[0] === "codesignal" && ["edit", "run"].includes(words[1])) || (words[0] === "google-docs" && words[1] === "comments") || (words[0] === "zoom" && words[1] === "scrape") || words[0] === "asana" && (words[1] === "projects" || words[1] === "tasks" || words[1] === "comments") || (words[0] === "slack" || words[0] === "notion" || words[0] === "asana") && words[1] === "users" || words[0] === "slack" && (words[1] === "send" || words[1] === "edit" || slackResourceCommands.has(words[1])))
         return false;
     renderCliError(argv, `Unknown command: ${words[1]}`, `wire ${words[0]} --help`, `Unknown command: ${cliValue(words[1])}`);
     return true;

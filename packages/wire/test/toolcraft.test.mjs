@@ -1849,6 +1849,8 @@ test("executable discovers repository cookies from op_secrets without an environ
   await rm(root, { recursive: true, force: true });
   await mkdir(nested, { recursive: true });
   await mkdir(home, { recursive: true });
+  await mkdir(join(project, ".wire"), { recursive: true });
+  await writeFile(join(project, ".wire", "config.json"), "{}", "utf8");
   await writeFile(join(project, "op_secrets.py"), "", "utf8");
   await writeFile(cookieFile, ".google.com\tTRUE\t/\tTRUE\t0\tSID\trepo\n", "utf8");
   t.after(async () => rm(root, { recursive: true, force: true }));

@@ -477,6 +477,19 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
     const authCommand = (service) => {
         const title = serviceTitle(service);
         const group = authGroup(service, `Manage ${title} login.`, "Capture cookies once; normal commands reuse saved cookies.", auth, readInput, options);
+        if (service === "codesignal" && options.codeSignalEdit && options.codeSignalRun)
+            return defineGroup({ ...group,
+                description: "Read, edit, and run live interview code, and manage login.", children: [...group.children,
+                    defineCommand({ name: "edit", description: "Replace a file in the current filesystem coding question from a local UTF-8 file.", positional: ["url", "path"],
+                        params: S.Object({ url: S.String(), path: S.String(), file: S.String({ description: "Local UTF-8 file containing the replacement code." }) }),
+                        handler: ({ params }) => userFacing(() => options.codeSignalEdit(params.url, params.path, params.file)),
+                        render: render((v) => "Updated " + v.path),
+                    }),
+                    defineCommand({ name: "run", description: "Run the current filesystem coding question and return its verdict and output.", positional: ["url"],
+                        params: S.Object({ url: S.String() }), handler: ({ params }) => userFacing(() => options.codeSignalRun(params.url)),
+                        render: render((v) => ["Verdict: " + v.verdict, v.compilationLog, v.output].filter(Boolean).join("\n")),
+                    }),
+                ] });
         if (service === "google-docs" && options.changeDocComment) {
             const thread = S.String({ description: "Google Docs thread URL from --comments." });
             return defineGroup({ ...group, children: [...group.children, defineGroup({ name: "comments", description: "Reply to, resolve, or reopen Google Docs threads.", children: ["reply", "resolve", "reopen", "delete-reply"].map(action => defineCommand({

@@ -1,3 +1,4 @@
+import type { editCodeSignal, runCodeSignal } from "./codesignal.js";
 import { UserError, defineCommand, defineGroup, S, type Group } from "toolcraft";
 
 import { defaultWireBackend, registryPathForBackend, type JsonObject, type FetchedDocument, type InitializedWire, type Resource, type SwitchedWireBackend, type Wire, type WireBackend, type WireResult, type WireWatchSession } from "wire-core";
@@ -13,7 +14,7 @@ import { formatDocComments, type listDocComments, type changeDocComment } from "
 type Comments = { comments?: Awaited<ReturnType<typeof listDocComments>> };
 export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
-export type WireRootOptions = Readonly<{ allowPaste: boolean; shareNotionWithOrg?: (id: string) => Promise<string>; scrapeClaude?: () => Promise<string>; listDocComments?: (url: string) => ReturnType<typeof listDocComments>; changeDocComment?: (action: Parameters<typeof changeDocComment>[1], url: string, value?: string) => ReturnType<typeof changeDocComment>; ashby?: (action: string, arg?: string) => Promise<string>; previewDrive?: (url: string) => Promise<string>; scrapeDrive?: (url?: string, deleteVerifiedPdfs?: boolean, deleteVerifiedDocx?: boolean) => Promise<string>; calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
+export type WireRootOptions = Readonly<{ allowPaste: boolean; codeSignalEdit?: (url: string, path: string, file: string) => ReturnType<typeof editCodeSignal>; codeSignalRun?: (url: string) => ReturnType<typeof runCodeSignal>; shareNotionWithOrg?: (id: string) => Promise<string>; scrapeClaude?: () => Promise<string>; listDocComments?: (url: string) => ReturnType<typeof listDocComments>; changeDocComment?: (action: Parameters<typeof changeDocComment>[1], url: string, value?: string) => ReturnType<typeof changeDocComment>; ashby?: (action: string, arg?: string) => Promise<string>; previewDrive?: (url: string) => Promise<string>; scrapeDrive?: (url?: string, deleteVerifiedPdfs?: boolean, deleteVerifiedDocx?: boolean) => Promise<string>; calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
 
 const authServices = ["ashby", "asana", "chatgpt", "codesignal", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
 const removedCliCommandNames = Object.freeze({
@@ -515,6 +516,18 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
   const authCommand = (service: (typeof authServices)[number]) => {
     const title = serviceTitle(service);
     const group = authGroup(service, `Manage ${title} login.`, "Capture cookies once; normal commands reuse saved cookies.", auth!, readInput, options);
+    if (service === "codesignal" && options.codeSignalEdit && options.codeSignalRun) return defineGroup({ ...group,
+      description: "Read, edit, and run live interview code, and manage login.", children: [...group.children,
+        defineCommand({ name: "edit", description: "Replace a file in the current filesystem coding question from a local UTF-8 file.", positional: ["url", "path"],
+          params: S.Object({ url: S.String(), path: S.String(), file: S.String({ description: "Local UTF-8 file containing the replacement code." }) }),
+          handler: ({ params }) => userFacing(() => options.codeSignalEdit!(params.url, params.path, params.file)),
+          render: render((v: Awaited<ReturnType<typeof editCodeSignal>>) => "Updated " + v.path),
+        }),
+        defineCommand({ name: "run", description: "Run the current filesystem coding question and return its verdict and output.", positional: ["url"],
+          params: S.Object({ url: S.String() }), handler: ({ params }) => userFacing(() => options.codeSignalRun!(params.url)),
+          render: render((v: Awaited<ReturnType<typeof runCodeSignal>>) => ["Verdict: " + v.verdict, v.compilationLog, v.output].filter(Boolean).join("\n")),
+        }),
+      ] });
     if (service === "google-docs" && options.changeDocComment) {
       const thread = S.String({ description: "Google Docs thread URL from --comments." });
       return defineGroup({ ...group, children: [...group.children, defineGroup({ name: "comments", description: "Reply to, resolve, or reopen Google Docs threads.", children:
