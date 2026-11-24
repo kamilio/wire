@@ -562,6 +562,7 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
                     })] });
         const writes = asana?.writes;
         const createTask = writes?.create;
+        const depend = writes?.depend;
         if (service === "asana" && asana !== undefined)
             return defineGroup({ ...group, description: "Browse Asana projects, edit tasks and comments, and manage login.", children: [...group.children, ...users,
                     defineGroup({ name: "projects", description: "Browse projects.", children: [defineCommand({
@@ -589,7 +590,12 @@ export function createRoot(wire, currentDirectory, auth, readInput, options = { 
                                 name: "show", description: "Show a task's properties, custom field IDs, Markdown description, comments, and activity.", positional: ["task"],
                                 params: S.Object({ task: S.String({ description: "Asana task ID." }) }),
                                 handler: ({ params }) => userFacing(() => asana.show(params.task)), render: wirePresentation.view,
-                            }), ...(createTask ? [defineCommand({
+                            }), ...(depend ? [defineCommand({
+                                    name: "depend", description: "Make a task depend on another task without changing existing dependencies.", positional: ["task"],
+                                    params: S.Object({ task: S.String({ description: "Task that must wait." }), on: S.String({ description: "Task that must finish first." }) }),
+                                    handler: ({ params }) => userFacing(() => depend(params.task, params.on)),
+                                    render: render((result) => `Task ${result.task} depends on ${result.dependency}.`),
+                                })] : []), ...(createTask ? [defineCommand({
                                     name: "create", description: "Create a task in a project section. List sections with wire asana projects show <project>.", positional: ["project"],
                                     params: S.Object({
                                         project: S.String({ description: "Asana project ID." }),

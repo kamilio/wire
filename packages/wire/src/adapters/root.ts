@@ -441,6 +441,7 @@ type AsanaExplorer = {
   tasks(project: string): ReturnType<typeof listAsanaTasks>;
   show(task: string): Promise<FetchedDocument>;
   writes?: {
+    depend?(task: string, dependency: string): Promise<{ task: string; dependency: string }>;
     create?(project: string, title: string, section: string, body?: string, assignee?: string): Promise<JsonObject>;
     move(task: string, project: string, section: string): ReturnType<typeof moveAsanaTask>;
     edit(task: string, fields: JsonObject): Promise<JsonObject>;
@@ -600,6 +601,7 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
     })] });
     const writes = asana?.writes;
     const createTask = writes?.create;
+    const depend = writes?.depend;
     if (service === "asana" && asana !== undefined) return defineGroup({ ...group, description: "Browse Asana projects, edit tasks and comments, and manage login.", children: [...group.children, ...users,
       defineGroup({ name: "projects", description: "Browse projects.", children: [defineCommand({
         name: "list", description: "List active projects by workspace and team.", params: S.Object({}),
@@ -627,7 +629,12 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
         name: "show", description: "Show a task's properties, custom field IDs, Markdown description, comments, and activity.", positional: ["task"],
         params: S.Object({ task: S.String({ description: "Asana task ID." }) }),
         handler: ({ params }) => userFacing(() => asana.show(params.task)), render: wirePresentation.view,
-      }), ...(createTask ? [defineCommand({
+      }), ...(depend ? [defineCommand({
+        name: "depend", description: "Make a task depend on another task without changing existing dependencies.", positional: ["task"],
+        params: S.Object({ task: S.String({ description: "Task that must wait." }), on: S.String({ description: "Task that must finish first." }) }),
+        handler: ({ params }) => userFacing(() => depend(params.task, params.on)),
+        render: render<{ task: string; dependency: string }>((result) => `Task ${result.task} depends on ${result.dependency}.`),
+      })] : []), ...(createTask ? [defineCommand({
         name: "create", description: "Create a task in a project section. List sections with wire asana projects show <project>.", positional: ["project"],
         params: S.Object({
           project: S.String({ description: "Asana project ID." }),

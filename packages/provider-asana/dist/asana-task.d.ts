@@ -50,6 +50,10 @@ export declare function showAsanaTask(runtime: RuntimeCapabilities, identifier: 
 }>>;
 export declare function createAsanaTask(runtime: RuntimeCapabilities, project: string, title: string, section: string, body?: string, assignee?: string): Promise<JsonObject>;
 export declare function editAsanaTask(runtime: RuntimeCapabilities, task: string, fields: JsonObject): Promise<JsonObject>;
+export declare function addAsanaDependency(runtime: RuntimeCapabilities, task: string, dependency: string): Promise<{
+    task: string;
+    dependency: string;
+}>;
 export declare function addAsanaComment(runtime: RuntimeCapabilities, task: string, body: string): Promise<JsonObject>;
 export declare function editAsanaComment(runtime: RuntimeCapabilities, comment: string, body: string): Promise<JsonObject>;
 //# sourceMappingURL=asana-task.d.ts.map

@@ -39,7 +39,7 @@ async function asana(runtime: RuntimeCapabilities, path: string, parameters: Rea
 
 async function fetchTask(runtime: RuntimeCapabilities, identifier: string): Promise<JsonObject> {
   return object((await asana(runtime, `/tasks/${identifier}`, {
-    opt_fields: "gid,name,notes,html_notes,completed,completed_at,created_at,modified_at,due_on,due_at,permalink_url,assignee,assignee.name,assignee.email,memberships.project.gid,memberships.project.name,memberships.section.name,projects.name,tags.name,start_on,start_at,resource_subtype,approval_status,custom_type.name,custom_type_status_option.name,custom_fields.name,custom_fields.resource_subtype,custom_fields.display_value,custom_fields.is_value_read_only,custom_fields.enabled,custom_fields.enum_options.name,custom_fields.enum_options.enabled,custom_fields.text_value,custom_fields.html_text_value,custom_fields.number_value,custom_fields.enum_value.name,custom_fields.multi_enum_values.name,custom_fields.date_value,custom_fields.people_value.name,custom_fields.reference_value.name",
+    opt_fields: "gid,name,notes,html_notes,completed,completed_at,created_at,modified_at,due_on,due_at,permalink_url,assignee,assignee.name,assignee.email,dependencies,memberships.project.gid,memberships.project.name,memberships.section.name,projects.name,tags.name,start_on,start_at,resource_subtype,approval_status,custom_type.name,custom_type_status_option.name,custom_fields.name,custom_fields.resource_subtype,custom_fields.display_value,custom_fields.is_value_read_only,custom_fields.enabled,custom_fields.enum_options.name,custom_fields.enum_options.enabled,custom_fields.text_value,custom_fields.html_text_value,custom_fields.number_value,custom_fields.enum_value.name,custom_fields.multi_enum_values.name,custom_fields.date_value,custom_fields.people_value.name,custom_fields.reference_value.name",
   }))["data"]!);
 }
 
@@ -85,6 +85,8 @@ export async function showAsanaTask(runtime: RuntimeCapabilities, identifier: st
   const assignee = task["assignee"] as JsonObject | null;
   const lines = [`# ${task["name"] as string}`, "", `- Source: ${task["permalink_url"] as string}`, `- Completed: ${task["completed"] as boolean ? "True" : "False"}`];
   if (assignee !== null) lines.push(`- Assignee: ${assignee["name"]}${assignee["email"] ? ` <${assignee["email"]}>` : ""}`);
+  const dependencies = task["dependencies"] as readonly JsonObject[] | undefined;
+  if (dependencies) for (const dependency of dependencies) lines.push(`- Depends on: [${dependency["gid"]}](https://app.asana.com/0/0/${dependency["gid"]})`);
   for (const { project, section } of task["memberships"] as readonly { project: JsonObject; section: JsonObject | null }[] ?? []) {
     lines.push(`- Project: ${project["name"]} → ${section?.["name"] ?? "No section"}`);
   }
@@ -167,6 +169,12 @@ export async function editAsanaTask(runtime: RuntimeCapabilities, task: string, 
     }
   }
   return object((await request(runtime, "PUT", `/tasks/${task}`, { opt_fields: "name,permalink_url" }, data))["data"]!);
+}
+
+export async function addAsanaDependency(runtime: RuntimeCapabilities, task: string, dependency: string): Promise<{ task: string; dependency: string }> {
+  if (!/^\d+$/.test(task) || !/^\d+$/.test(dependency)) throw new Error("Expected numeric Asana task IDs.");
+  await request(runtime, "POST", `/tasks/${task}/addDependencies`, undefined, { dependencies: [dependency] });
+  return { task, dependency };
 }
 
 export async function addAsanaComment(runtime: RuntimeCapabilities, task: string, body: string): Promise<JsonObject> {

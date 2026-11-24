@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { addAsanaComment, createAsanaTask, editAsanaComment, editAsanaTask, showAsanaTask } from "provider-asana";
+import { addAsanaComment, addAsanaDependency, createAsanaTask, editAsanaComment, editAsanaTask, showAsanaTask } from "provider-asana";
 import { asanaMarkdown, asanaRichText } from "../../provider-asana/dist/asana-markdown.js";
 
 function api(handler) {
@@ -109,6 +109,16 @@ test("edit assigns by email and writes Markdown and native field values in a sin
   assert.deepEqual(calls, [["/tasks/1", "PUT", { assignee: null }]]);
 });
 
+test("dependencies add a prerequisite to the waiting task without replacing existing links", async () => {
+  const calls = [];
+  const runtime = api((path, method, data) => { calls.push([method, path, data]); return { data: {} }; });
+  await assert.rejects(addAsanaDependency(runtime, "../2", "3"), /numeric/);
+  await assert.rejects(addAsanaDependency(runtime, "2", "../3"), /numeric/);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(await addAsanaDependency(runtime, "2", "3"), { task: "2", dependency: "3" });
+  assert.deepEqual(calls, [["POST", "/tasks/2/addDependencies", { dependencies: ["3"] }]]);
+});
+
 test("comment creation and replacement use the right endpoint, story ID, and Markdown conversion", async () => {
   const calls = [];
   const runtime = api((path, method, data) => { calls.push([method, path, data]); return { data: { gid: "98" } }; });
@@ -134,6 +144,7 @@ test("invalid inputs do not write; forbidden comment edits are surfaced without 
 
 test("show preserves Markdown, custom field IDs and values, and every page of comments separately from system activity", async () => {
   const task = { name: "Sample", notes: "fallback", html_notes: "<body><strong>Notes</strong></body>", assignee: { name: "Ada", email: "ada@example.com" }, due_on: "2026-12-01",
+    dependencies: [{ gid: "9" }],
     custom_fields: [{ gid: "3", name: "Score", resource_subtype: "number", display_value: "0" }, { gid: "4", name: "Summary", resource_subtype: "text", html_text_value: "<body><em>Rich</em></body>" }] };
   const stories = [{ gid: "11", type: "comment", text: "fallback", html_text: "<body><code>x</code></body>", is_editable: true, created_by: { name: "Ada" } },
     { gid: "12", type: "system", text: "Moved", created_by: null }, { gid: "13", type: "comment", text: "second page", created_by: { name: "Bob" } }];
@@ -145,6 +156,7 @@ test("show preserves Markdown, custom field IDs and values, and every page of co
   });
   const result = await showAsanaTask(runtime, "1");
   assert.match(result.markdown, /\*\*Notes\*\*/);
+  assert.match(result.markdown, /Depends on: \[9\]\(https:\/\/app.asana.com\/0\/0\/9\)/);
   assert.match(result.markdown, /Score \(3, number\): 0/);
   assert.match(result.markdown, /Summary \(4, text\): \*Rich\*/);
   assert.match(result.markdown, /## Comments[\s\S]*11, editable[\s\S]*`x`[\s\S]*13\][\s\S]*second page[\s\S]*## Activity[\s\S]*Moved/);
