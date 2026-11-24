@@ -2004,3 +2004,36 @@ test("CLI nested user lookup and edit dispatch through their operations", async 
   const execution = await execFileAsync(process.execPath, [fixture, "slack", "edit", "https://example.slack.com/archives/C1/p1234567890000001", markdown, "--output", "json"], { env: { ...process.env, NO_COLOR: "1" } });
   assert.equal(JSON.parse(execution.stdout).markdown, markdown);
 });
+
+
+test("Notion search exposes author and native filters through CLI and MCP", async () => {
+  const calls = [];
+  const page = { id: "page", title: "[Research]", url: "https://www.notion.so/page", excerpt: "Observed workflows", created_by_id: "author", last_edited_by_id: "editor", created_by: "Alex", last_edited_by: "Erin" };
+  const searchRoot = createRoot(createFakeWire(), "/workspace", auth, undefined, { allowPaste: false,
+    searchNotion: async (...args) => { calls.push(args); return [{ spaceId: "space", total: 1, results: [page] }]; },
+  });
+  const server = createWireMcpServer(searchRoot);
+  await server.handleMessage("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } });
+  const listed = await server.handleMessage("tools/list");
+  const search = listed.result.tools.find(tool => tool.name === "notion__search");
+  assert.equal(search.inputSchema.properties["created_by"].type, "array");
+  assert.equal(search.inputSchema.properties["edited_by"].type, "array");
+  const response = await server.handleMessage("tools/call", { name: "notion__search", arguments: {
+    query: "research", "created_by": ["Alex", "other@example.com"], "edited_by": ["Erin"], "title_only": true,
+    in: ["parent"], teamspace: ["team"], "created_after": "2026-01-01", "created_before": "2026-02-01",
+    "edited_after": "2026-03-01", "edited_before": "2026-04-01", "content_status": "archived_only", sort: "lastEdited", direction: "asc", limit: 50, space: "space",
+  } });
+  assert.ok(!response.result.isError, JSON.stringify(response));
+  assert.deepEqual(calls, [["research", { filters: { createdBy: ["Alex", "other@example.com"], editedBy: ["Erin"], navigableBlockContentOnly: true,
+    ancestors: ["parent"], inTeams: ["team"], contentStatusFilter: "archived_only",
+    createdTime: { starting: { type: "date", start_date: "2026-01-01" }, ending: { type: "date", start_date: "2026-02-01" } },
+    lastEditedTime: { starting: { type: "date", start_date: "2026-03-01" }, ending: { type: "date", start_date: "2026-04-01" } },
+  }, sort: { field: "lastEdited", direction: "asc" }, limit: 50, spaceId: "space" }]]);
+  const command = searchRoot.children.find(group => group.name === "notion").children.find(command => command.name === "search");
+  const markdown = command.render.markdown([{ spaceId: "space", total: 1, results: [page] }]);
+  assert.ok(markdown.includes(String.raw`[\[Research\]](https://www.notion.so/page)`));
+  const execution = await execFileAsync(process.execPath, [resolve(import.meta.dirname, "../bin/wire.mjs"), "notion", "search", "--help"], { env: { ...process.env, NO_COLOR: "1" } });
+  assert.match(execution.stdout, /--created-by/);
+  assert.match(execution.stdout, /--edited-by/);
+  assert.match(execution.stdout, /--title-only/);
+});

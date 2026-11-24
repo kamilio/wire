@@ -895,7 +895,7 @@ export function renderNotionTreeToMarkdown(tree, mentions, emailMentions = {}, d
 async function notionPost(runtime, path, cookie, body, headers) {
     const url = `https://www.notion.so/api/v3/${path}`;
     const init = { method: "POST", headers: { cookie, "content-type": "application/json", "notion-client-version": "23.13.0.4595", "user-agent": "Mozilla/5.0", ...headers }, body: JSON.stringify(body) };
-    const read = ["getActivityLog", "getRecordValues", "getSpaces", "getVisibleUsers", "syncRecordValues"].includes(path);
+    const read = ["getActivityLog", "getRecordValues", "getSpaces", "getVisibleUsers", "search", "syncRecordValues"].includes(path);
     for (let attempt = 0;; attempt++) {
         const response = await runtime.http.request(url, init);
         if (response.ok)
@@ -939,6 +939,64 @@ export async function lookupNotionUsers(runtime, query) {
     for (const spaceId of ids)
         users.push(...await findNotionUsers(runtime, query, cookie, spaceId, { "x-notion-active-user-header": userId, "x-notion-space-id": spaceId }));
     return [...new Map(users.map((user) => [user["userId"], user])).values()];
+}
+export async function searchNotion(runtime, query, options) {
+    const cookies = await runtime.cookies.loadSaved("notion");
+    if (cookies === null)
+        throw notionAuthError();
+    const cookie = cookies.map((value) => `${value.name}=${value.value}`).join("; ");
+    const userId = cookies.find((value) => value.name === "notion_user_id").value;
+    const spaces = await notionPost(runtime, "getSpaces", cookie, {}, {});
+    const spaceView = object(object(spaces[userId])["space_view"]);
+    const spaceIds = [...new Set(Object.values(spaceView).map((value) => object(value)["spaceId"]))];
+    if (options.spaceId !== undefined && !spaceIds.includes(options.spaceId))
+        throw new Error(`Notion workspace is not available: ${options.spaceId}`);
+    const filters = {
+        isDeletedOnly: false, excludeTemplates: false, navigableBlockContentOnly: false, requireEditPermissions: false,
+        includePublicPagesWithoutExplicitAccess: false, ancestors: [], createdBy: [], editedBy: [], lastEditedTime: {},
+        createdTime: {}, inTeams: [], excludeSurrogateCollections: false, excludedParentCollectionIds: [], contentStatusFilter: "all_without_archived",
+        ...options.filters,
+    };
+    for (const key of ["createdBy", "editedBy"]) {
+        const ids = [];
+        for (const author of filters[key]) {
+            if (/^(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/i.test(author))
+                ids.push(formatBlockId(author));
+            else {
+                const matches = await lookupNotionUsers(runtime, author);
+                if (matches.length !== 1)
+                    throw new Error(`Expected one Notion user for ${author}, found ${matches.length}. Use an exact email or an ID from wire notion users lookup.`);
+                ids.push(matches[0]["userId"]);
+            }
+        }
+        filters[key] = ids;
+    }
+    const searches = [];
+    for (const spaceId of options.spaceId === undefined ? spaceIds : [options.spaceId]) {
+        const headers = { "x-notion-active-user-header": userId, "x-notion-space-id": spaceId };
+        const response = await notionPost(runtime, "search", cookie, {
+            type: "BlocksInSpace", query, limit: options.limit, source: "quick_find", filters, sort: options.sort,
+            peopleBlocksToInclude: "all", spaceId, excludedBlockIds: [], searchSessionFlowNumber: 1, searchSessionId: randomUUID(), ignoresHighlight: false,
+        }, headers);
+        const results = response["results"].map((result) => {
+            const block = object(object(object(object(response["recordMap"])["block"])[result["id"]])["value"]);
+            const value = object(block["value"]);
+            const highlight = object(result["highlight"] ?? {});
+            return {
+                id: result["id"],
+                title: richTextText(object(value["properties"] ?? {})["title"] ?? []),
+                url: `https://www.notion.so/${result["id"].replaceAll("-", "")}`,
+                excerpt: (highlight["text"] ?? "").replace(/<\/?gzkNfoUU>/g, ""),
+                created_by_id: value["created_by_id"], last_edited_by_id: value["last_edited_by_id"],
+                created_time: value["created_time"], last_edited_time: value["last_edited_time"],
+            };
+        });
+        const ids = [...new Set(results.flatMap((result) => [result.created_by_id, result.last_edited_by_id]))];
+        const profiles = ids.length === 0 ? [] : (await notionPost(runtime, "getRecordValues", cookie, { requests: ids.map((id) => ({ table: "notion_user", id })) }, headers))["results"];
+        const names = new Map(ids.map((id, index) => [id, object(profiles[index]["value"] ?? {})["name"]]));
+        searches.push({ spaceId, total: response["total"], results: results.map((result) => ({ ...result, created_by: names.get(result.created_by_id), last_edited_by: names.get(result.last_edited_by_id) })) });
+    }
+    return searches;
 }
 async function resolveNotionEmailMentions(runtime, blocks, cookie, spaceId, headers, mentions) {
     const segments = [];

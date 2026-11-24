@@ -3,6 +3,7 @@ import { UserError, defineCommand, defineGroup, S, type Group } from "toolcraft"
 
 import { defaultWireBackend, registryPathForBackend, type JsonObject, type FetchedDocument, type InitializedWire, type Resource, type SwitchedWireBackend, type Wire, type WireBackend, type WireResult, type WireWatchSession } from "wire-core";
 import type { listAsanaProjects, listAsanaTasks, moveAsanaTask, showAsanaProject } from "provider-asana";
+import type { searchNotion } from "provider-notion";
 import type { zoomProvider } from "provider-zoom";
 import type { SlackSentMessage } from "provider-slack";
 import type { Auth, AuthResult, AuthService } from "../auth.js";
@@ -14,7 +15,7 @@ import { formatDocComments, type listDocComments, type changeDocComment } from "
 type Comments = { comments?: Awaited<ReturnType<typeof listDocComments>> };
 export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
-export type WireRootOptions = Readonly<{ allowPaste: boolean; codeSignalEdit?: (url: string, path: string, file: string) => ReturnType<typeof editCodeSignal>; codeSignalRun?: (url: string) => ReturnType<typeof runCodeSignal>; shareNotionWithOrg?: (id: string) => Promise<string>; scrapeClaude?: () => Promise<string>; listDocComments?: (url: string) => ReturnType<typeof listDocComments>; changeDocComment?: (action: Parameters<typeof changeDocComment>[1], url: string, value?: string) => ReturnType<typeof changeDocComment>; ashby?: (action: string, arg?: string) => Promise<string>; previewDrive?: (url: string) => Promise<string>; scrapeDrive?: (url?: string, deleteVerifiedPdfs?: boolean, deleteVerifiedDocx?: boolean) => Promise<string>; calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
+export type WireRootOptions = Readonly<{ allowPaste: boolean; searchNotion?: (query: string, options: Parameters<typeof searchNotion>[2]) => ReturnType<typeof searchNotion>; codeSignalEdit?: (url: string, path: string, file: string) => ReturnType<typeof editCodeSignal>; codeSignalRun?: (url: string) => ReturnType<typeof runCodeSignal>; shareNotionWithOrg?: (id: string) => Promise<string>; scrapeClaude?: () => Promise<string>; listDocComments?: (url: string) => ReturnType<typeof listDocComments>; changeDocComment?: (action: Parameters<typeof changeDocComment>[1], url: string, value?: string) => ReturnType<typeof changeDocComment>; ashby?: (action: string, arg?: string) => Promise<string>; previewDrive?: (url: string) => Promise<string>; scrapeDrive?: (url?: string, deleteVerifiedPdfs?: boolean, deleteVerifiedDocx?: boolean) => Promise<string>; calendarAgenda?: (date?: string, calendarId?: string) => ReturnType<typeof readAgenda>; latticeSync?: (url: string | undefined, file?: string) => Promise<string>; latticeRequests?: (url: string) => Promise<string>; latticeTemplate?: (url: string) => Promise<string>; latticeFill?: (url: string, file: string) => Promise<string>; scrapeZoom?: () => ReturnType<typeof zoomProvider.scrape> }>;
 
 const authServices = ["ashby", "asana", "chatgpt", "codesignal", "gmail", "google-docs", "notion", "slack", "zoom"] as const;
 const removedCliCommandNames = Object.freeze({
@@ -554,6 +555,49 @@ export function createRoot(wire: Wire, currentDirectory: string, auth?: Auth, re
         return service === "slack" ? `${user["id"]}  ${user["real_name"] ?? user["name"]}  ${profile?.["email"] ?? ""}` : `${user["userId"]}  ${user["name"] ?? ""}  ${(user["aliases"] as readonly string[] | undefined ?? []).join(", ")}`;
       }).join("\n")),
     })] })];
+    if (service === "notion" && options.searchNotion) return defineGroup({ ...group, description: "Search Notion pages, find people, and manage login.", children: [...group.children, ...users, defineCommand({
+      name: "search", description: "Search page titles and content with Notion's native matching and ranking. Does not save files.", positional: ["query"],
+      params: S.Object({
+        query: S.String({ description: "Search text. Use an empty string to search by filters alone." }),
+        "created-by": S.Optional(S.Array(S.String(), { description: "Authors: names, exact emails, or Notion user IDs. Repeat for multiple people (OR)." })),
+        "edited-by": S.Optional(S.Array(S.String(), { description: "Editors: names, exact emails, or Notion user IDs. Repeat for multiple people (OR)." })),
+        "title-only": S.Optional(S.Boolean({ description: "Search page titles only." })),
+        in: S.Optional(S.Array(S.String(), { description: "Search within these parent page IDs." })),
+        teamspace: S.Optional(S.Array(S.String(), { description: "Filter by Notion teamspace IDs." })),
+        "created-after": S.Optional(S.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "Creation range start, YYYY-MM-DD." })),
+        "created-before": S.Optional(S.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "Creation range end, YYYY-MM-DD." })),
+        "edited-after": S.Optional(S.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "Last-edited range start, YYYY-MM-DD." })),
+        "edited-before": S.Optional(S.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "Last-edited range end, YYYY-MM-DD." })),
+        "content-status": S.Optional(S.Enum(["all_without_archived", "all_with_archived", "verified_only", "archived_only"], { default: "all_without_archived", description: "Notion content status filter." })),
+        sort: S.Optional(S.Enum(["relevance", "lastEdited", "created"], { default: "relevance", description: "Notion sort field." })),
+        direction: S.Optional(S.Enum(["asc", "desc"], { default: "desc", description: "Date sort order. Ignored for relevance." })),
+        limit: S.Optional(S.Number({ jsonType: "integer", minimum: 1, maximum: 100, default: 20, description: "Maximum results per workspace, 1–100." })),
+        space: S.Optional(S.String({ description: "Workspace ID. Searches all accessible workspaces when omitted." })),
+      }),
+      handler: ({ params }) => userFacing(() => {
+        const dateRange = (start: string | undefined, end: string | undefined) => ({
+          ...(start === undefined ? {} : { starting: { type: "date", start_date: start } }),
+          ...(end === undefined ? {} : { ending: { type: "date", start_date: end } }),
+        });
+        const field = params.sort ?? "relevance";
+        return options.searchNotion!(params.query, {
+          filters: { createdBy: params["created-by"] ?? [], editedBy: params["edited-by"] ?? [], navigableBlockContentOnly: params["title-only"] ?? false,
+            ancestors: params.in ?? [], inTeams: params.teamspace ?? [], contentStatusFilter: params["content-status"] ?? "all_without_archived",
+            createdTime: dateRange(params["created-after"], params["created-before"]), lastEditedTime: dateRange(params["edited-after"], params["edited-before"]),
+          },
+          sort: field === "relevance" ? { field } : { field, direction: params.direction ?? "desc" },
+          limit: params.limit ?? 20, ...(params.space === undefined ? {} : { spaceId: params.space }),
+        });
+      }),
+      render: render<Awaited<ReturnType<typeof searchNotion>>>((searches) => searches.map((search) => [
+        `Workspace ${search.spaceId}: ${search.results.length} returned (Notion total: ${search.total}${search.total === 100 ? "+" : ""})`,
+        ...search.results.map((page) => [
+          `- [${lineText(page.title || "Untitled").replace(/[\\\[\]]/g, "\\$&")}](${page.url})`,
+          `  Created by ${page.created_by ?? page.created_by_id} · Edited by ${page.last_edited_by ?? page.last_edited_by_id}`,
+          ...(page.excerpt === "" ? [] : [`  ${lineText(page.excerpt)}`]),
+        ].join("\n")),
+      ].join("\n\n")).join("\n\n") || "No accessible Notion workspaces"),
+    })] });
     const writes = asana?.writes;
     const createTask = writes?.create;
     if (service === "asana" && asana !== undefined) return defineGroup({ ...group, description: "Browse Asana projects, edit tasks and comments, and manage login.", children: [...group.children, ...users,

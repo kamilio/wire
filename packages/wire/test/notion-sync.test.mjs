@@ -7,6 +7,7 @@ import {
   diffNotionBlockTrees,
   fetchNotionDocument,
   lookupNotionUsers,
+  searchNotion,
   shareNotionWithOrg,
   notionBlockContentHash,
   parseNotionMarkdown,
@@ -941,4 +942,81 @@ test("Notion retries the throttled record read without replaying a write", async
   assert.ok(reads.length >= 2);
   assert.equal(reads[0], reads[1]);
   assert.equal(writes, 1);
+});
+
+
+test("Notion search preserves native ranking, sends filters, and resolves authors without writes", async () => {
+  const runtime = notionRuntime(remoteTree("", "Root"), []);
+  const request = runtime.http.request;
+  const calls = [];
+  const creator = "11111111-1111-4111-8111-111111111111";
+  const editor = "22222222-2222-4222-8222-222222222222";
+  const results = ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"];
+  runtime.http.request = async (url, init) => {
+    const path = String(url).split("/").at(-1), body = JSON.parse(init.body);
+    calls.push({ path, body });
+    if (path === "getVisibleUsers") return Response.json({ users: [{ userId: creator, aliases: ["author@example.com"] }, { userId: editor, aliases: ["editor@example.com"] }] });
+    if (path === "getRecordValues") return Response.json({ results: body.requests.map(({ id }) => ({ value: { name: id === creator ? "Alex Author" : "Erin Editor" } })) });
+    if (path !== "search") return request(url, init);
+    assert.equal(init.headers["x-notion-active-user-header"], "user");
+    assert.equal(init.headers["x-notion-space-id"], "space");
+    assert.equal(body.query, "wrokspace");
+    assert.equal(body.limit, 2);
+    assert.deepEqual(body.sort, { field: "created", direction: "asc" });
+    assert.deepEqual(body.filters.createdBy, [creator]);
+    assert.deepEqual(body.filters.editedBy, [editor]);
+    assert.deepEqual(body.filters.ancestors, ["parent"]);
+    assert.deepEqual(body.filters.inTeams, ["team"]);
+    assert.deepEqual(body.filters.lastEditedTime, { starting: { type: "date", start_date: "2026-01-01" } });
+    assert.equal(body.filters.contentStatusFilter, "all_with_archived");
+    assert.equal(body.filters.navigableBlockContentOnly, true);
+    assert.deepEqual(body.excludedBlockIds, []);
+    return Response.json({ total: 100, results: results.map((id, index) => ({ id, ...(index === 0 ? { highlight: { text: "A <gzkNfoUU>workspace</gzkNfoUU> study" } } : {}) })),
+      recordMap: { block: Object.fromEntries(results.map((id, index) => [id, { value: { value: {
+        id, properties: { title: [[index === 0 ? "Workspace [findings]" : "Other study"]] }, created_by_id: creator,
+        last_edited_by_id: editor, created_time: 1000, last_edited_time: 2000,
+      } } }])) } });
+  };
+  const output = await searchNotion(runtime, "wrokspace", { filters: {
+    createdBy: ["Alex Author"], editedBy: ["editor@example.com"], ancestors: ["parent"], inTeams: ["team"],
+    navigableBlockContentOnly: true, contentStatusFilter: "all_with_archived", lastEditedTime: { starting: { type: "date", start_date: "2026-01-01" } },
+  }, sort: { field: "created", direction: "asc" }, limit: 2 });
+  assert.equal(output[0].total, 100);
+  assert.deepEqual(output[0].results.map(page => page.id), results);
+  assert.equal(output[0].results[0].url, "https://www.notion.so/" + results[0].replaceAll("-", ""));
+  assert.equal(output[0].results[0].excerpt, "A workspace study");
+  assert.equal(output[0].results[1].excerpt, "");
+  assert.equal(output[0].results[0].created_by, "Alex Author");
+  assert.equal(output[0].results[0].last_edited_by, "Erin Editor");
+  assert.ok(calls.every(({ path }) => ["getSpaces", "getVisibleUsers", "getRecordValues", "search"].includes(path)));
+});
+
+test("Notion search rejects missing or ambiguous authors before querying pages", async () => {
+  for (const users of [[], [{ userId: "one", aliases: ["same@example.com"] }, { userId: "two", aliases: ["same@example.com"] }]]) {
+    const runtime = notionRuntime(remoteTree("", "Root"), []), request = runtime.http.request;
+    runtime.http.request = async (url, init) => String(url).endsWith("/getVisibleUsers") ? Response.json({ users }) : request(url, init);
+    await assert.rejects(searchNotion(runtime, "", { filters: { createdBy: ["same@example.com"] }, sort: { field: "relevance" }, limit: 20 }), /Expected one Notion user/);
+  }
+});
+
+test("Notion search scopes workspaces, accepts author IDs, and returns empty results", async () => {
+  const runtime = notionRuntime(remoteTree("", "Root"), []), searched = [];
+  const author = "11111111111141118111111111111111";
+  runtime.http.request = async (url, init) => {
+    const path = String(url).split("/").at(-1), body = JSON.parse(init.body);
+    if (path === "getSpaces") return Response.json({ user: { space_view: { a: { spaceId: "one" }, b: { spaceId: "two" } } } });
+    assert.equal(path, "search");
+    assert.equal(body.query, "");
+    assert.deepEqual(body.filters.createdBy, ["11111111-1111-4111-8111-111111111111"]);
+    searched.push(body.spaceId);
+    return Response.json({ total: 0, results: [] });
+  };
+  const options = { filters: { createdBy: [author] }, sort: { field: "relevance" }, limit: 20 };
+  assert.deepEqual(await searchNotion(runtime, "", { ...options, spaceId: "two" }), [{ spaceId: "two", total: 0, results: [] }]);
+  assert.deepEqual(searched, ["two"]);
+  await searchNotion(runtime, "", options);
+  assert.deepEqual(searched, ["two", "one", "two"]);
+  await assert.rejects(searchNotion(runtime, "", { ...options, spaceId: "missing" }), /workspace is not available/);
+  runtime.cookies.loadSaved = async () => null;
+  await assert.rejects(searchNotion(runtime, "", options), /wire notion login/);
 });

@@ -2,6 +2,7 @@ import type { editCodeSignal, runCodeSignal } from "./codesignal.js";
 import { type Group } from "toolcraft";
 import { type JsonObject, type FetchedDocument, type InitializedWire, type Resource, type SwitchedWireBackend, type Wire, type WireResult, type WireWatchSession } from "wire-core";
 import type { listAsanaProjects, listAsanaTasks, moveAsanaTask, showAsanaProject } from "provider-asana";
+import type { searchNotion } from "provider-notion";
 import type { zoomProvider } from "provider-zoom";
 import type { SlackSentMessage } from "provider-slack";
 import type { Auth, AuthResult, AuthService } from "../auth.js";
@@ -11,6 +12,7 @@ export type WireRoot = Group;
 export type TextInputReader = () => Promise<string>;
 export type WireRootOptions = Readonly<{
     allowPaste: boolean;
+    searchNotion?: (query: string, options: Parameters<typeof searchNotion>[2]) => ReturnType<typeof searchNotion>;
     codeSignalEdit?: (url: string, path: string, file: string) => ReturnType<typeof editCodeSignal>;
     codeSignalRun?: (url: string) => ReturnType<typeof runCodeSignal>;
     shareNotionWithOrg?: (id: string) => Promise<string>;
