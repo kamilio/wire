@@ -56,10 +56,18 @@ function loadConfiguredEnvironment(environment, currentDirectory) {
     if (home === undefined)
         throw new Error("Missing required environment variable: HOME");
     const wireRoot = discoverConfiguredWireRoot(currentDirectory, home);
-    if (wireRoot === undefined)
-        return environment;
-    const config = JSON.parse(readFileSync(join(wireRoot, "config.json"), "utf8"));
-    return config.env === undefined ? environment : Object.freeze({ ...environment, ...config.env });
+    let configured = environment;
+    for (const root of new Set([join(home, ".wire"), wireRoot])) {
+        if (root === undefined)
+            continue;
+        const configPath = join(root, "config.json");
+        if (!existsSync(configPath) || !statSync(configPath).isFile())
+            continue;
+        const config = JSON.parse(readFileSync(configPath, "utf8"));
+        if (config.env !== undefined)
+            configured = Object.freeze({ ...configured, ...config.env });
+    }
+    return configured;
 }
 function operationPath(value, path) {
     if (value.startsWith("http://") || value.startsWith("https://"))
